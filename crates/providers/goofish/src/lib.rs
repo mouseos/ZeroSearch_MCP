@@ -1372,8 +1372,13 @@ mod tests {
             base,
         )
         .unwrap();
-        assert_eq!(parsed.sg_serve.as_deref(), Some("/cfg/dir/serve.sh"));
-        assert_eq!(parsed.identity.as_deref(), Some("/cfg/dir/identity.json"));
+        // Relative values are joined onto the base directory with
+        // the platform path separator, so build the expectations
+        // through Path::join as well.
+        let serve = base.join("serve.sh");
+        let identity = base.join("identity.json");
+        assert_eq!(parsed.sg_serve.as_deref(), serve.to_str());
+        assert_eq!(parsed.identity.as_deref(), identity.to_str());
 
         // Absolute values pass through; alias keys work; a serve
         // command with arguments is kept verbatim.
