@@ -20,8 +20,14 @@ members = [
     "crates/providers/qoo10",
     "crates/providers/yahoo-shopping",
     "crates/providers/amazon",
-    "crates/helpers/yahoo-us-image",
 ]
+# The Yahoo US image helper is deliberately NOT a workspace member:
+# its BoringSSL dependency must stay out of this workspace's build
+# graph entirely, or its libssl/libcrypto collide with OpenSSL in
+# workspace-wide links (binaries and doctests alike). It is a
+# standalone crate with its own lockfile and target directory,
+# built separately by CI and the release workflow.
+exclude = ["crates/helpers/yahoo-us-image"]
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }

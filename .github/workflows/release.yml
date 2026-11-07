@@ -60,6 +60,12 @@ jobs:
       - name: Build release binaries
         run: cargo build --release --target ${{ matrix.target }}
 
+      # The image helper is a standalone crate outside the workspace
+      # (BoringSSL isolation); build it separately into its own
+      # target directory.
+      - name: Build image helper binary
+        run: cargo build --release --target ${{ matrix.target }} --manifest-path crates/helpers/yahoo-us-image/Cargo.toml
+
       - name: Package installer and MCPB
         shell: bash
         run: |
@@ -68,6 +74,7 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           BUNDLE="ZeroSearch_MCP-${TAG}-${{ matrix.platform }}-${{ matrix.arch }}"
           RELEASE_DIR="target/${{ matrix.target }}/release"
+          HELPER_DIR="crates/helpers/yahoo-us-image/target/${{ matrix.target }}/release"
 
           # sha256sum is absent on macOS runners.
           if command -v sha256sum >/dev/null 2>&1; then
@@ -83,7 +90,7 @@ jobs:
           mkdir -p "${INSTALLER_DIR}"
           cp "${RELEASE_DIR}/${{ matrix.server_bin }}" "${INSTALLER_DIR}/"
           cp "${RELEASE_DIR}/${{ matrix.launcher_bin }}" "${INSTALLER_DIR}/"
-          cp "${RELEASE_DIR}/${{ matrix.helper_bin }}" "${INSTALLER_DIR}/"
+          cp "${HELPER_DIR}/${{ matrix.helper_bin }}" "${INSTALLER_DIR}/"
           cp README.md README.en.md LICENSE "${INSTALLER_DIR}/"
 
           cd dist
@@ -99,7 +106,7 @@ jobs:
           MCPB_STAGE="dist/${MCPB_NAME}-stage"
           mkdir -p "${MCPB_STAGE}/server"
           cp "${RELEASE_DIR}/${{ matrix.server_bin }}" "${MCPB_STAGE}/server/"
-          cp "${RELEASE_DIR}/${{ matrix.helper_bin }}" "${MCPB_STAGE}/server/"
+          cp "${HELPER_DIR}/${{ matrix.helper_bin }}" "${MCPB_STAGE}/server/"
 
           sed -e "s/\"version\": \"0.1.0\"/\"version\": \"${VERSION}\"/" \
               -e "s|\"entry_point\": \"server/zero-search-mcp\"|\"entry_point\": \"server/${{ matrix.server_bin }}\"|" \

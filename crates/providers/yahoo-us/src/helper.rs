@@ -81,7 +81,7 @@ fn decode_response(line: &str) -> Result<(u16, String)> {
 /// (the shipped layout — the installer ZIP and the MCPB both place
 /// it beside the server), then the executable's parent directory
 /// (cargo puts test binaries in `deps/`, one level deeper), then
-/// the workspace `target/` directories (development fallback).
+/// the `target/` directories (development fallback).
 pub fn helper_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var(HELPER_ENV) {
         let p = p.trim();
@@ -100,6 +100,16 @@ pub fn helper_path() -> Option<PathBuf> {
     }
     for profile in ["debug", "release"] {
         candidates.push(PathBuf::from("target").join(profile).join(HELPER_NAME));
+        // The helper is a standalone crate (outside the workspace),
+        // so its builds land in its own target directory.
+        candidates.push(
+            PathBuf::from("crates")
+                .join("helpers")
+                .join("yahoo-us-image")
+                .join("target")
+                .join(profile)
+                .join(HELPER_NAME),
+        );
     }
     candidates.into_iter().find(|p| p.is_file())
 }

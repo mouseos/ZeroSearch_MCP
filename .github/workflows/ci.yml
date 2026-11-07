@@ -43,6 +43,19 @@ jobs:
         # so this job stays green regardless of network conditions.
         run: cargo test --workspace -- --skip e2e_
 
+      # The Yahoo US image helper is a standalone crate outside the
+      # workspace (its BoringSSL must stay out of the workspace build
+      # graph), so it is formatted, linted and tested separately.
+      - name: Helper crate formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --manifest-path crates/helpers/yahoo-us-image/Cargo.toml -- --check
+
+      - name: Helper crate clippy
+        run: cargo clippy --manifest-path crates/helpers/yahoo-us-image/Cargo.toml --all-targets -- -D warnings
+
+      - name: Helper crate tests
+        run: cargo test --manifest-path crates/helpers/yahoo-us-image/Cargo.toml
+
   live:
     name: Live search tests (serial)
     runs-on: ubuntu-latest

@@ -53,6 +53,17 @@ for row in "${TARGETS[@]}"; do
     fi
   fi
   if [ ! -f "$helper_bin" ]; then
+    # The helper is a standalone crate with its own target directory.
+    for alt in \
+      "$ROOT/crates/helpers/yahoo-us-image/target/$triple/release/$helper_exe" \
+      "$ROOT/crates/helpers/yahoo-us-image/target/release/$helper_exe"; do
+      if [ -f "$alt" ]; then
+        helper_bin="$alt"
+        break
+      fi
+    done
+  fi
+  if [ ! -f "$helper_bin" ]; then
     echo "[SKIP] Helper binary not found for $triple: $helper_bin"
     continue
   fi
