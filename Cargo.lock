@@ -3942,7 +3942,7 @@ dependencies = [
 
 [[package]]
 name = "shopping-mcp-goofish"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "hmac",
@@ -5719,7 +5719,7 @@ dependencies = [
 
 [[package]]
 name = "zero-search-mcp-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "baidu-mcp-provider",

@@ -269,6 +269,26 @@ const DEFAULT_FEATURES: &str = "27";
 const DEFAULT_APP_VERSION: &str = "7.28.70";
 const DEFAULT_PV: &str = "6.2";
 
+/// Per-sign-request budget once the harness is warm.
+const SIGN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+/// Harness startup budget (spawn -> ready line), kept separate from
+/// the sign budget. Startup is dominated by the SecurityGuard 10101
+/// init running under unicorn2 emulation — in particular the phase
+/// that processes the staged 268MB APK — so its wall time tracks
+/// the host's per-core emulation throughput: measured ~150-180s on
+/// an idle VM (round 19, 2026-10-31) but ~420-460s on 2026-11-07
+/// with several other JVM/unidbg workloads on the same 4 cores.
+/// The previous single 300s budget killed two ZeroSearch attempts
+/// inside that init phase (the harness main thread was still
+/// RUNNABLE in emu_start; nothing had been sent). 900s is ~2x the
+/// worst measured startup and ~5x the idle measurement.
+const STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(900);
+
+fn build_signer(serve_command: &[String]) -> Result<UnidbgSigner, String> {
+    UnidbgSigner::with_timeouts(serve_command.to_vec(), SIGN_TIMEOUT, STARTUP_TIMEOUT, false)
+        .map_err(|e| e.to_string())
+}
+
 pub struct GoofishClient {
     halt: Mutex<Option<String>>,
     signer: Mutex<Option<UnidbgSigner>>,
@@ -341,6 +361,35 @@ impl GoofishClient {
             halt: Mutex::new(None),
             signer: Mutex::new(None),
         }
+    }
+
+    /// Pre-warm: resolve the runtime and start the signing harness
+    /// now, so the first live call does not pay the whole startup
+    /// (measured in minutes; see STARTUP_TIMEOUT). Best-effort and
+    /// local-only — no network access, no MTOP send. Returns true
+    /// when the harness is started (or was already running). Any
+    /// failure is latched in the signer and surfaces, unchanged, on
+    /// the first real call.
+    pub fn warm_up(&self) -> bool {
+        let runtime = resolve_runtime();
+        let Some(serve_path) = runtime.serve_command else {
+            return false;
+        };
+        let serve_command = split_serve_command(&serve_path);
+        if serve_command.is_empty() {
+            return false;
+        }
+        let mut guard = self.signer.lock().unwrap();
+        if guard.is_none() {
+            match build_signer(&serve_command) {
+                Ok(signer) => *guard = Some(signer),
+                Err(_) => return false,
+            }
+        }
+        guard
+            .as_ref()
+            .map(|signer| signer.ensure_started().is_ok())
+            .unwrap_or(false)
     }
 
     pub fn reset_send_halt(&self) {
@@ -439,17 +488,9 @@ impl GoofishClient {
         let sign_result = {
             let mut guard = self.signer.lock().unwrap();
             if guard.is_none() {
-                // Startup timeout 300s: the Python live example used
-                // 180s, and on this VM the harness ready line was
-                // measured at ~150-180s (2026-10-31), beyond the
-                // constructor default of 120s.
-                match UnidbgSigner::with_options(
-                    serve_command.clone(),
-                    std::time::Duration::from_secs(300),
-                    false,
-                ) {
+                match build_signer(&serve_command) {
                     Ok(signer) => *guard = Some(signer),
-                    Err(e) => return meta.attach(error_value("signing_error", e.to_string())),
+                    Err(e) => return meta.attach(error_value("signing_error", e)),
                 }
             }
             let signer = guard.as_ref().unwrap();

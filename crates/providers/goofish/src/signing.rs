@@ -384,6 +384,13 @@ struct UnidbgInner {
 pub struct UnidbgSigner {
     pub command: Vec<String>,
     pub timeout: Duration,
+    /// Budget for the harness *startup* (spawn -> ready line). Kept
+    /// separate from `timeout` (the per-sign-request budget): startup
+    /// runs the whole SecurityGuard init under emulation and is far
+    /// slower and far more variable than a warm sign — measured
+    /// ~150-180s on an idle VM (round 19) but ~420-460s under load
+    /// (2026-11-07), which a single shared 300s budget did not cover.
+    pub startup_timeout: Duration,
     pub request_type: i64,
     pub auth_code: String,
     /// INPUT layout selector (default false = round-19 legacy path B, pv 6.2).
@@ -401,17 +408,27 @@ impl UnidbgSigner {
         timeout: Duration,
         include_ext_data: bool,
     ) -> Result<Self> {
+        Self::with_timeouts(command, timeout, timeout, include_ext_data)
+    }
+
+    pub fn with_timeouts(
+        command: Vec<String>,
+        timeout: Duration,
+        startup_timeout: Duration,
+        include_ext_data: bool,
+    ) -> Result<Self> {
         if command.is_empty() || command.iter().any(|c| c.is_empty()) {
             return Err(anyhow!(
                 "UnidbgSigner command must be a non-empty sequence of strings"
             ));
         }
-        if timeout.is_zero() {
+        if timeout.is_zero() || startup_timeout.is_zero() {
             return Err(anyhow!("UnidbgSigner timeout must be positive"));
         }
         Ok(Self {
             command,
             timeout,
+            startup_timeout,
             request_type: 7,
             auth_code: String::new(),
             include_ext_data,
@@ -502,7 +519,7 @@ impl UnidbgSigner {
         });
         inner.child = Some(child);
         inner.rx = Some(rx);
-        let line = Self::read_line(inner, self.timeout, "startup")?;
+        let line = Self::read_line(inner, self.startup_timeout, "startup")?;
         let ready: Value = serde_json::from_str(line.trim())
             .map_err(|_| anyhow!("unidbg signing harness sent a malformed ready line: startup"))?;
         let ready_obj = ready
@@ -535,6 +552,30 @@ impl UnidbgSigner {
             }
         }
         inner.startup_duration = Some(started_at.elapsed());
+        Ok(())
+    }
+
+    /// Start the harness now, without signing anything (pre-warm).
+    /// A no-op when already started. Failures are latched exactly
+    /// like a failed first sign: the signer is marked broken and
+    /// the harness is shut down, so a later sign surfaces the same
+    /// error instead of silently retrying the start.
+    pub fn ensure_started(&self) -> Result<()> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return Err(anyhow!("unidbg signer is closed"));
+        }
+        if let Some(broken) = &inner.broken {
+            return Err(anyhow!("{broken}"));
+        }
+        if inner.child.is_none() {
+            if let Err(e) = self.start(&mut inner) {
+                let msg = e.to_string();
+                inner.broken = Some(msg.clone());
+                Self::shutdown(&mut inner);
+                return Err(anyhow!("{msg}"));
+            }
+        }
         Ok(())
     }
 
@@ -977,6 +1018,60 @@ sys.stdout.write("\n")
         let err = signer3.sign(&req()).unwrap_err().to_string();
         assert!(err.contains("protocol"), "{err}");
         assert!(!err.contains("boom"));
+    }
+
+    #[test]
+    fn unidbg_signer_startup_timeout_is_separate_from_sign_timeout() {
+        // Harness that takes ~0.4s to report ready, then answers
+        // sign requests immediately. A single shared 100ms budget
+        // (with_options) kills the start; a split budget with a
+        // generous startup allowance (with_timeouts) lets it boot —
+        // the regression shape of the 300s startup timeouts.
+        let script = "#!/bin/sh\nsleep 0.4\necho '{\"ready\": true, \"initRc\": 0, \"appKey\": \"21407387\"}'\nwhile IFS= read -r line; do echo '{\"sign\": \"FAKESIGN\"}'; done\n";
+        let shared = UnidbgSigner::with_options(
+            write_shell_script(script, "sharedbudget"),
+            Duration::from_millis(100),
+            false,
+        )
+        .unwrap();
+        let err = shared.sign(&req()).unwrap_err().to_string();
+        assert!(err.contains("startup"), "{err}");
+        assert!(err.contains("timed out"), "{err}");
+
+        let split = UnidbgSigner::with_timeouts(
+            write_shell_script(script, "splitbudget"),
+            Duration::from_millis(100),
+            Duration::from_secs(5),
+            false,
+        )
+        .unwrap();
+        // Pre-warm path: starts the harness without signing, and a
+        // second call is a no-op on the running harness.
+        split.ensure_started().unwrap();
+        assert!(split.is_started());
+        split.ensure_started().unwrap();
+        let result = split.sign(&req()).unwrap();
+        assert_eq!(result.sign, "FAKESIGN");
+        split.close();
+    }
+
+    #[test]
+    fn unidbg_signer_ensure_started_latches_failure() {
+        // A harness that never reports ready: ensure_started fails
+        // within the startup budget, and the failure is latched —
+        // a later sign returns the same error without restarting.
+        let script = "#!/bin/sh\nsleep 30\n";
+        let signer = UnidbgSigner::with_timeouts(
+            write_shell_script(script, "neverready"),
+            Duration::from_secs(5),
+            Duration::from_millis(300),
+            false,
+        )
+        .unwrap();
+        let err = signer.ensure_started().unwrap_err().to_string();
+        assert!(err.contains("startup"), "{err}");
+        let err2 = signer.sign(&req()).unwrap_err().to_string();
+        assert_eq!(err, err2);
     }
 
     #[cfg(unix)]
