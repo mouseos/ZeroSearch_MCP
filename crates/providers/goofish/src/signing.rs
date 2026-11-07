@@ -8,7 +8,7 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Map, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -379,6 +379,75 @@ struct UnidbgInner {
     /// Wall time the most recent harness start took (ready line
     /// received), for the phase breakdown in issue #2.
     startup_duration: Option<Duration>,
+    /// Release latch for the harness's creator thread (see
+    /// `spawn_harness`). Dropped in `shutdown()` only, after the
+    /// child has been killed: while the latch is held, the creator
+    /// thread stays alive and PR_SET_PDEATHSIG cannot fire.
+    spawner_release: Option<Sender<()>>,
+}
+
+/// Spawn the harness command on a dedicated creator thread and
+/// return the child plus the latch that keeps that thread alive.
+///
+/// Why the indirection (K1-4): on Linux the harness is spawned
+/// with PR_SET_PDEATHSIG so the kernel kills it when its parent
+/// dies without cleanup — but for PDEATHSIG the "parent" is the
+/// *thread that created the process*, not the process as a whole.
+/// Callers may trigger the start from a short-lived thread (the
+/// server's pre-warm thread returns as soon as the start
+/// completes), and the kernel then SIGKILLed the harness the
+/// moment that thread exited — after ready, before the first
+/// sign, with stderr discarded so the death looked silent. The
+/// creator thread therefore lives until `shutdown()` drops the
+/// latch (after the child is dead), so PDEATHSIG only ever fires
+/// when the whole signer is gone, which is the case it exists
+/// for (server killed abruptly, client vanished).
+#[cfg(unix)]
+fn spawn_harness(mut command: Command) -> std::io::Result<(Child, Sender<()>)> {
+    let (child_tx, child_rx) = channel::<std::io::Result<Child>>();
+    let (release_tx, release_rx) = channel::<()>();
+    std::thread::spawn(move || {
+        let result = command.spawn();
+        let spawned = result.is_ok();
+        let _ = child_tx.send(result);
+        if spawned {
+            // Park until shutdown() drops the latch (or every
+            // sender is gone): exiting earlier would deliver the
+            // PDEATHSIG to the harness.
+            let _ = release_rx.recv();
+        }
+    });
+    match child_rx.recv() {
+        Ok(Ok(child)) => Ok((child, release_tx)),
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err(std::io::Error::other(
+            "harness creator thread died before spawning",
+        )),
+    }
+}
+
+#[cfg(not(unix))]
+fn spawn_harness(mut command: Command) -> std::io::Result<(Child, Sender<()>)> {
+    // No PDEATHSIG off Unix: spawn directly. The latch is inert.
+    let (release_tx, _release_rx) = channel::<()>();
+    let child = command.spawn()?;
+    Ok((child, release_tx))
+}
+
+/// Short human-readable form of a reaped child's exit status, for
+/// error messages: metadata only (code / signal), never output.
+fn describe_exit(status: &std::process::ExitStatus) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            return format!("killed by signal {sig}");
+        }
+    }
+    match status.code() {
+        Some(code) => format!("exit code {code}"),
+        None => status.to_string(),
+    }
 }
 
 pub struct UnidbgSigner {
@@ -438,17 +507,55 @@ impl UnidbgSigner {
                 broken: None,
                 closed: false,
                 startup_duration: None,
+                spawner_release: None,
             }),
         })
     }
 
-    fn read_line(inner: &UnidbgInner, timeout: Duration, phase: &str) -> Result<String> {
-        let rx = inner.rx.as_ref().expect("line channel exists after start");
-        match rx.recv_timeout(timeout) {
+    /// Reap the harness child if it has exited and describe how
+    /// (exit code / signal). EOF on the output pipe means every
+    /// writer is gone, but the process may take a moment to become
+    /// reapable, so poll briefly. Returns None when the child is
+    /// somehow still running (it closed its output but lives) —
+    /// the error then stays in its historic form. This turns the
+    /// formerly silent death ("closed its output", stderr nulled)
+    /// into a diagnosed one: signal 9 reads very differently from
+    /// exit code 1.
+    fn reap_status(inner: &mut UnidbgInner) -> Option<String> {
+        let child = inner.child.as_mut()?;
+        let deadline = Instant::now() + Duration::from_millis(500);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return Some(describe_exit(&status)),
+                Ok(None) => {
+                    if Instant::now() >= deadline {
+                        return None;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+
+    fn read_line(inner: &mut UnidbgInner, timeout: Duration, phase: &str) -> Result<String> {
+        // Take the receiver out so the Eof path can mutably reap
+        // the child for its exit status; put it back before
+        // returning (a failed read latches the signer broken and
+        // shutdown() drops it anyway).
+        let rx = inner.rx.take().expect("line channel exists after start");
+        let received = rx.recv_timeout(timeout);
+        inner.rx = Some(rx);
+        match received {
             Ok(LineEvent::Line(l)) => Ok(l),
-            Ok(LineEvent::Eof) => Err(anyhow!(
-                "unidbg signing harness closed its output during {phase}: exit"
-            )),
+            Ok(LineEvent::Eof) => {
+                let detail = Self::reap_status(inner)
+                    .map(|s| format!(" ({s})"))
+                    .unwrap_or_default();
+                Err(anyhow!(
+                    "unidbg signing harness closed its output during {phase}{detail}: exit"
+                ))
+            }
             Err(_) => Err(anyhow!(
                 "unidbg signing harness timed out during {phase} after {}s: timeout",
                 timeout.as_secs_f64()
@@ -492,7 +599,7 @@ impl UnidbgSigner {
                 });
             }
         }
-        let mut child = command.spawn().map_err(|e| {
+        let (mut child, release) = spawn_harness(command).map_err(|e| {
             anyhow!(
                 "unidbg signing harness could not be started ({}): startup",
                 class_name(&e)
@@ -518,6 +625,7 @@ impl UnidbgSigner {
             }
         });
         inner.child = Some(child);
+        inner.spawner_release = Some(release);
         inner.rx = Some(rx);
         let line = Self::read_line(inner, self.startup_timeout, "startup")?;
         let ready: Value = serde_json::from_str(line.trim())
@@ -627,6 +735,11 @@ impl UnidbgSigner {
             }
             let _ = pid;
         }
+        // Only now that the child is dead may its creator thread
+        // exit: dropping the latch releases that thread, and its
+        // exit can no longer deliver PR_SET_PDEATHSIG to a live
+        // harness.
+        inner.spawner_release = None;
     }
 
     pub fn close(&self) {
@@ -641,8 +754,11 @@ impl UnidbgSigner {
         }
         {
             let child = inner.child.as_mut().expect("child after start");
-            if let Ok(Some(_)) = child.try_wait() {
-                return Err(anyhow!("unidbg signing harness is no longer running: exit"));
+            if let Ok(Some(status)) = child.try_wait() {
+                let detail = describe_exit(&status);
+                return Err(anyhow!(
+                    "unidbg signing harness is no longer running ({detail}): exit"
+                ));
             }
         }
         let input_str = build_sign_input(request, Some(self.include_ext_data));
@@ -979,6 +1095,38 @@ sys.stdout.write("\n")
         // persistent process: second sign reuses it
         let result2 = signer.sign(&req()).unwrap();
         assert_eq!(result2.sign, "FAKESIGN");
+        signer.close();
+    }
+
+    #[test]
+    fn unidbg_signer_survives_spawner_thread_exit() {
+        // Regression test (K1-4): the server pre-warms the harness
+        // from a short-lived background thread that exits as soon as
+        // the start completes. PR_SET_PDEATHSIG is delivered when
+        // the thread that *created* the process exits — not when
+        // the process exits — so a harness spawned by that thread
+        // was SIGKILLed the moment pre-warm finished, and the first
+        // real sign then failed with "closed its output during
+        // sign". The harness must outlive the thread that happened
+        // to trigger its start.
+        use std::sync::Arc;
+        let script = "#!/bin/sh\necho '{\"ready\": true, \"initRc\": 0, \"appKey\": \"21407387\"}'\nwhile IFS= read -r line; do echo '{\"sign\": \"FAKESIGN\"}'; done\n";
+        let signer = Arc::new(
+            UnidbgSigner::with_options(
+                write_shell_script(script, "threadexit"),
+                Duration::from_secs(10),
+                false,
+            )
+            .unwrap(),
+        );
+        let warm = signer.clone();
+        let handle = std::thread::spawn(move || warm.ensure_started());
+        handle.join().unwrap().unwrap();
+        // The spawning thread has exited; PDEATHSIG delivery is
+        // immediate, but allow a brief moment for it to land.
+        std::thread::sleep(Duration::from_millis(300));
+        let result = signer.sign(&req()).unwrap();
+        assert_eq!(result.sign, "FAKESIGN");
         signer.close();
     }
 

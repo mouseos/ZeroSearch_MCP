@@ -478,14 +478,9 @@ impl GoofishClient {
                 "signer serve command is empty after parsing".to_string(),
             ));
         }
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs().to_string())
-            .unwrap_or_default();
-
         // -- Sign (synchronous; the signer process is Mutex-guarded).
         let sign_started = Instant::now();
-        let sign_result = {
+        let (sign_result, timestamp) = {
             let mut guard = self.signer.lock().unwrap();
             if guard.is_none() {
                 match build_signer(&serve_command) {
@@ -495,6 +490,24 @@ impl GoofishClient {
             }
             let signer = guard.as_ref().unwrap();
             let was_started = signer.is_started();
+            // Start the harness BEFORE taking the request
+            // timestamp (K1-4): a cold start takes minutes, and a
+            // `t` captured before it is stale by the time the
+            // request is posted — MTOP validates `t` as part of
+            // the sign. The first ZeroSearch live call carried a
+            // ~426s-old `t` (the sign phase waited out the whole
+            // startup) and was rejected FAIL_SYS_ILEGEL_SIGN.
+            // Taking the timestamp after ensure_started makes the
+            // cold first call behave like the real client, which
+            // stamps at send time; warm calls are unaffected (the
+            // ensure is a no-op and the stamp was already fresh).
+            if let Err(e) = signer.ensure_started() {
+                return meta.attach(error_value("signing_error", e.to_string()));
+            }
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_default();
             let mut request = SignRequest::new(
                 &plan.api_name,
                 &plan.version,
@@ -513,7 +526,7 @@ impl GoofishClient {
             if !was_started {
                 meta.signer_startup_ms = signer.last_startup_duration().map(|d| d.as_millis());
             }
-            result
+            (result, timestamp)
         };
         meta.sign_ms = Some(sign_started.elapsed().as_millis());
         let sign_result = match sign_result {
