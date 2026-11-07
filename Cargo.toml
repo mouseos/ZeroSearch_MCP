@@ -16,6 +16,10 @@ members = [
     "crates/providers/rakuma",
     "crates/providers/yahoo-auctions",
     "crates/providers/yahoo-flea",
+    "crates/providers/rakuten",
+    "crates/providers/qoo10",
+    "crates/providers/yahoo-shopping",
+    "crates/providers/amazon",
 ]
 
 [workspace.dependencies]

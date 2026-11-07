@@ -9,7 +9,7 @@ use zero_search::{
 };
 
 #[test]
-fn categories_cover_twelve_engines() {
+fn categories_cover_sixteen_engines() {
     assert_eq!(Category::Web.id(), "web");
     assert_eq!(Category::Shopping.id(), "shopping");
     assert_eq!(
@@ -24,11 +24,15 @@ fn categories_cover_twelve_engines() {
             "mercari",
             "yahoo_auctions",
             "yahoo_fleamarket",
-            "rakuma"
+            "rakuma",
+            "rakuten",
+            "qoo10",
+            "yahoo_shopping",
+            "amazon"
         ]
     );
     let total: usize = Category::all().iter().map(|c| c.engine_ids().len()).sum();
-    assert_eq!(total, 12);
+    assert_eq!(total, 16);
 }
 
 #[test]
@@ -42,11 +46,11 @@ fn engine_registries_are_complete_and_unique() {
     assert_eq!(web, Category::Web.engine_ids());
 
     let shop: Vec<&str> = ShopProvider::all().iter().map(|p| p.id()).collect();
-    assert_eq!(shop.len(), 6);
+    assert_eq!(shop.len(), 10);
     let mut sorted = shop.clone();
     sorted.sort_unstable();
     sorted.dedup();
-    assert_eq!(sorted.len(), 6, "shop provider ids must be unique");
+    assert_eq!(sorted.len(), 10, "shop provider ids must be unique");
     assert_eq!(shop, Category::Shopping.engine_ids());
 }
 
@@ -105,6 +109,10 @@ fn client_constructs_without_configuration() {
     let _ = client.rakuma();
     let _ = client.yahoo_auctions();
     let _ = client.yahoo_flea();
+    let _ = client.rakuten();
+    let _ = client.qoo10();
+    let _ = client.yahoo_shopping();
+    let _ = client.amazon();
     // And through the providers module under their original names.
     let _ = zero_search::providers::bing_search::PROVIDER;
     let _ = zero_search::providers::naver_search::PROVIDER;

@@ -1,12 +1,12 @@
 # ZeroSearch MCP
 
-検索エンジン6つとショッピング6サイトを、1つのMCPサーバーに統合したものです。
+検索エンジン6つとショッピング10サイトを、1つのMCPサーバーに統合したものです。
 
 **設定はMCP登録だけです。APIキーは不要。環境変数も不要。**
 サーバーのパスをMCP設定に書けば、そのまま使えます。
 
 Web検索は Baidu、Yahoo! JAPAN、Bing、Naver、Yahoo (US)、Yandex。
-ショッピング検索は AliExpress、Goofish（闲鱼）、Mercari、ヤフオク、Yahoo!フリマ、楽天ラクマです。
+ショッピング検索は AliExpress、Goofish（闲鱼）、Mercari、ヤフオク、Yahoo!フリマ、楽天ラクマ、楽天市場、Qoo10、Yahoo!ショッピング、Amazon.co.jp です。
 どのプロバイダも匿名・ログイン不要で動きます。
 
 Rustライブラリとしても使えます。自作ハーネスのデフォルト検索ツールとして組み込むための統一APIを用意しています。
@@ -18,9 +18,9 @@ Rustライブラリとしても使えます。自作ハーネスのデフォル�
 | カテゴリ | エンジン |
 |---|---|
 | `web`（Web検索） | `baidu`、`yahoo_jp`、`bing`、`naver`、`yahoo_us`、`yandex` |
-| `shopping`（ショッピング検索） | `aliexpress`、`goofish`、`mercari`、`yahoo_auctions`、`yahoo_fleamarket`、`rakuma` |
+| `shopping`（ショッピング検索） | `aliexpress`、`goofish`、`mercari`、`yahoo_auctions`、`yahoo_fleamarket`、`rakuma`、`rakuten`、`qoo10`、`yahoo_shopping`、`amazon` |
 
-## ツール一覧（全71件）
+## ツール一覧（全80件）
 
 ツール名・引数・返却形式は、統合前の各単体サーバーと完全に同一です。
 
@@ -45,6 +45,10 @@ Rustライブラリとしても使えます。自作ハーネスのデフォル�
 | ヤフオク（4件） | `yauction_search_products`、`yauction_get_product`、`yauction_get_reviews`、`yauction_suggest_keywords` |
 | Yahoo!フリマ（3件） | `yflea_search_products`、`yflea_get_product`、`yflea_get_reviews` |
 | 楽天ラクマ（3件） | `rakuma_search_products`、`rakuma_get_product`、`rakuma_get_reviews` |
+| 楽天市場（3件） | `rakuten_search_products`、`rakuten_get_product`、`rakuten_get_reviews` |
+| Qoo10（2件） | `qoo10_search_products`、`qoo10_get_product` |
+| Yahoo!ショッピング（2件） | `yshopping_search_products`、`yshopping_get_product` |
+| Amazon.co.jp（2件） | `amazon_search_products`、`amazon_get_product` |
 | 共通（1件） | `shopping_list_sources` |
 
 ### ZeroSearch共通
@@ -52,6 +56,13 @@ Rustライブラリとしても使えます。自作ハーネスのデフォル�
 | ツール | 内容 |
 |---|---|
 | `zero_list_categories` | カテゴリ、所属エンジン、対応ツールの一覧を返す |
+
+## プロバイダの補足（v0.2.0で追加した4件）
+
+- **楽天市場**: アプリのゲスト用BFFをそのまま使います。認証は不要です。詳細APIは部分成功で HTTP 207 を返すことがありますが、これは正常な形です。成否は中核データの有無で判定します。
+- **Qoo10**: アプリのモバイルAPIを使います。並び替えと絞り込みは、アプリの検索条件の全項目に対応します。商品詳細はネイティブAPIがないため、アプリのWebView表示を再現して取得します。ユーザーエージェントに含まれる端末由来のトークンは端末の外では再現できないため、形式を保った代替値を送ります。この形で実通信の受理を確認済みです。なお、このサービスは日本側からの接続でないと応答しません。
+- **Yahoo!ショッピング**: アプリのネイティブAPIを使います。appidはアプリ内蔵の定数で、認証は不要です。現行APIにレビュー一覧のエンドポイントはないため、レビューのツールは用意していません。検索結果には評価の集計値が含まれます。サジェストもパラメータが確定していないため、用意していません。
+- **Amazon.co.jp**: アプリに検索用のネイティブAPIはありません。アプリのWebView表示を通常のHTTP取得で再現します。使うのはアプリ形式のユーザーエージェントと、表示前にアプリが同期するCookieです。ブラウザエンジンは使いません。このサービスも日本側からの接続でないと応答しません。
 
 ## インストール
 

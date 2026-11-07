@@ -3941,6 +3941,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "shopping-mcp-amazon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "shopping-mcp-goofish"
 version = "0.1.1"
 dependencies = [
@@ -3975,11 +3987,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "shopping-mcp-qoo10"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "shopping-mcp-rakuma"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "shopping-mcp-rakuten"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "reqwest",
  "serde",
  "serde_json",
@@ -4004,6 +4041,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "shopping-mcp-yahoo-shopping"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "reqwest",
  "serde",
  "serde_json",
@@ -5687,7 +5735,7 @@ dependencies = [
 
 [[package]]
 name = "zero-search"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "baidu-mcp-provider",
@@ -5696,11 +5744,15 @@ dependencies = [
  "serde",
  "serde_json",
  "shopping-mcp-aliexpress",
+ "shopping-mcp-amazon",
  "shopping-mcp-goofish",
  "shopping-mcp-mercari",
+ "shopping-mcp-qoo10",
  "shopping-mcp-rakuma",
+ "shopping-mcp-rakuten",
  "shopping-mcp-yahoo-auctions",
  "shopping-mcp-yahoo-flea",
+ "shopping-mcp-yahoo-shopping",
  "tokio",
  "yahoo-search-mcp-provider",
  "yahoo-us-mcp-provider",
@@ -5719,7 +5771,7 @@ dependencies = [
 
 [[package]]
 name = "zero-search-mcp-server"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "baidu-mcp-provider",
@@ -5730,11 +5782,15 @@ dependencies = [
  "serde",
  "serde_json",
  "shopping-mcp-aliexpress",
+ "shopping-mcp-amazon",
  "shopping-mcp-goofish",
  "shopping-mcp-mercari",
+ "shopping-mcp-qoo10",
  "shopping-mcp-rakuma",
+ "shopping-mcp-rakuten",
  "shopping-mcp-yahoo-auctions",
  "shopping-mcp-yahoo-flea",
+ "shopping-mcp-yahoo-shopping",
  "tokio",
  "yahoo-search-mcp-provider",
  "yahoo-us-mcp-provider",

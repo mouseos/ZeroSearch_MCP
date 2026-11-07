@@ -1,9 +1,9 @@
 [package]
 name = "zero-search"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
-description = "Zero-config search library for AI harnesses: web search (Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo US, Yandex) and shopping search (AliExpress, Goofish, Mercari, Yahoo Auctions, Yahoo Flea Market, Rakuma) behind one unified API. No API key, no configuration."
+description = "Zero-config search library for AI harnesses: web search (Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo US, Yandex) and shopping search (AliExpress, Goofish, Mercari, Yahoo Auctions, Yahoo Flea Market, Rakuma, Rakuten, Qoo10, Yahoo Shopping, Amazon) behind one unified API. No API key, no configuration."
 repository = "https://github.com/mouseos/ZeroSearch_MCP"
 
 [lib]
@@ -28,3 +28,7 @@ shopping-mcp-mercari = { path = "../providers/mercari" }
 shopping-mcp-rakuma = { path = "../providers/rakuma" }
 shopping-mcp-yahoo-auctions = { path = "../providers/yahoo-auctions" }
 shopping-mcp-yahoo-flea = { path = "../providers/yahoo-flea" }
+shopping-mcp-rakuten = { path = "../providers/rakuten" }
+shopping-mcp-qoo10 = { path = "../providers/qoo10" }
+shopping-mcp-yahoo-shopping = { path = "../providers/yahoo-shopping" }
+shopping-mcp-amazon = { path = "../providers/amazon" }

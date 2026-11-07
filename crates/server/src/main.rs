@@ -1,9 +1,10 @@
 //! ZeroSearch MCP server — JSON-RPC 2.0 over stdio.
 //!
-//! One server for twelve providers in two categories: web search
+//! One server for sixteen providers in two categories: web search
 //! (Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo US, Yandex) and shopping
 //! search (AliExpress, Goofish, Mercari, Yahoo! Auctions, Yahoo!
-//! Flea Market, Rakuma). Tool names, arguments and result JSON are
+//! Flea Market, Rakuma, Rakuten, Qoo10, Yahoo! Shopping, Amazon
+//! Japan). Tool names, arguments and result JSON are
 //! identical to the standalone servers this code was merged from.
 
 #![windows_subsystem = "windows"]
@@ -32,6 +33,10 @@ pub struct Providers {
     pub rakuma: shopping_mcp_rakuma::RakumaClient,
     pub yauction: shopping_mcp_yahoo_auctions::YahooAuctionsClient,
     pub yflea: shopping_mcp_yahoo_flea::YahooFleaClient,
+    pub rakuten: shopping_mcp_rakuten::RakutenClient,
+    pub qoo10: shopping_mcp_qoo10::Qoo10Client,
+    pub yshopping: shopping_mcp_yahoo_shopping::YahooShoppingClient,
+    pub amazon: shopping_mcp_amazon::AmazonClient,
 }
 
 impl Providers {
@@ -49,6 +54,10 @@ impl Providers {
             rakuma: shopping_mcp_rakuma::RakumaClient::new(),
             yauction: shopping_mcp_yahoo_auctions::YahooAuctionsClient::new(),
             yflea: shopping_mcp_yahoo_flea::YahooFleaClient::new(),
+            rakuten: shopping_mcp_rakuten::RakutenClient::new(),
+            qoo10: shopping_mcp_qoo10::Qoo10Client::new(),
+            yshopping: shopping_mcp_yahoo_shopping::YahooShoppingClient::new(),
+            amazon: shopping_mcp_amazon::AmazonClient::new(),
         })
     }
 }
@@ -58,9 +67,10 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
 const INSTRUCTIONS: &str = "\
-ZeroSearch: twelve search providers behind one server, in two categories — web search \
+ZeroSearch: sixteen search providers behind one server, in two categories — web search \
 (baidu_*, yahoo_* for Yahoo! JAPAN, bing_*, naver_*, yahoo_us_*, yandex_*) and shopping search \
-(aliexpress_*, goofish_*, mercari_*, yauction_*, yflea_*, rakuma_*). No API key, login, \
+(aliexpress_*, goofish_*, mercari_*, yauction_*, yflea_*, rakuma_*, rakuten_*, qoo10_*, \
+yshopping_*, amazon_*). No API key, login, \
 environment variables or configuration are required for any provider. Call zero_list_categories \
 for the category / engine / tool map.
 
@@ -355,10 +365,10 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_exposes_all_71_tools() {
+    fn tools_list_exposes_all_80_tools() {
         let defs = tools::tool_definitions();
         let names: Vec<&str> = defs.iter().filter_map(|d| d["name"].as_str()).collect();
-        assert_eq!(names.len(), 71, "tools: {names:?}");
+        assert_eq!(names.len(), 80, "tools: {names:?}");
         for expected in [
             // web: baidu 5, yahoo 8, bing 7, naver 9, yahoo_us 6, yandex 6
             "baidu_search",
@@ -373,13 +383,22 @@ mod tests {
             "yahoo_us_list_verticals",
             "yandex_web_search",
             "yandex_list_verticals",
-            // shopping: 29
+            // shopping: 38
             "aliexpress_search_products",
             "goofish_search_products",
             "mercari_search_products",
             "yauction_search_products",
             "yflea_search_products",
             "rakuma_search_products",
+            "rakuten_search_products",
+            "rakuten_get_product",
+            "rakuten_get_reviews",
+            "qoo10_search_products",
+            "qoo10_get_product",
+            "yshopping_search_products",
+            "yshopping_get_product",
+            "amazon_search_products",
+            "amazon_get_product",
             "shopping_list_sources",
             // zero-search native
             "zero_list_categories",
@@ -413,15 +432,15 @@ mod tests {
         assert!(resp["result"]["isError"].is_null());
         let parsed = result_json(&resp);
         assert_eq!(parsed["server"], json!("ZeroSearch_MCP"));
-        assert_eq!(parsed["tool_count"], json!(71));
+        assert_eq!(parsed["tool_count"], json!(80));
         let cats = parsed["categories"].as_array().unwrap();
         assert_eq!(cats.len(), 2);
         assert_eq!(cats[0]["id"], json!("web"));
         assert_eq!(cats[0]["engines"].as_array().unwrap().len(), 6);
         assert_eq!(cats[1]["id"], json!("shopping"));
-        assert_eq!(cats[1]["engines"].as_array().unwrap().len(), 6);
+        assert_eq!(cats[1]["engines"].as_array().unwrap().len(), 10);
         assert_eq!(cats[1]["shared_tools"], json!(["shopping_list_sources"]));
-        // Per-engine tool counts: web 5+8+7+9+6+6 = 41, shopping 5+6+7+4+3+3 = 28 (+1 shared).
+        // Per-engine tool counts: web 5+8+7+9+6+6 = 41, shopping 5+6+7+4+3+3+3+2+2+2 = 37 (+1 shared).
         let web_tools: usize = cats[0]["engines"]
             .as_array()
             .unwrap()
@@ -435,7 +454,7 @@ mod tests {
             .iter()
             .map(|e| e["tools"].as_array().unwrap().len())
             .sum();
-        assert_eq!(shop_tools, 28);
+        assert_eq!(shop_tools, 37);
     }
 
     #[tokio::test]
@@ -458,7 +477,7 @@ mod tests {
         assert!(resp["result"]["isError"].is_null());
         let parsed = result_json(&resp);
         assert_eq!(parsed["server"], json!("ZeroSearch_MCP"));
-        assert_eq!(parsed["providers"].as_array().unwrap().len(), 6);
+        assert_eq!(parsed["providers"].as_array().unwrap().len(), 10);
     }
 
     // ── Live e2e (network). Run serially:

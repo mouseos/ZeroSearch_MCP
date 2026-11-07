@@ -92,6 +92,10 @@ pub fn categories() -> Value {
                     engine("yahoo_auctions", names_with_prefix(&shopping_defs, "yauction_")),
                     engine("yahoo_fleamarket", names_with_prefix(&shopping_defs, "yflea_")),
                     engine("rakuma", names_with_prefix(&shopping_defs, "rakuma_")),
+                    engine("rakuten", names_with_prefix(&shopping_defs, "rakuten_")),
+                    engine("qoo10", names_with_prefix(&shopping_defs, "qoo10_")),
+                    engine("yahoo_shopping", names_with_prefix(&shopping_defs, "yshopping_")),
+                    engine("amazon", names_with_prefix(&shopping_defs, "amazon_")),
                 ],
                 "shared_tools": shopping_shared,
             },
@@ -112,6 +116,10 @@ pub fn is_shopping_tool(name: &str) -> bool {
         "yauction_",
         "yflea_",
         "rakuma_",
+        "rakuten_",
+        "qoo10_",
+        "yshopping_",
+        "amazon_",
         "shopping_",
     ]
     .iter()

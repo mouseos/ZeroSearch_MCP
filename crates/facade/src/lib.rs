@@ -1,9 +1,10 @@
 //! `zero_search` — the ZeroSearch library.
 //!
-//! One zero-config entry point to twelve search providers: six web
+//! One zero-config entry point to sixteen search providers: six web
 //! engines (Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo US, Yandex) and
-//! six shopping providers (AliExpress, Goofish, Mercari, Yahoo!
-//! Auctions, Yahoo! Flea Market, Rakuma). No API key, no environment
+//! ten shopping providers (AliExpress, Goofish, Mercari, Yahoo!
+//! Auctions, Yahoo! Flea Market, Rakuma, Rakuten, Qoo10, Yahoo!
+//! Shopping, Amazon). No API key, no environment
 //! variables, no configuration files — construct a [`Client`] (or
 //! call the free functions) and search.
 //!
@@ -36,7 +37,7 @@ pub use yahoo_search;
 pub use yahoo_us_search;
 pub use yandex_search;
 
-/// All twelve provider crates under one module, by role.
+/// All sixteen provider crates under one module, by role.
 pub mod providers {
     pub use baidu_search;
     pub use bing_search;
@@ -46,11 +47,15 @@ pub mod providers {
     pub use yandex_search;
 
     pub use shopping_mcp_aliexpress as aliexpress;
+    pub use shopping_mcp_amazon as amazon;
     pub use shopping_mcp_goofish as goofish;
     pub use shopping_mcp_mercari as mercari;
+    pub use shopping_mcp_qoo10 as qoo10;
     pub use shopping_mcp_rakuma as rakuma;
+    pub use shopping_mcp_rakuten as rakuten;
     pub use shopping_mcp_yahoo_auctions as yahoo_auctions;
     pub use shopping_mcp_yahoo_flea as yahoo_flea;
+    pub use shopping_mcp_yahoo_shopping as yahoo_shopping;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +92,10 @@ impl Category {
                 "yahoo_auctions",
                 "yahoo_fleamarket",
                 "rakuma",
+                "rakuten",
+                "qoo10",
+                "yahoo_shopping",
+                "amazon",
             ],
         }
     }
@@ -146,6 +155,10 @@ pub enum ShopProvider {
     YahooAuctions,
     YahooFleaMarket,
     Rakuma,
+    Rakuten,
+    Qoo10,
+    YahooShopping,
+    Amazon,
 }
 
 impl ShopProvider {
@@ -158,6 +171,10 @@ impl ShopProvider {
             ShopProvider::YahooAuctions => "yahoo_auctions",
             ShopProvider::YahooFleaMarket => "yahoo_fleamarket",
             ShopProvider::Rakuma => "rakuma",
+            ShopProvider::Rakuten => "rakuten",
+            ShopProvider::Qoo10 => "qoo10",
+            ShopProvider::YahooShopping => "yahoo_shopping",
+            ShopProvider::Amazon => "amazon",
         }
     }
 
@@ -170,6 +187,10 @@ impl ShopProvider {
             ShopProvider::YahooAuctions,
             ShopProvider::YahooFleaMarket,
             ShopProvider::Rakuma,
+            ShopProvider::Rakuten,
+            ShopProvider::Qoo10,
+            ShopProvider::YahooShopping,
+            ShopProvider::Amazon,
         ]
     }
 }
@@ -244,6 +265,10 @@ pub struct Client {
     rakuma: shopping_mcp_rakuma::RakumaClient,
     yauction: shopping_mcp_yahoo_auctions::YahooAuctionsClient,
     yflea: shopping_mcp_yahoo_flea::YahooFleaClient,
+    rakuten: shopping_mcp_rakuten::RakutenClient,
+    qoo10: shopping_mcp_qoo10::Qoo10Client,
+    yshopping: shopping_mcp_yahoo_shopping::YahooShoppingClient,
+    amazon: shopping_mcp_amazon::AmazonClient,
 }
 
 impl Client {
@@ -263,6 +288,10 @@ impl Client {
             rakuma: shopping_mcp_rakuma::RakumaClient::new(),
             yauction: shopping_mcp_yahoo_auctions::YahooAuctionsClient::new(),
             yflea: shopping_mcp_yahoo_flea::YahooFleaClient::new(),
+            rakuten: shopping_mcp_rakuten::RakutenClient::new(),
+            qoo10: shopping_mcp_qoo10::Qoo10Client::new(),
+            yshopping: shopping_mcp_yahoo_shopping::YahooShoppingClient::new(),
+            amazon: shopping_mcp_amazon::AmazonClient::new(),
         })
     }
 
@@ -303,6 +332,18 @@ impl Client {
     }
     pub fn yahoo_flea(&self) -> &shopping_mcp_yahoo_flea::YahooFleaClient {
         &self.yflea
+    }
+    pub fn rakuten(&self) -> &shopping_mcp_rakuten::RakutenClient {
+        &self.rakuten
+    }
+    pub fn qoo10(&self) -> &shopping_mcp_qoo10::Qoo10Client {
+        &self.qoo10
+    }
+    pub fn yahoo_shopping(&self) -> &shopping_mcp_yahoo_shopping::YahooShoppingClient {
+        &self.yshopping
+    }
+    pub fn amazon(&self) -> &shopping_mcp_amazon::AmazonClient {
+        &self.amazon
     }
 
     /// Search one web engine (first page, provider-default size).
@@ -532,13 +573,49 @@ impl Client {
                 let result = self.rakuma.search(params).await?;
                 Ok(serde_json::to_value(result)?)
             }
+            ShopProvider::Rakuten => {
+                let params = shopping_mcp_rakuten::SearchParams {
+                    query: query.to_string(),
+                    limit: limit_i32,
+                    ..Default::default()
+                };
+                let result = self.rakuten.search_products(params).await?;
+                Ok(serde_json::to_value(result)?)
+            }
+            ShopProvider::Qoo10 => {
+                let params = shopping_mcp_qoo10::SearchParams {
+                    query: query.to_string(),
+                    limit: limit_i32,
+                    ..Default::default()
+                };
+                let result = self.qoo10.search_products(params).await?;
+                Ok(serde_json::to_value(result)?)
+            }
+            ShopProvider::YahooShopping => {
+                let params = shopping_mcp_yahoo_shopping::SearchParams {
+                    query: query.to_string(),
+                    limit: limit_i32,
+                    ..Default::default()
+                };
+                let result = self.yshopping.search_products(params).await?;
+                Ok(serde_json::to_value(result)?)
+            }
+            ShopProvider::Amazon => {
+                let params = shopping_mcp_amazon::SearchParams {
+                    query: query.to_string(),
+                    limit: limit_i32,
+                    ..Default::default()
+                };
+                let result = self.amazon.search_products(params).await?;
+                Ok(serde_json::to_value(result)?)
+            }
         }
     }
 
     /// Search every shopping provider with the same query. Each
     /// provider's success or failure is reported separately.
     /// Providers run sequentially and each performs a live request,
-    /// so callers should treat this as six searches, not one.
+    /// so callers should treat this as ten searches, not one.
     pub async fn search_products_all(&self, query: &str, limit: i64) -> Vec<ShopOutcome> {
         let mut out = Vec::with_capacity(ShopProvider::all().len());
         for &provider in ShopProvider::all() {
