@@ -9,8 +9,8 @@
 
 use yahoo_us_search::{
     build_search_url, clean_text, decode_entities, decode_redirect_url, parse_news_results,
-    parse_suggest_response, parse_video_results, parse_web_results, urlencode,
-    verticals, ImageItem, NewsItem, SearchResult, SuggestResult, Suggestion, VideoItem, WebItem,
+    parse_suggest_response, parse_video_results, parse_web_results, urlencode, verticals,
+    ImageItem, NewsItem, SearchResult, SuggestResult, Suggestion, VideoItem, WebItem,
     YahooUsSearchClient, PROVIDER,
 };
 
@@ -190,7 +190,7 @@ fn text_and_url_helpers_are_root_level() {
 }
 
 #[test]
-fn verticals_listing_marks_image_unsupported() {
+fn verticals_listing_includes_image_search() {
     let v = verticals();
     assert_eq!(v["provider"], PROVIDER);
     assert_eq!(v["auth"], "none");
@@ -200,8 +200,9 @@ fn verticals_listing_marks_image_unsupported() {
         .filter(|e| e["supported"] == true)
         .filter_map(|e| e["id"].as_str())
         .collect();
-    assert_eq!(supported, ["web", "video", "news", "suggest"]);
+    assert_eq!(supported, ["web", "video", "news", "suggest", "image"]);
     let image = entries.iter().find(|e| e["id"] == "image").unwrap();
-    assert_eq!(image["supported"], false);
-    assert!(image["tool"].is_null());
+    assert_eq!(image["supported"], true);
+    assert_eq!(image["tool"], "yahoo_us_image_search");
+    assert_eq!(image["paginated"], true);
 }
