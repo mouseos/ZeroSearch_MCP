@@ -14,7 +14,11 @@
 //! app itself shows them: `ItemReviewDeepLinkRouter` opens
 //! `https://shopping.yahoo.co.jp/review/item/list` in
 //! `WebViewActivity`, and that page's server-rendered data block
-//! carries the review list, so `get_reviews` reads it from there.
+//! carries the first 20 reviews, so `get_reviews` reads them from
+//! there. Further pages and the page's sort orders go through
+//! the continuation endpoint the page's own SPA posts to
+//! (`/hreviewapi/item-review/get`), carrying the `token` the
+//! page itself issued in its data block.
 //! The suggest endpoint's parameters are not established, so it
 //! is not provided here.
 
@@ -36,6 +40,24 @@ const REVIEW_PAGE_BASE: &str = "https://shopping.yahoo.co.jp/review/item/list";
 /// review page (the API calls keep the okhttp agent above). The
 /// mobile variant of the page carries the review data.
 const WEBVIEW_USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
+/// The review page's own continuation endpoint: the page's SPA
+/// posts here (with the `token` the page itself issued in its
+/// data block) when the reader loads more reviews or changes
+/// the sort order.
+const REVIEW_API_URL: &str = "https://shopping.yahoo.co.jp/hreviewapi/item-review/get";
+/// Sort orders for `yshopping_get_reviews` (the review page's
+/// own `sortType` values): おすすめ順 (the page's default),
+/// 評価の高い順, いいねの多い順, 新着順, and the pick-up
+/// selection.
+pub const REVIEW_SORTS: &[&str] = &[
+    "lengthDesc",
+    "ratingDesc",
+    "referenceCountDesc",
+    "postedTimeDesc",
+    "pickUp",
+];
+/// Page size the SPA requests from the continuation endpoint.
+const REVIEW_API_PAGE_SIZE: i32 = 10;
 
 /// Sort orders for `yshopping_search_products` (the app's
 /// `SearchResultV2Options$Order$Sort` enum names, sent verbatim).
@@ -541,8 +563,13 @@ pub fn extract_item_id(product: &str) -> String {
 pub struct ReviewParams {
     /// `{storeId}_{itemCode}` — the search result's `itemId`.
     pub item_id: String,
-    /// Cap on returned reviews. The page itself carries 20.
+    /// Cap on returned reviews.
     pub limit: i32,
+    /// Zero-based index of the first review to return.
+    pub offset: i32,
+    /// One of [`REVIEW_SORTS`]; empty means the page's default
+    /// (`lengthDesc`, おすすめ順).
+    pub sort: String,
 }
 
 impl Default for ReviewParams {
@@ -550,8 +577,58 @@ impl Default for ReviewParams {
         Self {
             item_id: String::new(),
             limit: 20,
+            offset: 0,
+            sort: String::new(),
         }
     }
+}
+
+/// Resolve a requested review sort to the `sortType` value the
+/// review page sends. Empty selects the page's default
+/// (`lengthDesc`). Returns `None` for unknown values. Pure;
+/// unit-tested.
+pub fn normalize_review_sort(sort: &str) -> Option<&'static str> {
+    match sort.trim() {
+        "" | "lengthDesc" => Some("lengthDesc"),
+        "ratingDesc" => Some("ratingDesc"),
+        "referenceCountDesc" => Some("referenceCountDesc"),
+        "postedTimeDesc" => Some("postedTimeDesc"),
+        "pickUp" => Some("pickUp"),
+        _ => None,
+    }
+}
+
+/// Build the body the review page's SPA posts to its
+/// continuation endpoint when loading more reviews. `token` is
+/// the value the page itself issued in its data block; the SPA
+/// leaves `rating` / `subReviewId` unset in this flow, so they
+/// are omitted. Pure; unit-tested.
+pub fn build_review_api_body(
+    store_id: &str,
+    page_key: &str,
+    sort_type: &str,
+    offset: i32,
+    limit: i32,
+    token: &str,
+) -> Value {
+    json!({
+        "storeId": store_id,
+        "pageKey": page_key,
+        "sortType": sort_type,
+        "offset": offset,
+        "limit": limit,
+        "token": token,
+    })
+}
+
+/// The `itemReview` object of a continuation endpoint response
+/// (`{itemReview, error}`), when the call succeeded. Pure;
+/// unit-tested.
+pub fn parse_review_api_item_review(body: &Value) -> Option<&Value> {
+    if !body["error"].is_null() {
+        return None;
+    }
+    body.get("itemReview").filter(|v| v.is_object())
 }
 
 /// Build the review page URL from a `{storeId}_{itemCode}` id
@@ -644,6 +721,49 @@ fn normalize_review(r: &Value) -> Value {
     })
 }
 
+/// Assemble the tool's result JSON from an `itemReview` object
+/// (from the page's data block or the continuation endpoint)
+/// and the normalized reviews selected from it. `next_offset`
+/// is the index the next call should start from, derived from
+/// how many reviews were consumed. Pure; unit-tested.
+fn build_reviews_result(
+    item_id: &str,
+    url: &str,
+    item_review: &Value,
+    reviews: Vec<Value>,
+    offset: i32,
+) -> Value {
+    let summary = &item_review["reviewSummary"];
+    let filtered_count = item_review["filteredCount"].as_i64();
+    let consumed = offset as i64 + reviews.len() as i64;
+    let available = filtered_count.or(summary["count"].as_i64()).unwrap_or(0);
+    let next_offset = if consumed < available {
+        Some(consumed)
+    } else {
+        item_review["nextOffset"].as_i64()
+    };
+    json!({
+        "provider": "yahoo_shopping",
+        "ok": true,
+        "item_id": item_id,
+        "url": url,
+        "total": summary["count"].as_i64(),
+        "average_rating": summary["average"].as_f64(),
+        "rating_counts": {
+            "1": summary["one"].as_i64().unwrap_or(0),
+            "2": summary["two"].as_i64().unwrap_or(0),
+            "3": summary["three"].as_i64().unwrap_or(0),
+            "4": summary["four"].as_i64().unwrap_or(0),
+            "5": summary["five"].as_i64().unwrap_or(0),
+        },
+        "reviews": reviews,
+        "count": reviews.len(),
+        "offset": offset,
+        "filtered_count": filtered_count,
+        "next_offset": next_offset,
+    })
+}
+
 /// Parse a review page's HTML into the tool's result JSON. Pure;
 /// unit-tested against a captured live page.
 pub fn parse_reviews_page(html: &str, item_id: &str, limit: i32) -> Value {
@@ -673,25 +793,7 @@ pub fn parse_reviews_page(html: &str, item_id: &str, limit: i32) -> Value {
                 .collect()
         })
         .unwrap_or_default();
-    let summary = &item_review["reviewSummary"];
-    json!({
-        "provider": "yahoo_shopping",
-        "ok": true,
-        "item_id": item_id,
-        "url": url,
-        "total": summary["count"].as_i64(),
-        "average_rating": summary["average"].as_f64(),
-        "rating_counts": {
-            "1": summary["one"].as_i64().unwrap_or(0),
-            "2": summary["two"].as_i64().unwrap_or(0),
-            "3": summary["three"].as_i64().unwrap_or(0),
-            "4": summary["four"].as_i64().unwrap_or(0),
-            "5": summary["five"].as_i64().unwrap_or(0),
-        },
-        "reviews": reviews,
-        "count": reviews.len(),
-        "next_offset": item_review["nextOffset"].as_i64(),
-    })
+    build_reviews_result(item_id, &url, item_review, reviews, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -700,6 +802,11 @@ pub fn parse_reviews_page(html: &str, item_id: &str, limit: i32) -> Value {
 
 pub struct YahooShoppingClient {
     client: Client,
+    /// Client for the review page and its continuation
+    /// endpoint. Unlike the API client it keeps cookies: the
+    /// page's SPA runs in a browser that carries the cookies
+    /// the page load set into its continuation calls.
+    web_client: Client,
 }
 
 impl YahooShoppingClient {
@@ -707,6 +814,12 @@ impl YahooShoppingClient {
         Self {
             client: Client::builder()
                 .user_agent(USER_AGENT)
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .expect("failed to build HTTP client"),
+            web_client: Client::builder()
+                .user_agent(WEBVIEW_USER_AGENT)
+                .cookie_store(true)
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .expect("failed to build HTTP client"),
@@ -763,24 +876,162 @@ impl YahooShoppingClient {
         Ok(parse_detail_response(&parsed))
     }
 
-    /// Fetch item reviews from the review page the app opens in
-    /// its WebView (the native API has no review-list endpoint).
-    pub async fn get_reviews(&self, params: ReviewParams) -> Result<Value> {
-        let item_id = extract_item_id(&params.item_id);
-        let url = build_review_url(&item_id)
+    /// Fetch the review page the app opens in its WebView and
+    /// return its URL and parsed `__NEXT_DATA__` block.
+    async fn fetch_review_page_data(&self, item_id: &str) -> Result<(String, Value)> {
+        let url = build_review_url(item_id)
             .ok_or_else(|| anyhow!("invalid item id for reviews: {item_id}"))?;
-        let resp = self
-            .client
-            .get(&url)
-            .header("User-Agent", WEBVIEW_USER_AGENT)
-            .send()
-            .await?;
+        let resp = self.web_client.get(&url).send().await?;
         let status = resp.status();
         if !status.is_success() {
             return Err(anyhow!("yahoo shopping review page returned HTTP {status}"));
         }
         let html = resp.text().await?;
-        Ok(parse_reviews_page(&html, &item_id, params.limit))
+        let data = extract_next_data(&html)
+            .ok_or_else(|| anyhow!("review page carried no __NEXT_DATA__ block"))?;
+        Ok((url, data))
+    }
+
+    /// One call to the review page's continuation endpoint,
+    /// made the way the page's SPA makes it: the SPA's body keys
+    /// and its page size of 10, carrying the page-issued
+    /// `token`, as a same-origin browser POST. Returns the raw
+    /// response body (`{itemReview, error}`).
+    async fn fetch_reviews_api(
+        &self,
+        store_id: &str,
+        page_key: &str,
+        sort_type: &str,
+        offset: i32,
+        token: &str,
+    ) -> Result<Value> {
+        let body = build_review_api_body(
+            store_id,
+            page_key,
+            sort_type,
+            offset,
+            REVIEW_API_PAGE_SIZE,
+            token,
+        );
+        // The SPA's call is a same-origin browser POST: it
+        // carries the page load's cookies (kept by web_client),
+        // the page as Referer, and the site as Origin.
+        let referer = build_review_url(&format!("{store_id}_{page_key}"))
+            .unwrap_or_else(|| REVIEW_PAGE_BASE.to_string());
+        let resp = self
+            .web_client
+            .post(REVIEW_API_URL)
+            .header("Referer", referer)
+            .header("Origin", "https://shopping.yahoo.co.jp")
+            .header("Accept", "application/json, text/plain, */*")
+            .json(&body)
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(anyhow!("yahoo shopping review api returned HTTP {status}"));
+        }
+        Ok(resp.json().await?)
+    }
+
+    /// Fetch item reviews from the review page the app opens in
+    /// its WebView (the native API has no review-list endpoint).
+    /// The first 20 reviews ride along with the page itself;
+    /// anything beyond them, and any sort order other than the
+    /// page's default, goes through the page's own continuation
+    /// endpoint with the token the page issued.
+    pub async fn get_reviews(&self, params: ReviewParams) -> Result<Value> {
+        let item_id = extract_item_id(&params.item_id);
+        let Some(sort_type) = normalize_review_sort(&params.sort) else {
+            return Ok(json!({
+                "provider": "yahoo_shopping",
+                "ok": false,
+                "item_id": item_id,
+                "error": format!(
+                    "unknown review sort: {} (expected one of {})",
+                    params.sort,
+                    REVIEW_SORTS.join(", ")
+                ),
+            }));
+        };
+        let offset = params.offset.max(0);
+        let limit = params.limit.clamp(1, 100);
+        let (url, data) = self.fetch_review_page_data(&item_id).await?;
+        let fail = |error: &str| {
+            json!({
+                "provider": "yahoo_shopping",
+                "ok": false,
+                "item_id": item_id,
+                "url": url,
+                "error": error,
+            })
+        };
+        let item_review = data.pointer("/props/pageProps/reviewEntity/itemReview");
+        let Some(item_review) = item_review.filter(|v| v.is_object()) else {
+            return Ok(fail("review page carried no reviewEntity.itemReview"));
+        };
+        // Requests the page's own payload covers are served
+        // from it directly, as the page itself renders them.
+        if sort_type == "lengthDesc" && offset + limit <= 20 {
+            let reviews: Vec<Value> = item_review["reviews"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .skip(offset as usize)
+                        .take(limit as usize)
+                        .map(normalize_review)
+                        .collect()
+                })
+                .unwrap_or_default();
+            return Ok(build_reviews_result(
+                &item_id,
+                &url,
+                item_review,
+                reviews,
+                offset,
+            ));
+        }
+        let token = data
+            .pointer("/props/pageProps/token")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("review page carried no token"))?;
+        let (store_id, page_key) = item_id
+            .split_once('_')
+            .ok_or_else(|| anyhow!("invalid item id for reviews: {item_id}"))?;
+        let mut collected: Vec<Value> = Vec::new();
+        let mut last: Option<Value> = None;
+        let mut cur = offset;
+        while (collected.len() as i32) < limit {
+            let body = self
+                .fetch_reviews_api(store_id, page_key, sort_type, cur, token)
+                .await?;
+            let Some(ir) = parse_review_api_item_review(&body) else {
+                return Ok(fail("review api returned an error or no itemReview"));
+            };
+            let ir = ir.clone();
+            let page: Vec<Value> = ir["reviews"]
+                .as_array()
+                .map(|arr| arr.iter().map(normalize_review).collect())
+                .unwrap_or_default();
+            let next = ir["nextOffset"].as_i64();
+            let filtered = ir["filteredCount"].as_i64().unwrap_or(0);
+            last = Some(ir);
+            if page.is_empty() {
+                break;
+            }
+            collected.extend(page);
+            match next {
+                Some(n) if n > cur as i64 && n < filtered => cur = n as i32,
+                _ => break,
+            }
+        }
+        collected.truncate(limit as usize);
+        let Some(last) = last else {
+            return Ok(fail("review api returned no data"));
+        };
+        Ok(build_reviews_result(
+            &item_id, &url, &last, collected, offset,
+        ))
     }
 }
 
@@ -968,6 +1219,118 @@ mod tests {
         let out = parse_reviews_page("<html><body>no data</body></html>", "a_b", 20);
         assert_eq!(out["ok"], json!(false));
         assert!(out["error"].as_str().unwrap().contains("__NEXT_DATA__"));
+    }
+
+    #[test]
+    fn review_sort_normalization() {
+        assert_eq!(normalize_review_sort(""), Some("lengthDesc"));
+        assert_eq!(normalize_review_sort("lengthDesc"), Some("lengthDesc"));
+        assert_eq!(normalize_review_sort("ratingDesc"), Some("ratingDesc"));
+        assert_eq!(
+            normalize_review_sort("referenceCountDesc"),
+            Some("referenceCountDesc")
+        );
+        assert_eq!(
+            normalize_review_sort("postedTimeDesc"),
+            Some("postedTimeDesc")
+        );
+        assert_eq!(normalize_review_sort("pickUp"), Some("pickUp"));
+        assert_eq!(normalize_review_sort("-latest"), None);
+        assert_eq!(normalize_review_sort("newest"), None);
+    }
+
+    #[test]
+    fn review_api_body_shape() {
+        // The exact body the page's SPA posts: its own keys, in
+        // its own page size, with the page-issued token. The
+        // fields the SPA leaves unset (rating, subReviewId,
+        // isHtml) are absent, not null.
+        let body =
+            build_review_api_body("dripcoffee", "rrich-500-4", "lengthDesc", 20, 10, "TOKEN");
+        assert_eq!(body["storeId"], json!("dripcoffee"));
+        assert_eq!(body["pageKey"], json!("rrich-500-4"));
+        assert_eq!(body["sortType"], json!("lengthDesc"));
+        assert_eq!(body["offset"], json!(20));
+        assert_eq!(body["limit"], json!(10));
+        assert_eq!(body["token"], json!("TOKEN"));
+        let keys: Vec<&String> = body.as_object().unwrap().keys().collect();
+        assert_eq!(keys.len(), 6, "{keys:?}");
+    }
+
+    #[test]
+    fn parse_review_api_response_shapes() {
+        // Error responses and malformed bodies yield None.
+        assert!(parse_review_api_item_review(&json!({"error": {"code": 500}})).is_none());
+        assert!(
+            parse_review_api_item_review(&json!({"itemReview": null, "error": null})).is_none()
+        );
+        assert!(parse_review_api_item_review(
+            &json!({"itemReview": {"reviews": []}, "error": null})
+        )
+        .is_some());
+    }
+
+    #[tokio::test]
+    #[ignore = "live test: run with --ignored"]
+    async fn test_live_reviews_pagination() {
+        let client = YahooShoppingClient::new();
+        let item_id = "dripcoffee_rrich-500-4";
+        // Send 1: the SSR page, for the page-issued token and
+        // the first page of reviews (default sort).
+        let (_url, data) = client.fetch_review_page_data(item_id).await.unwrap();
+        let token = data
+            .pointer("/props/pageProps/token")
+            .and_then(Value::as_str)
+            .expect("page token")
+            .to_string();
+        let ir0 = data
+            .pointer("/props/pageProps/reviewEntity/itemReview")
+            .expect("itemReview");
+        let page1_ids: Vec<String> = ir0["reviews"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(page1_ids.len(), 20);
+        // Send 2: the continuation endpoint at offset 20. This
+        // is the second page; it must not repeat page 1 (a new
+        // review posted in between can shift the window by a
+        // little, so a small overlap is tolerated).
+        let body = client
+            .fetch_reviews_api("dripcoffee", "rrich-500-4", "lengthDesc", 20, &token)
+            .await
+            .unwrap();
+        if let Ok(path) = std::env::var("ZERO_SEARCH_DUMP_REVIEW_API") {
+            std::fs::write(&path, serde_json::to_string_pretty(&body).unwrap()).unwrap();
+        }
+        let ir = parse_review_api_item_review(&body).expect("api itemReview");
+        let page2 = ir["reviews"].as_array().unwrap();
+        assert_eq!(page2.len(), 10, "{body}");
+        assert_eq!(ir["nextOffset"], json!(30));
+        let overlap = page2
+            .iter()
+            .filter(|r| page1_ids.contains(&r["id"].as_str().unwrap().to_string()))
+            .count();
+        assert!(overlap <= 2, "page 2 overlaps page 1 by {overlap}");
+        // Send 3: newest-first must come back time-ordered,
+        // which the default order is not.
+        let body = client
+            .fetch_reviews_api("dripcoffee", "rrich-500-4", "postedTimeDesc", 0, &token)
+            .await
+            .unwrap();
+        let ir = parse_review_api_item_review(&body).expect("api itemReview");
+        let times: Vec<i64> = ir["reviews"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["postedTime"].as_i64().unwrap())
+            .collect();
+        assert_eq!(times.len(), 10);
+        assert!(
+            times.windows(2).all(|w| w[0] >= w[1]),
+            "postedTimeDesc not ordered: {times:?}"
+        );
     }
 
     #[tokio::test]
