@@ -11,13 +11,20 @@
 //! `amzn-app-ctxt` is deliberately not sent: live verification
 //! succeeded without it, and its value embeds device serials.
 //!
+//! The fetches themselves are made with libcurl (the `curl`
+//! crate): the same requests sent through a different HTTP
+//! client stack are answered with a robot check (HTTP 503),
+//! while libcurl's requests — the requests the curl tool makes —
+//! are served. Only this provider uses libcurl; the rest of the
+//! workspace stays on reqwest.
+//!
 //! Note: Amazon serves these pages only to Japan-side access in
 //! practice; from other egress the request typically times out
 //! or is answered with a robot check.
 
 use anyhow::{anyhow, Result};
+use curl::easy::{Easy, HttpVersion, List};
 use regex::Regex;
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -373,7 +380,6 @@ pub fn parse_detail_html(html: &str, asin: &str) -> Option<Item> {
 // ---------------------------------------------------------------------------
 
 pub struct AmazonClient {
-    client: Client,
     cookies: Mutex<HashMap<String, String>>,
 }
 
@@ -389,15 +395,6 @@ impl AmazonClient {
         );
         jar.insert("amzn-app-id".to_string(), COOKIE_APP_ID.to_string());
         Self {
-            client: Client::builder()
-                // HTTP/1.1 only: the measured-working shape (the
-                // round2 verification fetches) is HTTP/1.1, and
-                // HTTP/2 negotiation stalls against this service
-                // in practice.
-                .http1_only()
-                .timeout(std::time::Duration::from_secs(60))
-                .build()
-                .expect("failed to build HTTP client"),
             cookies: Mutex::new(jar),
         }
     }
@@ -409,10 +406,11 @@ impl AmazonClient {
         pairs.join("; ")
     }
 
-    fn store_response_cookies(&self, headers: &reqwest::header::HeaderMap) {
+    /// Store the cookies from a response's `Set-Cookie` header
+    /// values (the part after the header name, one per entry).
+    fn store_response_cookies(&self, set_cookie_values: &[String]) {
         let mut jar = self.cookies.lock().unwrap();
-        for value in headers.get_all(reqwest::header::SET_COOKIE).iter() {
-            let Ok(s) = value.to_str() else { continue };
+        for s in set_cookie_values {
             let first = s.split(';').next().unwrap_or("");
             if let Some((k, v)) = first.split_once('=') {
                 jar.insert(k.trim().to_string(), v.trim().to_string());
@@ -421,27 +419,19 @@ impl AmazonClient {
     }
 
     async fn get_html(&self, url: &str) -> Result<String> {
-        let resp = self
-            .client
-            .get(url)
-            .header("User-Agent", USER_AGENT)
-            .header("Accept-Language", "ja-JP")
-            .header(
-                "Accept",
-                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            )
-            .header("Cookie", self.cookie_header())
-            .send()
-            .await?;
-        let status = resp.status();
-        self.store_response_cookies(resp.headers());
-        let html = resp.text().await?;
-        if status.as_u16() == 503 {
+        let cookie = self.cookie_header();
+        let url = url.to_string();
+        let (status, set_cookies, html) =
+            tokio::task::spawn_blocking(move || fetch_blocking(&url, &cookie))
+                .await
+                .map_err(|e| anyhow!("amazon fetch task failed: {e}"))??;
+        self.store_response_cookies(&set_cookies);
+        if status == 503 {
             return Err(anyhow!(
                 "amazon returned HTTP 503 (robot check; Japan-side access is required in practice)"
             ));
         }
-        if !status.is_success() {
+        if !(200..300).contains(&status) {
             return Err(anyhow!("amazon returned HTTP {status}"));
         }
         Ok(html)
@@ -503,6 +493,57 @@ impl AmazonClient {
             }),
         }
     }
+}
+
+/// One blocking libcurl fetch. Returns the final HTTP status,
+/// the response's `Set-Cookie` values, and the body as text.
+///
+/// The request is deliberately the request the curl tool makes:
+/// libcurl's own TLS and HTTP stacks, HTTP/1.1 (the
+/// measured-working shape from the round2 verification fetches;
+/// HTTP/2 negotiation stalls against this service in practice),
+/// and no proxy configuration of ours — libcurl applies its
+/// standard environment-based proxy behaviour exactly like the
+/// curl tool does.
+fn fetch_blocking(url: &str, cookie_header: &str) -> Result<(u32, Vec<String>, String)> {
+    let mut easy = Easy::new();
+    easy.url(url)?;
+    easy.follow_location(true)?;
+    easy.http_version(HttpVersion::V11)?;
+    // The curl crate defaults to CURLOPT_NOSIGNAL, so timeouts
+    // are not delivered as signals inside the multi-threaded
+    // server process.
+    easy.timeout(std::time::Duration::from_secs(60))?;
+    easy.useragent(USER_AGENT)?;
+    let mut headers = List::new();
+    headers.append("Accept-Language: ja-JP")?;
+    headers.append("Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")?;
+    headers.append(&format!("Cookie: {cookie_header}"))?;
+    easy.http_headers(headers)?;
+
+    let mut body: Vec<u8> = Vec::new();
+    let mut set_cookies: Vec<String> = Vec::new();
+    {
+        let mut transfer = easy.transfer();
+        transfer.write_function(|data| {
+            body.extend_from_slice(data);
+            Ok(data.len())
+        })?;
+        transfer.header_function(|line| {
+            let line = String::from_utf8_lossy(line);
+            let line = line.trim_end();
+            if let Some((name, value)) = line.split_once(':') {
+                if name.trim().eq_ignore_ascii_case("set-cookie") {
+                    set_cookies.push(value.trim().to_string());
+                }
+            }
+            true
+        })?;
+        transfer.perform()?;
+    }
+    let status = easy.response_code()?;
+    let html = String::from_utf8_lossy(&body).into_owned();
+    Ok((status, set_cookies, html))
 }
 
 impl Default for AmazonClient {
