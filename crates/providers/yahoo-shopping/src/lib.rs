@@ -570,6 +570,14 @@ pub struct ReviewParams {
     /// One of [`REVIEW_SORTS`]; empty means the page's default
     /// (`lengthDesc`, おすすめ順).
     pub sort: String,
+    /// Star-rating filter (the continuation endpoint's
+    /// `rating` body key). `None` leaves it unset, as the page
+    /// does until the reader picks a filter.
+    pub rating: Option<i32>,
+    /// Aspect filter: an id from the item's
+    /// `subReviewSummaries` (the endpoint's `subReviewId` key).
+    /// `None` leaves it unset.
+    pub sub_review_id: Option<i64>,
 }
 
 impl Default for ReviewParams {
@@ -579,8 +587,21 @@ impl Default for ReviewParams {
             limit: 20,
             offset: 0,
             sort: String::new(),
+            rating: None,
+            sub_review_id: None,
         }
     }
+}
+
+/// The review page's optional review filters, as its
+/// continuation endpoint takes them: `rating` is a star
+/// rating, `sub_review_id` an aspect id from the item's
+/// `subReviewSummaries`. Both stay unset until the reader
+/// picks them.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReviewFilters {
+    pub rating: Option<i32>,
+    pub sub_review_id: Option<i64>,
 }
 
 /// Resolve a requested review sort to the `sortType` value the
@@ -600,9 +621,10 @@ pub fn normalize_review_sort(sort: &str) -> Option<&'static str> {
 
 /// Build the body the review page's SPA posts to its
 /// continuation endpoint when loading more reviews. `token` is
-/// the value the page itself issued in its data block; the SPA
-/// leaves `rating` / `subReviewId` unset in this flow, so they
-/// are omitted. Pure; unit-tested.
+/// the value the page itself issued in its data block. The SPA
+/// sends `rating` / `subReviewId` only once the reader picks
+/// those filters, so they are included only when set. Pure;
+/// unit-tested.
 pub fn build_review_api_body(
     store_id: &str,
     page_key: &str,
@@ -610,15 +632,23 @@ pub fn build_review_api_body(
     offset: i32,
     limit: i32,
     token: &str,
+    filters: ReviewFilters,
 ) -> Value {
-    json!({
+    let mut body = json!({
         "storeId": store_id,
         "pageKey": page_key,
         "sortType": sort_type,
         "offset": offset,
         "limit": limit,
         "token": token,
-    })
+    });
+    if let Some(rating) = filters.rating {
+        body["rating"] = json!(rating);
+    }
+    if let Some(sub_review_id) = filters.sub_review_id {
+        body["subReviewId"] = json!(sub_review_id);
+    }
+    body
 }
 
 /// The `itemReview` object of a continuation endpoint response
@@ -904,6 +934,7 @@ impl YahooShoppingClient {
         sort_type: &str,
         offset: i32,
         token: &str,
+        filters: ReviewFilters,
     ) -> Result<Value> {
         let body = build_review_api_body(
             store_id,
@@ -912,6 +943,7 @@ impl YahooShoppingClient {
             offset,
             REVIEW_API_PAGE_SIZE,
             token,
+            filters,
         );
         // The SPA's call is a same-origin browser POST: it
         // carries the page load's cookies (kept by web_client),
@@ -937,9 +969,10 @@ impl YahooShoppingClient {
     /// Fetch item reviews from the review page the app opens in
     /// its WebView (the native API has no review-list endpoint).
     /// The first 20 reviews ride along with the page itself;
-    /// anything beyond them, and any sort order other than the
-    /// page's default, goes through the page's own continuation
-    /// endpoint with the token the page issued.
+    /// anything beyond them, any sort order other than the
+    /// page's default, and any rating / aspect filter goes
+    /// through the page's own continuation endpoint with the
+    /// token the page issued.
     pub async fn get_reviews(&self, params: ReviewParams) -> Result<Value> {
         let item_id = extract_item_id(&params.item_id);
         let Some(sort_type) = normalize_review_sort(&params.sort) else {
@@ -972,7 +1005,13 @@ impl YahooShoppingClient {
         };
         // Requests the page's own payload covers are served
         // from it directly, as the page itself renders them.
-        if sort_type == "lengthDesc" && offset + limit <= 20 {
+        // The payload is unfiltered, so any filter goes through
+        // the continuation endpoint instead.
+        if sort_type == "lengthDesc"
+            && offset + limit <= 20
+            && params.rating.is_none()
+            && params.sub_review_id.is_none()
+        {
             let reviews: Vec<Value> = item_review["reviews"]
                 .as_array()
                 .map(|arr| {
@@ -1003,7 +1042,17 @@ impl YahooShoppingClient {
         let mut cur = offset;
         while (collected.len() as i32) < limit {
             let body = self
-                .fetch_reviews_api(store_id, page_key, sort_type, cur, token)
+                .fetch_reviews_api(
+                    store_id,
+                    page_key,
+                    sort_type,
+                    cur,
+                    token,
+                    ReviewFilters {
+                        rating: params.rating,
+                        sub_review_id: params.sub_review_id,
+                    },
+                )
                 .await?;
             let Some(ir) = parse_review_api_item_review(&body) else {
                 return Ok(fail("review api returned an error or no itemReview"));
@@ -1245,8 +1294,15 @@ mod tests {
         // its own page size, with the page-issued token. The
         // fields the SPA leaves unset (rating, subReviewId,
         // isHtml) are absent, not null.
-        let body =
-            build_review_api_body("dripcoffee", "rrich-500-4", "lengthDesc", 20, 10, "TOKEN");
+        let body = build_review_api_body(
+            "dripcoffee",
+            "rrich-500-4",
+            "lengthDesc",
+            20,
+            10,
+            "TOKEN",
+            ReviewFilters::default(),
+        );
         assert_eq!(body["storeId"], json!("dripcoffee"));
         assert_eq!(body["pageKey"], json!("rrich-500-4"));
         assert_eq!(body["sortType"], json!("lengthDesc"));
@@ -1255,6 +1311,49 @@ mod tests {
         assert_eq!(body["token"], json!("TOKEN"));
         let keys: Vec<&String> = body.as_object().unwrap().keys().collect();
         assert_eq!(keys.len(), 6, "{keys:?}");
+    }
+
+    #[test]
+    fn review_api_body_with_filters() {
+        // Once the reader picks the page's filters, the SPA
+        // sends them as `rating` / `subReviewId`; both ride
+        // along with the base keys.
+        let body = build_review_api_body(
+            "dripcoffee",
+            "rrich-500-4",
+            "postedTimeDesc",
+            0,
+            10,
+            "TOKEN",
+            ReviewFilters {
+                rating: Some(5),
+                sub_review_id: Some(29),
+            },
+        );
+        assert_eq!(body["rating"], json!(5));
+        assert_eq!(body["subReviewId"], json!(29));
+        let keys: Vec<&String> = body.as_object().unwrap().keys().collect();
+        assert_eq!(keys.len(), 8, "{keys:?}");
+    }
+
+    #[test]
+    fn parse_review_api_page2_fixture() {
+        // The continuation endpoint's second page as it came
+        // back live (offset 20, the page's default sort): ten
+        // reviews continuing the SSR page's twenty, the next
+        // window at 30, and the full filtered count.
+        let raw = include_str!("../tests/fixtures/reviews-api-page2.json");
+        let body: Value = serde_json::from_str(raw).unwrap();
+        let ir = parse_review_api_item_review(&body).expect("itemReview");
+        assert_eq!(ir["nextOffset"], json!(30));
+        assert_eq!(ir["filteredCount"], json!(7394));
+        let reviews = ir["reviews"].as_array().unwrap();
+        assert_eq!(reviews.len(), 10);
+        let first = normalize_review(&reviews[0]);
+        assert!(!first["id"].as_str().unwrap().is_empty());
+        assert!(!first["author"].as_str().unwrap().is_empty());
+        assert!(!first["body"].as_str().unwrap().is_empty());
+        assert!(first["rating"].as_i64().unwrap() >= 1);
     }
 
     #[test]
@@ -1298,7 +1397,14 @@ mod tests {
         // review posted in between can shift the window by a
         // little, so a small overlap is tolerated).
         let body = client
-            .fetch_reviews_api("dripcoffee", "rrich-500-4", "lengthDesc", 20, &token)
+            .fetch_reviews_api(
+                "dripcoffee",
+                "rrich-500-4",
+                "lengthDesc",
+                20,
+                &token,
+                ReviewFilters::default(),
+            )
             .await
             .unwrap();
         if let Ok(path) = std::env::var("ZERO_SEARCH_DUMP_REVIEW_API") {
@@ -1316,7 +1422,14 @@ mod tests {
         // Send 3: newest-first must come back time-ordered,
         // which the default order is not.
         let body = client
-            .fetch_reviews_api("dripcoffee", "rrich-500-4", "postedTimeDesc", 0, &token)
+            .fetch_reviews_api(
+                "dripcoffee",
+                "rrich-500-4",
+                "postedTimeDesc",
+                0,
+                &token,
+                ReviewFilters::default(),
+            )
             .await
             .unwrap();
         let ir = parse_review_api_item_review(&body).expect("api itemReview");

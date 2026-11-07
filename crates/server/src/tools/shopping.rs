@@ -520,13 +520,15 @@ pub fn tool_definitions() -> Vec<Value> {
             },
             "required": ["product"]
         })),
-        tool_def("yshopping_get_reviews", "Fetch Yahoo! Shopping Japan product reviews. The app's native API has no review-list endpoint; the app itself shows reviews by opening the review page (shopping.yahoo.co.jp/review/item/list) in a WebView, and this tool reads reviews from that page's server-rendered data and, for anything beyond the first 20 or a non-default sort, from the continuation endpoint the page's own SPA uses. product is the search result's product_id (\"{storeId}_{itemCode}\") or a store product URL. offset is the zero-based index of the first review to return (page through results with offset + count, or the returned next_offset). sort is one of the page's own sort orders: lengthDesc (default, おすすめ順), ratingDesc (評価の高い順), referenceCountDesc (いいねの多い順), postedTimeDesc (新着順), pickUp. Returns the rating summary (total, average, per-star counts), the reviews, and next_offset.", json!({
+        tool_def("yshopping_get_reviews", "Fetch Yahoo! Shopping Japan product reviews. The app's native API has no review-list endpoint; the app itself shows reviews by opening the review page (shopping.yahoo.co.jp/review/item/list) in a WebView, and this tool reads reviews from that page's server-rendered data and, for anything beyond the first 20, a non-default sort, or a filter, from the continuation endpoint the page's own SPA uses. product is the search result's product_id (\"{storeId}_{itemCode}\") or a store product URL. offset is the zero-based index of the first review to return (page through results with offset + count, or the returned next_offset). sort is one of the page's own sort orders: lengthDesc (default, おすすめ順), ratingDesc (評価の高い順), referenceCountDesc (いいねの多い順), postedTimeDesc (新着順), pickUp. rating and sub_review_id apply the page's own review filters. Returns the rating summary (total, average, per-star counts), the reviews, and next_offset.", json!({
             "type": "object",
             "properties": {
                 "product": {"type": "string", "description": "\"{storeId}_{itemCode}\" or store product URL"},
                 "limit": {"type": "integer", "default": 20, "description": "Max reviews to return"},
                 "offset": {"type": "integer", "default": 0, "description": "Zero-based index of the first review to return"},
-                "sort": {"type": "string", "default": "lengthDesc", "description": "lengthDesc | ratingDesc | referenceCountDesc | postedTimeDesc | pickUp"}
+                "sort": {"type": "string", "default": "lengthDesc", "description": "lengthDesc | ratingDesc | referenceCountDesc | postedTimeDesc | pickUp"},
+                "rating": {"type": "integer", "description": "Only reviews with this star rating (the review page's rating filter)"},
+                "sub_review_id": {"type": "integer", "description": "Only reviews that rated this aspect; an id from the item's aspect summaries (subReviewSummaries)"}
             },
             "required": ["product"]
         })),
@@ -1074,6 +1076,8 @@ pub async fn dispatch(tool: &str, args: &Value, p: &Providers) -> Result<Value> 
                 limit: int_param(args, "limit", 20),
                 offset: int_param(args, "offset", 0),
                 sort: str_param(args, "sort"),
+                rating: opt_i64(args, "rating").map(|v| v as i32),
+                sub_review_id: opt_i64(args, "sub_review_id"),
             };
             let result = p.yshopping.get_reviews(params).await?;
             Ok(result)
