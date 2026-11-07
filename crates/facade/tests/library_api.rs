@@ -4,14 +4,15 @@
 //! covered by the server e2e tests and the harness example.
 
 use zero_search::{
-    Category, CategoryOutcome, Client, EngineOutcome, SearchItem, ShopOutcome, ShopProvider,
-    WebEngine,
+    Category, CategoryOutcome, Client, EngineOutcome, MediaOutcome, MediaProvider, SearchItem,
+    ShopOutcome, ShopProvider, WebEngine,
 };
 
 #[test]
-fn categories_cover_sixteen_engines() {
+fn categories_cover_nineteen_engines() {
     assert_eq!(Category::Web.id(), "web");
     assert_eq!(Category::Shopping.id(), "shopping");
+    assert_eq!(Category::Media.id(), "media");
     assert_eq!(
         Category::Web.engine_ids(),
         &["baidu", "yahoo_jp", "bing", "naver", "yahoo_us", "yandex"]
@@ -31,8 +32,12 @@ fn categories_cover_sixteen_engines() {
             "amazon"
         ]
     );
+    assert_eq!(
+        Category::Media.engine_ids(),
+        &["youtube", "bilibili", "csdn"]
+    );
     let total: usize = Category::all().iter().map(|c| c.engine_ids().len()).sum();
-    assert_eq!(total, 16);
+    assert_eq!(total, 19);
 }
 
 #[test]
@@ -52,6 +57,14 @@ fn engine_registries_are_complete_and_unique() {
     sorted.dedup();
     assert_eq!(sorted.len(), 10, "shop provider ids must be unique");
     assert_eq!(shop, Category::Shopping.engine_ids());
+
+    let media: Vec<&str> = MediaProvider::all().iter().map(|p| p.id()).collect();
+    assert_eq!(media.len(), 3);
+    let mut sorted = media.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(sorted.len(), 3, "media provider ids must be unique");
+    assert_eq!(media, Category::Media.engine_ids());
 }
 
 #[test]
@@ -89,6 +102,15 @@ fn outcome_types_serialise() {
     }]);
     let value = serde_json::to_value(&shop).unwrap();
     assert_eq!(value[0]["provider"], serde_json::json!("mercari"));
+
+    let media = CategoryOutcome::Media(vec![MediaOutcome {
+        provider: MediaProvider::Bilibili,
+        ok: true,
+        result: Some(serde_json::json!({"ok": true})),
+        error: None,
+    }]);
+    let value = serde_json::to_value(&media).unwrap();
+    assert_eq!(value[0]["provider"], serde_json::json!("bilibili"));
 }
 
 #[test]
@@ -113,6 +135,9 @@ fn client_constructs_without_configuration() {
     let _ = client.qoo10();
     let _ = client.yahoo_shopping();
     let _ = client.amazon();
+    let _ = client.youtube();
+    let _ = client.bilibili();
+    let _ = client.csdn();
     // And through the providers module under their original names.
     let _ = zero_search::providers::bing_search::PROVIDER;
     let _ = zero_search::providers::naver_search::PROVIDER;
