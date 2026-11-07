@@ -421,10 +421,12 @@ impl AmazonClient {
     async fn get_html(&self, url: &str) -> Result<String> {
         let cookie = self.cookie_header();
         let url = url.to_string();
-        let (status, set_cookies, html) =
+        let dump_url = url.clone();
+        let (status, set_cookies, headers, html) =
             tokio::task::spawn_blocking(move || fetch_blocking(&url, &cookie))
                 .await
                 .map_err(|e| anyhow!("amazon fetch task failed: {e}"))??;
+        dump_response(&dump_url, status, &headers, &html);
         self.store_response_cookies(&set_cookies);
         if status == 503 {
             return Err(anyhow!(
@@ -495,20 +497,66 @@ impl AmazonClient {
     }
 }
 
+/// Diagnostics aid: when the `ZERO_SEARCH_AMAZON_DUMP_DIR`
+/// environment variable names a directory, each fetched response
+/// is written there (status line + headers with cookie values
+/// redacted, and the body) for offline inspection. Off by default;
+/// nothing is written unless the variable is set.
+fn dump_response(url: &str, status: u32, headers: &[String], html: &str) {
+    let Ok(dir) = std::env::var("ZERO_SEARCH_AMAZON_DUMP_DIR") else {
+        return;
+    };
+    if dir.is_empty() {
+        return;
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let dir = std::path::Path::new(&dir);
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let mut head = format!("url: {url}\nstatus: {status}\n");
+    for h in headers {
+        if let Some((name, _)) = h.split_once(':') {
+            if name.trim().eq_ignore_ascii_case("set-cookie") {
+                head.push_str("set-cookie: <redacted>\n");
+                continue;
+            }
+        }
+        head.push_str(h);
+        head.push('\n');
+    }
+    let _ = std::fs::write(dir.join(format!("{stamp}.headers.txt")), head);
+    let _ = std::fs::write(dir.join(format!("{stamp}.html")), html);
+}
+
 /// One blocking libcurl fetch. Returns the final HTTP status,
-/// the response's `Set-Cookie` values, and the body as text.
+/// the response's `Set-Cookie` values, the response header lines,
+/// and the body as text.
 ///
 /// The request is deliberately the request the curl tool makes:
-/// libcurl's own TLS and HTTP stacks, HTTP/1.1 (the
-/// measured-working shape from the round2 verification fetches;
-/// HTTP/2 negotiation stalls against this service in practice),
-/// and no proxy configuration of ours — libcurl applies its
-/// standard environment-based proxy behaviour exactly like the
-/// curl tool does.
-fn fetch_blocking(url: &str, cookie_header: &str) -> Result<(u32, Vec<String>, String)> {
+/// libcurl's own TLS stack with each platform's standard TLS
+/// backend. The transfer itself runs over HTTP/1.1 (the shape
+/// the integrated client is live-verified with; the bundled
+/// static libcurl's HTTP/2 support is not relied on). No proxy
+/// configuration of ours — libcurl applies its standard
+/// environment-based proxy behaviour exactly like the curl tool
+/// does.
+fn fetch_blocking(
+    url: &str,
+    cookie_header: &str,
+) -> Result<(u32, Vec<String>, Vec<String>, String)> {
     let mut easy = Easy::new();
     easy.url(url)?;
     easy.follow_location(true)?;
+    // Advertise every built-in content encoding and let libcurl
+    // decode the response: the service answers with
+    // `Content-Encoding: gzip`, and without this the body comes
+    // back as raw compressed bytes that no HTML extraction can
+    // read (the cause of "ok with 0 items" in live checks).
+    easy.accept_encoding("")?;
     easy.http_version(HttpVersion::V11)?;
     // The curl crate defaults to CURLOPT_NOSIGNAL, so timeouts
     // are not delivered as signals inside the multi-threaded
@@ -523,6 +571,7 @@ fn fetch_blocking(url: &str, cookie_header: &str) -> Result<(u32, Vec<String>, S
 
     let mut body: Vec<u8> = Vec::new();
     let mut set_cookies: Vec<String> = Vec::new();
+    let mut header_lines: Vec<String> = Vec::new();
     {
         let mut transfer = easy.transfer();
         transfer.write_function(|data| {
@@ -532,6 +581,9 @@ fn fetch_blocking(url: &str, cookie_header: &str) -> Result<(u32, Vec<String>, S
         transfer.header_function(|line| {
             let line = String::from_utf8_lossy(line);
             let line = line.trim_end();
+            if !line.is_empty() {
+                header_lines.push(line.to_string());
+            }
             if let Some((name, value)) = line.split_once(':') {
                 if name.trim().eq_ignore_ascii_case("set-cookie") {
                     set_cookies.push(value.trim().to_string());
@@ -543,7 +595,7 @@ fn fetch_blocking(url: &str, cookie_header: &str) -> Result<(u32, Vec<String>, S
     }
     let status = easy.response_code()?;
     let html = String::from_utf8_lossy(&body).into_owned();
-    Ok((status, set_cookies, html))
+    Ok((status, set_cookies, header_lines, html))
 }
 
 impl Default for AmazonClient {
@@ -610,6 +662,22 @@ mod tests {
         assert_eq!(first.sponsored, Some(true));
         assert!(first.url.ends_with(&first.product_id));
         assert!(first.price.is_some());
+        assert!(first.image.as_ref().unwrap().contains("media-amazon.com"));
+    }
+
+    #[test]
+    fn parse_search_fixture_live2() {
+        // Excerpt of the page the integrated client received on
+        // its first successful live search, after the
+        // content-decoding fix: the service sends the body
+        // gzip-encoded, and extraction runs on the decoded text.
+        let html = include_str!("../tests/fixtures/search-live2.html");
+        let items = parse_search_html(html, 20);
+        assert!(items.len() >= 3, "got {} items", items.len());
+        let first = &items[0];
+        assert_eq!(first.product_id, "B0FNRL2QMT");
+        assert!(first.title.contains("Anker Soundcore P31i"));
+        assert_eq!(first.price.as_ref().unwrap().value, 4990);
         assert!(first.image.as_ref().unwrap().contains("media-amazon.com"));
     }
 
