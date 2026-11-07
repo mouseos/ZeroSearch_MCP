@@ -1,0 +1,36 @@
+[package]
+name = "zero-search-mcp-server"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "ZeroSearch MCP server — Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo (US), Yandex, AliExpress, Goofish, Mercari, Yahoo Auctions, Yahoo Flea Market and Rakuma behind one stdio MCP server. No API key, no configuration."
+repository = "https://github.com/mouseos/ZeroSearch_MCP"
+
+[[bin]]
+name = "zero-search-mcp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Used directly in the per-engine tools modules to classify provider
+# errors into the unified `{kind, message}` error form.
+reqwest = { workspace = true }
+
+baidu-mcp-provider = { path = "../providers/baidu" }
+yahoo-search-mcp-provider = { path = "../providers/yahoo" }
+bing-mcp-provider = { path = "../providers/bing" }
+naver-mcp-provider = { path = "../providers/naver" }
+yahoo-us-mcp-provider = { path = "../providers/yahoo-us" }
+yandex-mcp-provider = { path = "../providers/yandex" }
+shopping-mcp-aliexpress = { path = "../providers/aliexpress" }
+shopping-mcp-goofish = { path = "../providers/goofish" }
+shopping-mcp-mercari = { path = "../providers/mercari" }
+shopping-mcp-rakuma = { path = "../providers/rakuma" }
+shopping-mcp-yahoo-auctions = { path = "../providers/yahoo-auctions" }
+shopping-mcp-yahoo-flea = { path = "../providers/yahoo-flea" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

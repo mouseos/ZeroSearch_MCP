@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Build & offline tests
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev libxcb-render0-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Offline tests
+        # Live search tests are named e2e_* and run in the separate job below,
+        # so this job stays green regardless of network conditions.
+        run: cargo test --workspace -- --skip e2e_
+
+  live:
+    name: Live search tests (serial)
+    runs-on: ubuntu-latest
+    # Informational: a failure here means Bing changed something, not that the
+    # change under review is broken.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run live end-to-end tests
+        run: cargo test -p zero-search-mcp-server -- e2e_ --test-threads=1
+
+  smoke:
+    name: MCP stdio smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build server
+        run: cargo build -p zero-search-mcp-server
+
+      - name: Speak JSON-RPC over stdio
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"zero_list_categories","arguments":{}}}' \
+            | ./target/debug/zero-search-mcp > out.jsonl
+
+          cat out.jsonl
+          grep -q '"ZeroSearch_MCP"' out.jsonl
+          grep -q '"bing_web_search"' out.jsonl
+          grep -q '"bing_image_search"' out.jsonl
+          grep -q '"zero_list_categories"' out.jsonl
+          grep -q '"mercari_search_products"' out.jsonl
+          test "$(wc -l < out.jsonl)" -eq 3

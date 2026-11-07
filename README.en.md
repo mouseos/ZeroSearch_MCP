@@ -1,0 +1,146 @@
+# ZeroSearch MCP
+
+Six search engines and six shopping sites behind one MCP server.
+
+**The only setup is registering the server. No API key. No environment variables.**
+Point your MCP config at the binary and it works.
+
+Web search: Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo (US), Yandex.
+Shopping search: AliExpress, Goofish (Xianyu), Mercari, Yahoo! Auctions, Yahoo! Flea Market, Rakuma.
+Every provider works anonymously, with no login.
+
+It also ships as a Rust library, with a unified API meant to be dropped into your own agent harness as its default search tool.
+
+## Categories and engines
+
+Engines fall into two categories. The `zero_list_categories` tool returns this mapping over MCP.
+
+| Category | Engines |
+|---|---|
+| `web` | `baidu`, `yahoo_jp`, `bing`, `naver`, `yahoo_us`, `yandex` |
+| `shopping` | `aliexpress`, `goofish`, `mercari`, `yahoo_auctions`, `yahoo_fleamarket`, `rakuma` |
+
+## Tools (71 total)
+
+Tool names, arguments and result JSON are identical to the standalone servers this project merged.
+
+### web
+
+| Engine | Tools |
+|---|---|
+| Baidu (5) | `baidu_search`, `baidu_search_page`, `baidu_parse_search_results`, `baidu_build_search_url`, `baidu_list_sources` |
+| Yahoo! JAPAN (8) | `yahoo_web_search`, `yahoo_image_search`, `yahoo_video_search`, `yahoo_news_search`, `yahoo_realtime_search`, `yahoo_chiebukuro_search`, `yahoo_suggest_keywords`, `yahoo_list_verticals` |
+| Bing (7) | `bing_web_search`, `bing_image_search`, `bing_video_search`, `bing_news_search`, `bing_suggest`, `bing_build_search_url`, `bing_list_verticals` |
+| Naver (9) | `naver_search`, `naver_web_search`, `naver_image_search`, `naver_news_search`, `naver_video_search`, `naver_blog_search`, `naver_suggest`, `naver_build_search_url`, `naver_list_verticals` |
+| Yahoo (US) (6) | `yahoo_us_web_search`, `yahoo_us_video_search`, `yahoo_us_news_search`, `yahoo_us_suggest`, `yahoo_us_build_search_url`, `yahoo_us_list_verticals` |
+| Yandex (6) | `yandex_web_search`, `yandex_image_search`, `yandex_video_search`, `yandex_suggest`, `yandex_build_search_url`, `yandex_list_verticals` |
+
+### shopping
+
+| Provider | Tools |
+|---|---|
+| AliExpress (5) | `aliexpress_search_products`, `aliexpress_get_product`, `aliexpress_suggest_keywords`, `aliexpress_get_reviews`, `aliexpress_search_store_products` |
+| Goofish (6) | `goofish_search_products`, `goofish_get_product`, `goofish_suggest_keywords`, `goofish_get_comments`, `goofish_get_recommendations`, `goofish_home_feed` |
+| Mercari (7) | `mercari_search_products`, `mercari_get_product`, `mercari_search_seller_products`, `mercari_suggest_keywords`, `mercari_search_brands`, `mercari_search_categories`, `mercari_get_reviews` |
+| Yahoo! Auctions (4) | `yauction_search_products`, `yauction_get_product`, `yauction_get_reviews`, `yauction_suggest_keywords` |
+| Yahoo! Flea Market (3) | `yflea_search_products`, `yflea_get_product`, `yflea_get_reviews` |
+| Rakuma (3) | `rakuma_search_products`, `rakuma_get_product`, `rakuma_get_reviews` |
+| Shared (1) | `shopping_list_sources` |
+
+### ZeroSearch
+
+| Tool | What it does |
+|---|---|
+| `zero_list_categories` | Lists the categories, their engines, and each engine's tools |
+
+## Install
+
+Download the ZIP for your OS from Releases and extract it.
+
+1. Run `zero-search-mcp-launcher` and click Install for your agent, or
+2. Run `zero-search-mcp setup` in a terminal and paste the JSON it prints into your MCP config.
+
+The config is just this:
+
+```json
+{
+  "mcpServers": {
+    "ZeroSearch_MCP": { "command": "/path/to/zero-search-mcp", "args": [] }
+  }
+}
+```
+
+Goofish is not an exception. The server finds and starts its signing runtime by itself, and generates its own device identity. The first Goofish call can take a few minutes while the signing runtime boots. See [runtime/goofish](runtime/goofish/README.md) for how the runtime bundle is assembled.
+
+## Use as a library
+
+The `zero_search` crate is the unified API. Every provider crate is re-exported, so the raw clients and types stay reachable too.
+
+```toml
+[dependencies]
+zero-search = { git = "https://github.com/mouseos/ZeroSearch_MCP" }
+tokio = { version = "1", features = ["full"] }
+```
+
+```rust
+use zero_search::{Client, WebEngine, ShopProvider, Category};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let client = Client::new()?; // reads no configuration
+
+    // One engine (results normalised into SearchItem)
+    let items = client.search(WebEngine::Bing, "rust programming").await?;
+
+    // All web engines at once (success/failure reported per engine)
+    let outcomes = client.search_all("tokyo weather").await;
+    for outcome in &outcomes {
+        println!("{}: ok={} items={}", outcome.engine.id(), outcome.ok, outcome.items.len());
+    }
+
+    // A whole category at once
+    let shopping = client.search_category(Category::Shopping, "headphones").await;
+
+    // Product search (returns the provider's own JSON)
+    let value = client.search_products(ShopProvider::Mercari, "camera", 10).await?;
+
+    Ok(())
+}
+```
+
+### Embedding in a harness
+
+The intended shape is to expose the unified API as your harness's search tool directly. A runnable example lives at [crates/facade/examples/harness_tool.rs](crates/facade/examples/harness_tool.rs):
+
+```sh
+cargo run -p zero-search --example harness_tool -- "tokyo weather"
+cargo run -p zero-search --example harness_tool -- --shop "headphones"
+```
+
+## Migrating from the old repositories
+
+ZeroSearch merges these seven repositories, which are now archived:
+
+- mouseos/Baidu_MCP
+- mouseos/Yahoo-Japan-Search-MCP
+- mouseos/Bing_MCP
+- mouseos/Naver_MCP
+- mouseos/Yahoo_US_MCP
+- mouseos/Yandex_MCP
+- mouseos/Shopping_MCP
+
+To migrate, change the server path in your MCP config to `zero-search-mcp`. Tool names and arguments did not change, so existing prompts and workflows keep working. Library crate names (`baidu_search`, `bing_search`, ...) and their types are preserved as well.
+
+## Development
+
+```sh
+cargo build --workspace
+cargo test --workspace -- --skip e2e_     # offline tests
+cargo test -p zero-search-mcp-server -- e2e_ --test-threads=1   # live (serial only)
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+## License
+
+MIT

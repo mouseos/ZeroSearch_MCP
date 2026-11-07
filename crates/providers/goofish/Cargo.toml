@@ -1,0 +1,19 @@
+[package]
+name = "shopping-mcp-goofish"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["preserve_order"] }
+anyhow = { workspace = true }
+regex = { workspace = true }
+md5 = "0.7"
+rand = { workspace = true }
+sha1 = "0.10"
+hmac = "0.12"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

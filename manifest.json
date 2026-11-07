@@ -1,0 +1,341 @@
+{
+  "author": {
+    "name": "mouseos",
+    "url": "https://github.com/mouseos"
+  },
+  "compatibility": {
+    "platforms": [
+      "win32",
+      "darwin",
+      "linux"
+    ]
+  },
+  "description": "Zero-config search for AI agents: Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo (US), Yandex, AliExpress, Goofish, Mercari, Yahoo Auctions, Yahoo Flea Market and Rakuma in one MCP server. No API key, no login, no configuration.",
+  "display_name": "ZeroSearch MCP",
+  "homepage": "https://github.com/mouseos/ZeroSearch_MCP",
+  "keywords": [
+    "search",
+    "web-search",
+    "shopping",
+    "baidu",
+    "yahoo",
+    "bing",
+    "naver",
+    "yandex",
+    "aliexpress",
+    "mercari",
+    "zero-config",
+    "mcp"
+  ],
+  "license": "MIT",
+  "long_description": "ZeroSearch gives an AI agent twelve search providers behind one MCP server, in two categories: web search (Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo US, Yandex) and shopping search (AliExpress, Goofish, Mercari, Yahoo! Auctions, Yahoo! Flea Market, Rakuma).\n\nThere is nothing to configure: no API key, no account, no environment variables. Register the server binary in the MCP config and all 71 tools work. Each provider reuses the app-faithful access patterns established for the standalone servers (which this project merges and replaces), and tool names, arguments and result JSON are unchanged from those servers.\n\nThe same code is available as the Rust library `zero_search`: a unified API (per-engine search, all-engine search with per-engine outcomes, category-wide search, product search) designed to be embedded as an agent harness's default search tool, with every provider crate re-exported for full access.",
+  "manifest_version": "0.3",
+  "name": "zero-search-mcp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mouseos/ZeroSearch_MCP.git"
+  },
+  "server": {
+    "entry_point": "server/zero-search-mcp",
+    "mcp_config": {
+      "args": [],
+      "command": "server/zero-search-mcp",
+      "env": {},
+      "platform_overrides": {
+        "win32": {
+          "command": "server/zero-search-mcp.exe"
+        }
+      }
+    },
+    "type": "binary"
+  },
+  "support": "https://github.com/mouseos/ZeroSearch_MCP/issues",
+  "tools": [
+    {
+      "description": "Search Baidu through the APK-derived (baiduboxapp) anonymous search flow and return the aggregated multi-page result JSON (same shape as the Python baidu_search client, plus provider/ok). Per-page failures are recorded in diagnostics.errors and already-fetched pages are kept.",
+      "name": "baidu_search"
+    },
+    {
+      "description": "Fetch and parse exactly one Baidu search-result page. With page_url omitted the first-page URL is built from query; otherwise page_url is fetched as-is (server-issued pagination URL). Failures return {provider, ok:false, error:{kind,message,url,status_code}} with the Python client's error kind.",
+      "name": "baidu_search_page"
+    },
+    {
+      "description": "Parse a saved Baidu (APK/wise) search-result HTML page into structured JSON, offline (no network). Returns the Python baidu_parser page dict plus provider/ok.",
+      "name": "baidu_parse_search_results"
+    },
+    {
+      "description": "Build the first-page Baidu search URL for a query (APK bq0.m reproduction: pu merges, https upgrade, ant_ct, t_samp). now_ms pins the clock for reproducibility; omit for the current time.",
+      "name": "baidu_build_search_url"
+    },
+    {
+      "description": "List the search providers and tools supported by Baidu_MCP.",
+      "name": "baidu_list_sources"
+    },
+    {
+      "description": "Search the Yahoo! JAPAN web index. Best general-purpose tool for finding Japanese web pages, shops, official sites and documentation. Returns title, URL, snippet and the source site, plus related queries Yahoo suggests. 10 results per page.",
+      "name": "yahoo_web_search"
+    },
+    {
+      "description": "Search Yahoo! JAPAN images. Returns the source page, the original image URL, a Yahoo-cached copy that stays reachable when the origin blocks hotlinking, a thumbnail and pixel dimensions. 20 results per page.",
+      "name": "yahoo_image_search"
+    },
+    {
+      "description": "Search Yahoo! JAPAN videos across YouTube, Instagram, TikTok, Niconico and other hosts. Returns title, watch URL, uploader, duration, upload date and a summary. 20 results per page.",
+      "name": "yahoo_video_search"
+    },
+    {
+      "description": "Search Yahoo!ニュース for Japanese news articles. Returns headline, article URL, publisher, publish time, category and a snippet. Use this over web search for current events in Japan. Yahoo returns one batch of up to 60 articles and does not paginate.",
+      "name": "yahoo_news_search"
+    },
+    {
+      "description": "Search Yahoo!リアルタイム検索 for X (Twitter) posts. Best for what people in Japan are saying right now — breaking incidents, service outages, live reactions. Returns post text, author, timestamp and engagement counts. 40 results per page.",
+      "name": "yahoo_realtime_search"
+    },
+    {
+      "description": "Search Yahoo!知恵袋, Japan's largest community Q&A site. Best for real-world Japanese consumer questions, troubleshooting and local know-how that rarely appears on formal sites. Returns question title, URL, status, answer/view counts and category path. 10 results per page.",
+      "name": "yahoo_chiebukuro_search"
+    },
+    {
+      "description": "Get Yahoo! JAPAN autocomplete suggestions for a partial query. Useful for discovering how Japanese users actually phrase a topic before running a full search.",
+      "name": "yahoo_suggest_keywords"
+    },
+    {
+      "description": "List the Yahoo! JAPAN search verticals this server exposes, with the tool name and paging behaviour of each. Call this to decide which search tool fits a question.",
+      "name": "yahoo_list_verticals"
+    },
+    {
+      "description": "Search the Microsoft Bing web index via Bing's native v7 search API (the endpoint embedded in the Bing app). Returns title, direct destination URL, the displayed URL and a snippet, plus the reported total hit count and related queries. 10 results per page.",
+      "name": "bing_web_search"
+    },
+    {
+      "description": "Search Bing images. Returns the original image URL, a Bing thumbnail, the page the image appears on and a title. Fetched the way the Bing app receives it (mobile user agent + app-style parameters), the only form where Bing server-renders image results. 12 results per page; this form has no total count.",
+      "name": "bing_image_search"
+    },
+    {
+      "description": "Search Bing videos across YouTube, TikTok, Niconico and other hosts. Returns title, the real watch URL (taken from the result link's churl parameter), hosting site, channel, duration, view count and upload date text.",
+      "name": "bing_video_search"
+    },
+    {
+      "description": "Search Bing News for news articles. Returns headline, article URL, publisher, publish-time text and a snippet. Bing's news page does not paginate, so this returns the first page only.",
+      "name": "bing_news_search"
+    },
+    {
+      "description": "Get Bing autocomplete suggestions for a partial query (the Bing app's own suggestions API). Useful for discovering how people phrase a topic before running a full search. Pass vertical \"images\" or \"videos\" for candidates in those verticals.",
+      "name": "bing_suggest"
+    },
+    {
+      "description": "Build the Bing search URL for a query and vertical (web, image, video, news) without performing any search. Works offline.",
+      "name": "bing_build_search_url"
+    },
+    {
+      "description": "List the Bing search verticals this server exposes, with the tool name for each. Call this to decide which search tool fits a question.",
+      "name": "bing_list_verticals"
+    },
+    {
+      "description": "Run a Naver integrated search and get the subject sections (news, images, blog, dictionary, web documents, ...) in page order, each with its own results. Best first tool when the right vertical is unclear, or for a broad overview of a Korean topic.",
+      "name": "naver_search"
+    },
+    {
+      "description": "Search Naver's web-results view (external web documents). Returns title, URL, snippet and Naver's rank. The tab serves one top-selection batch, so only page 1 exists — asking for page 2 returns an explicit error rather than a repeat of page 1.",
+      "name": "naver_web_search"
+    },
+    {
+      "description": "Search Naver images. Returns the original image URL (recovered from behind Naver's thumbnail proxy), a thumbnail, the source page, the source label and pixel dimensions. Pages follow the more-API chain the page itself issues (up to page 10).",
+      "name": "naver_image_search"
+    },
+    {
+      "description": "Search Naver News for Korean news articles. Returns headline, article URL, publisher, relative publish time, snippet and thumbnail. Pages follow the more-API chain the page itself issues (up to page 10).",
+      "name": "naver_news_search"
+    },
+    {
+      "description": "Search Naver videos across YouTube and other hosts. Returns title, watch URL, hosting platform, channel, duration, relative upload time, view count and thumbnail. Pages follow the more-API chain the page itself issues (up to page 10).",
+      "name": "naver_video_search"
+    },
+    {
+      "description": "Search Naver Blog posts. Returns title, post URL, blog name and id, relative publish time, snippet and thumbnail. Pages follow the more-API chain the page itself issues (up to page 10).",
+      "name": "naver_blog_search"
+    },
+    {
+      "description": "Get Naver autocomplete suggestions for a partial query. Useful for discovering how Korean users actually phrase a topic before running a full search.",
+      "name": "naver_suggest"
+    },
+    {
+      "description": "Build the Naver search URL for a query and vertical (integrated, web, image, news, video, blog) exactly as the client fetches it — no network access. Useful for handing a human a link to open.",
+      "name": "naver_build_search_url"
+    },
+    {
+      "description": "List the Naver search verticals this server exposes, with the tool name and paging behaviour of each, plus the tabs that exist but are not supported. Call this to decide which search tool fits a question.",
+      "name": "naver_list_verticals"
+    },
+    {
+      "description": "Search the Yahoo (US) web index. Returns title, real destination URL (Yahoo redirect links are unwrapped), snippet and source site. 7 results per page. Note: this is Yahoo US (search.yahoo.com), not Yahoo! JAPAN.",
+      "name": "yahoo_us_web_search"
+    },
+    {
+      "description": "Search Yahoo (US) videos across YouTube and other hosts. Returns title, watch URL, duration, source site, description and thumbnail. 60 results per page.",
+      "name": "yahoo_us_video_search"
+    },
+    {
+      "description": "Search Yahoo (US) news articles. Returns headline, article URL, publisher, relative publish time and a snippet. 10 results per page.",
+      "name": "yahoo_us_news_search"
+    },
+    {
+      "description": "Get Yahoo (US) autocomplete suggestions for a partial query. Useful for discovering how users actually phrase a topic before running a full search.",
+      "name": "yahoo_us_suggest"
+    },
+    {
+      "description": "Build the Yahoo (US) search URL for a query and vertical (web, image, video, news, suggest) without performing any search. Useful for handing a user a link to open themselves. Note: the image URL is a template only — this server cannot read image results (Yahoo's image SERP returns HTTP 500).",
+      "name": "yahoo_us_build_search_url"
+    },
+    {
+      "description": "List the Yahoo (US) search verticals this server exposes, with the tool name and paging behaviour of each. Image search is listed as unsupported. Call this to decide which search tool fits a question.",
+      "name": "yahoo_us_list_verticals"
+    },
+    {
+      "description": "Search the Yandex web index. Best general-purpose tool for finding Russian-language web pages, shops, official sites and documentation. Returns title, destination URL, displayed path and snippet. About 10 organic results per page; page is 1-based.",
+      "name": "yandex_web_search"
+    },
+    {
+      "description": "Search Yandex images. Returns the original image URL, a Yandex thumbnail, pixel dimensions and the source page each image appears on. 20 results per page; page is 1-based.",
+      "name": "yandex_image_search"
+    },
+    {
+      "description": "Search Yandex videos across VK, YouTube, RuTube, OK and other hosts. Returns title, the watch URL on the hosting service, duration, provider and publish date.",
+      "name": "yandex_video_search"
+    },
+    {
+      "description": "Get Yandex autocomplete suggestions for a partial query. Useful for discovering how Russian users actually phrase a topic before running a full search.",
+      "name": "yandex_suggest"
+    },
+    {
+      "description": "Build the Yandex search URL for a query and vertical (web, image, video, suggest) without performing a search. Useful for handing a link to the user. News has no URL builder: it moved to dzen.ru and requires Yandex SSO.",
+      "name": "yandex_build_search_url"
+    },
+    {
+      "description": "List the Yandex search verticals this server exposes, with the tool name and paging behaviour of each. News is listed as unsupported, with the reason. Call this to decide which search tool fits a question.",
+      "name": "yandex_list_verticals"
+    },
+    {
+      "description": "Search AliExpress products through the APK-derived direct MTop search endpoint.",
+      "name": "aliexpress_search_products"
+    },
+    {
+      "description": "Fetch normalized AliExpress product details by product id or product URL.",
+      "name": "aliexpress_get_product"
+    },
+    {
+      "description": "Get AliExpress keyword suggestions through the recommend MTop endpoint (measured working; the APK suggestion API cannot be invoked through the H5 gateway).",
+      "name": "aliexpress_suggest_keywords"
+    },
+    {
+      "description": "Fetch AliExpress product reviews through the APK-derived MTop review endpoint.",
+      "name": "aliexpress_get_reviews"
+    },
+    {
+      "description": "Search products in an AliExpress store through the captured Android store MTop endpoint. seller_id is required (measured: omitting it fails with FAIL_SYS_BIZPARAM_MISSED).",
+      "name": "aliexpress_search_store_products"
+    },
+    {
+      "description": "Search Goofish (Xianyu) products through the APK-derived MTOP search endpoint. Requests are signed by the SecurityGuard runtime bundled with the server (auto-discovered and auto-started); the device identity is generated by the server itself. No configuration is required. The first Goofish call can take a few minutes while the signing harness boots. Sorted search may be rejected by the server (HTTP 419).",
+      "name": "goofish_search_products"
+    },
+    {
+      "description": "Fetch normalized Goofish (Xianyu) product details by item id or product URL.",
+      "name": "goofish_get_product"
+    },
+    {
+      "description": "Get Goofish (Xianyu) keyword suggestions through the APK-derived MTOP suggest endpoint.",
+      "name": "goofish_suggest_keywords"
+    },
+    {
+      "description": "Fetch public comments for a Goofish (Xianyu) product through the APK-derived MTOP comment endpoint.",
+      "name": "goofish_get_comments"
+    },
+    {
+      "description": "Fetch recommended items related to a Goofish (Xianyu) product through the APK-derived MTOP recommend endpoint.",
+      "name": "goofish_get_recommendations"
+    },
+    {
+      "description": "Fetch the Goofish (Xianyu) home feed through the APK-derived MTOP home endpoint.",
+      "name": "goofish_home_feed"
+    },
+    {
+      "description": "Search Mercari Japan products through the public web Connect-RPC JSON endpoint. Login-free: requests are authorized with a locally generated DPoP proof, no account or token needed. Each item carries is_auction and, for auction listings, an auction object (highest_bid is the current bid, not a buy-now price; also initial_price, total_bids, bid_deadline). Set exclude_auction to drop auction listings from the results.",
+      "name": "mercari_search_products"
+    },
+    {
+      "description": "Fetch normalized Mercari item detail by item id or item URL through the APK-derived JSON endpoint. The item carries is_auction and, for auction listings, an auction object (highest_bid, initial_price, total_bids, expected_end_time, state).",
+      "name": "mercari_get_product"
+    },
+    {
+      "description": "List a seller's Mercari items through the APK-derived items/get_items JSON endpoint. Items carry is_auction and an auction object for auction listings.",
+      "name": "mercari_search_seller_products"
+    },
+    {
+      "description": "Fetch Mercari autocomplete keyword/seller suggestions through the APK-derived BFF endpoint.",
+      "name": "mercari_suggest_keywords"
+    },
+    {
+      "description": "Search Mercari brand IDs for use with mercari_search_products brand_ids.",
+      "name": "mercari_search_brands"
+    },
+    {
+      "description": "Search Mercari category IDs for use with mercari_search_products category_ids.",
+      "name": "mercari_search_categories"
+    },
+    {
+      "description": "Get seller reviews/ratings for a Mercari seller. Returns rating summary (good/normal/bad counts, star rating) and individual review messages.",
+      "name": "mercari_get_reviews"
+    },
+    {
+      "description": "Search Yahoo Flea Market (Yahoo!フリマ / PayPayフリマ) products. Uses anonymous __NEXT_DATA__ SSR from paypayfleamarket.yahoo.co.jp. No login needed.",
+      "name": "yflea_search_products"
+    },
+    {
+      "description": "Fetch Yahoo Flea Market item detail by item ID or URL. Returns full item data. Uses anonymous __NEXT_DATA__ SSR, no login needed.",
+      "name": "yflea_get_product"
+    },
+    {
+      "description": "Get seller reviews/ratings for a Yahoo Flea Market seller. Returns rating summary and individual reviews. No login needed.",
+      "name": "yflea_get_reviews"
+    },
+    {
+      "description": "Search Rakuten Rakuma (楽天ラクマ) products through fril.jp. Uses anonymous Rakuten Analytics data. No login needed. 40 items/page.",
+      "name": "rakuma_search_products"
+    },
+    {
+      "description": "Fetch Rakuma item detail by item hash or URL. Returns item data from schema.org JSON-LD Product structured data including seller_hash for use with rakuma_get_reviews. No login needed.",
+      "name": "rakuma_get_product"
+    },
+    {
+      "description": "Get seller reviews/ratings for a Rakuma seller. Returns aggregate rating and individual reviews. The seller_hash (32-char hex) is available from rakuma_get_product item detail (seller.seller_hash field).",
+      "name": "rakuma_get_reviews"
+    },
+    {
+      "description": "Search Yahoo Auctions Japan (ヤフオク) products via the official app API (anonymous, appid). Supports open and closed (落札済み) auctions.",
+      "name": "yauction_search_products"
+    },
+    {
+      "description": "Fetch Yahoo Auctions Japan item detail by auction ID or item URL via the official app API (anonymous, appid), no login needed.",
+      "name": "yauction_get_product"
+    },
+    {
+      "description": "Get seller reviews/ratings for a Yahoo Auctions Japan seller. Returns rating summary and individual reviews parsed from the seller rating page.",
+      "name": "yauction_get_reviews"
+    },
+    {
+      "description": "Get Yahoo Auctions Japan keyword suggestions (with category candidates) via the official app API (anonymous, appid).",
+      "name": "yauction_suggest_keywords"
+    },
+    {
+      "description": "List APK-derived endpoints and runtime data sources currently supported by Shopping_MCP.",
+      "name": "shopping_list_sources"
+    },
+    {
+      "description": "List the ZeroSearch engine categories (web / shopping), the engines in each category, and the MCP tools that belong to each engine. Takes no arguments.",
+      "name": "zero_list_categories"
+    }
+  ],
+  "tools_generated": false,
+  "version": "0.1.0"
+}

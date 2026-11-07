@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/server",
+    "crates/facade",
+    "crates/launcher",
+    "crates/providers/baidu",
+    "crates/providers/yahoo",
+    "crates/providers/bing",
+    "crates/providers/naver",
+    "crates/providers/yahoo-us",
+    "crates/providers/yandex",
+    "crates/providers/aliexpress",
+    "crates/providers/goofish",
+    "crates/providers/mercari",
+    "crates/providers/rakuma",
+    "crates/providers/yahoo-auctions",
+    "crates/providers/yahoo-flea",
+]
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "cookies", "gzip", "brotli", "socks", "system-proxy"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+anyhow = "1"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+p256 = { version = "0.13", features = ["ecdsa"] }
+ecdsa = { version = "0.16", features = ["signing", "der"] }
+rand = "0.8"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
