@@ -6,6 +6,8 @@
 //! project history. Pagination differs per vertical:
 //!
 //! - web: 7 results per page, `b = 1, 8, 15, …` with `pz=7`
+//! - image: 60 results per page, `b = 1, 61, 121, …` (page 1 is the
+//!   bare URL, the form verified live)
 //! - video: 60 results per page, `b = 1, 61, 121, …`
 //! - news: 10 results per page, `b = 1, 11, 21, …`
 
@@ -23,9 +25,7 @@ fn page_offset(page: i64, per_page: i64) -> i64 {
 /// Build the first-page (or `page`-th page) search URL for a vertical.
 ///
 /// `vertical` is one of `web`, `image`, `video`, `news`, `suggest`
-/// (case-insensitive). Note the image URL is only a template: image *search*
-/// is not supported by this crate because Yahoo's image SERP returned
-/// HTTP 500 from every environment tested (see the crate README).
+/// (case-insensitive).
 pub fn build_search_url(query: &str, vertical: &str, page: i64) -> Result<String> {
     let q = urlencode(query.trim());
     let page = page.max(1);
@@ -37,9 +37,18 @@ pub fn build_search_url(query: &str, vertical: &str, page: i64) -> Result<String
                 crate::web::PER_PAGE
             ))
         }
-        "image" => Ok(format!(
-            "https://images.search.yahoo.com/search/images?p={q}"
-        )),
+        "image" => {
+            if page <= 1 {
+                Ok(format!(
+                    "https://images.search.yahoo.com/search/images?p={q}"
+                ))
+            } else {
+                let b = page_offset(page, crate::image::PER_PAGE);
+                Ok(format!(
+                    "https://images.search.yahoo.com/search/images?p={q}&b={b}"
+                ))
+            }
+        }
         "video" => {
             let b = page_offset(page, crate::video::PER_PAGE);
             Ok(format!(
@@ -85,6 +94,18 @@ mod tests {
         assert_eq!(
             build_search_url("apple", "news", 2).unwrap(),
             "https://news.search.yahoo.com/search?p=apple&b=11"
+        );
+    }
+
+    #[test]
+    fn image_url_pages_with_b_offset() {
+        assert_eq!(
+            build_search_url("apple", "image", 1).unwrap(),
+            "https://images.search.yahoo.com/search/images?p=apple"
+        );
+        assert_eq!(
+            build_search_url("apple", "image", 2).unwrap(),
+            "https://images.search.yahoo.com/search/images?p=apple&b=61"
         );
     }
 

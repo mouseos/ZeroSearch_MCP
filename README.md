@@ -20,7 +20,7 @@ Rustライブラリとしても使えます。自作ハーネスのデフォル�
 | `web`（Web検索） | `baidu`、`yahoo_jp`、`bing`、`naver`、`yahoo_us`、`yandex` |
 | `shopping`（ショッピング検索） | `aliexpress`、`goofish`、`mercari`、`yahoo_auctions`、`yahoo_fleamarket`、`rakuma`、`rakuten`、`qoo10`、`yahoo_shopping`、`amazon` |
 
-## ツール一覧（全81件）
+## ツール一覧（全82件）
 
 ツール名・引数・返却形式は、統合前の各単体サーバーと完全に同一です。
 
@@ -32,7 +32,7 @@ Rustライブラリとしても使えます。自作ハーネスのデフォル�
 | Yahoo! JAPAN（8件） | `yahoo_web_search`、`yahoo_image_search`、`yahoo_video_search`、`yahoo_news_search`、`yahoo_realtime_search`、`yahoo_chiebukuro_search`、`yahoo_suggest_keywords`、`yahoo_list_verticals` |
 | Bing（7件） | `bing_web_search`、`bing_image_search`、`bing_video_search`、`bing_news_search`、`bing_suggest`、`bing_build_search_url`、`bing_list_verticals` |
 | Naver（9件） | `naver_search`、`naver_web_search`、`naver_image_search`、`naver_news_search`、`naver_video_search`、`naver_blog_search`、`naver_suggest`、`naver_build_search_url`、`naver_list_verticals` |
-| Yahoo (US)（6件） | `yahoo_us_web_search`、`yahoo_us_video_search`、`yahoo_us_news_search`、`yahoo_us_suggest`、`yahoo_us_build_search_url`、`yahoo_us_list_verticals` |
+| Yahoo (US)（7件） | `yahoo_us_web_search`、`yahoo_us_video_search`、`yahoo_us_image_search`、`yahoo_us_news_search`、`yahoo_us_suggest`、`yahoo_us_build_search_url`、`yahoo_us_list_verticals` |
 | Yandex（6件） | `yandex_web_search`、`yandex_image_search`、`yandex_video_search`、`yandex_suggest`、`yandex_build_search_url`、`yandex_list_verticals` |
 
 ### shopping
@@ -82,6 +82,8 @@ MCP設定はこれだけです。
 ```
 
 Goofishも例外ではありません。署名ランタイムはサーバーが自動で見つけて起動し、端末の識別情報はサーバー自身が生成します。初回のGoofish呼び出しだけ、署名ランタイムの起動に数分かかることがあります。署名ランタイムの組み立て方法は [runtime/goofish](runtime/goofish/README.md) にあります。
+
+Yahoo (US) の画像検索も同じ考え方です。Yahoo の画像ホストは通常の HTTP クライアントに HTTP 500 を返すため、この検索だけは同梱のヘルパープロセス `zero-search-yahoo-us-image-helper`（サーバーと同じフォルダに置かれます）がブラウザ相当のクライアントでページを取得します。設定は要りません。
 
 ## ライブラリとして使う
 

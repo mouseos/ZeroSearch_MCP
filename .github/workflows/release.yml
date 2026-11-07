@@ -20,18 +20,21 @@ jobs:
             arch: x64
             server_bin: zero-search-mcp.exe
             launcher_bin: zero-search-mcp-launcher.exe
+            helper_bin: zero-search-yahoo-us-image-helper.exe
           - os: macos-latest
             target: aarch64-apple-darwin
             platform: macos
             arch: arm64
             server_bin: zero-search-mcp
             launcher_bin: zero-search-mcp-launcher
+            helper_bin: zero-search-yahoo-us-image-helper
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             platform: linux
             arch: x64
             server_bin: zero-search-mcp
             launcher_bin: zero-search-mcp-launcher
+            helper_bin: zero-search-yahoo-us-image-helper
 
     runs-on: ${{ matrix.os }}
 
@@ -43,7 +46,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libfontconfig1-dev libxcb-render0-dev \
-            libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev
+            libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev \
+            libclang-dev cmake
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -74,11 +78,12 @@ jobs:
 
           mkdir -p dist
 
-          # ── Installer package (server + launcher) ──
+          # ── Installer package (server + launcher + image helper) ──
           INSTALLER_DIR="dist/${BUNDLE}"
           mkdir -p "${INSTALLER_DIR}"
           cp "${RELEASE_DIR}/${{ matrix.server_bin }}" "${INSTALLER_DIR}/"
           cp "${RELEASE_DIR}/${{ matrix.launcher_bin }}" "${INSTALLER_DIR}/"
+          cp "${RELEASE_DIR}/${{ matrix.helper_bin }}" "${INSTALLER_DIR}/"
           cp README.md README.en.md LICENSE "${INSTALLER_DIR}/"
 
           cd dist
@@ -89,11 +94,12 @@ jobs:
           fi
           cd ..
 
-          # ── MCPB bundle (server only, for the MCP Registry) ──
+          # ── MCPB bundle (server + image helper, for the MCP Registry) ──
           MCPB_NAME="zero-search-mcp-${TAG}-${{ matrix.platform }}-${{ matrix.arch }}"
           MCPB_STAGE="dist/${MCPB_NAME}-stage"
           mkdir -p "${MCPB_STAGE}/server"
           cp "${RELEASE_DIR}/${{ matrix.server_bin }}" "${MCPB_STAGE}/server/"
+          cp "${RELEASE_DIR}/${{ matrix.helper_bin }}" "${MCPB_STAGE}/server/"
 
           sed -e "s/\"version\": \"0.1.0\"/\"version\": \"${VERSION}\"/" \
               -e "s|\"entry_point\": \"server/zero-search-mcp\"|\"entry_point\": \"server/${{ matrix.server_bin }}\"|" \

@@ -14,11 +14,11 @@ DIST="$ROOT/dist"
 rm -rf "$DIST"
 mkdir -p "$DIST"
 
-# triple bundle_platform arch exe manifest_platform
+# triple bundle_platform arch exe manifest_platform helper_exe
 TARGETS=(
-  "x86_64-pc-windows-msvc win32 x64 zero-search-mcp.exe win32"
-  "aarch64-apple-darwin macos arm64 zero-search-mcp darwin"
-  "x86_64-unknown-linux-gnu linux x64 zero-search-mcp linux"
+  "x86_64-pc-windows-msvc win32 x64 zero-search-mcp.exe win32 zero-search-yahoo-us-image-helper.exe"
+  "aarch64-apple-darwin macos arm64 zero-search-mcp darwin zero-search-yahoo-us-image-helper"
+  "x86_64-unknown-linux-gnu linux x64 zero-search-mcp linux zero-search-yahoo-us-image-helper"
 )
 
 RUSTC="$(command -v rustc || echo "$HOME/.cargo/bin/rustc")"
@@ -35,8 +35,9 @@ if [ -z "$HOST_TRIPLE" ]; then
 fi
 
 for row in "${TARGETS[@]}"; do
-  read -r triple platform arch exe manifest_platform <<<"$row"
+  read -r triple platform arch exe manifest_platform helper_exe <<<"$row"
   bin="$ROOT/target/$triple/release/$exe"
+  helper_bin="$ROOT/target/$triple/release/$helper_exe"
   if [ ! -f "$bin" ]; then
     # Fall back to the plain target/release build ONLY when it is a build
     # for this very target (i.e. the host itself). Never relabel a binary
@@ -44,17 +45,23 @@ for row in "${TARGETS[@]}"; do
     local_bin="$ROOT/target/release/$exe"
     if [ "$triple" = "$HOST_TRIPLE" ] && [ -f "$local_bin" ]; then
       bin="$local_bin"
+      helper_bin="$ROOT/target/release/$helper_exe"
       echo "[INFO] Using local release build for $platform-$arch"
     else
       echo "[SKIP] Binary not found for $triple: $bin"
       continue
     fi
   fi
+  if [ ! -f "$helper_bin" ]; then
+    echo "[SKIP] Helper binary not found for $triple: $helper_bin"
+    continue
+  fi
 
   name="zero-search-mcp-v$VERSION-$platform-$arch"
   stage="$DIST/$name-stage"
   mkdir -p "$stage/server"
   cp "$bin" "$stage/server/$exe"
+  cp "$helper_bin" "$stage/server/$helper_exe"
 
   # manifest.json with platform-specific entry_point / command / platforms
   python3 - "$ROOT/manifest.json" "$stage/manifest.json" "$VERSION" "$exe" "$manifest_platform" <<'PY'

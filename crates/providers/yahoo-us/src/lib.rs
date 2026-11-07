@@ -8,10 +8,12 @@
 //! `r.search.yahoo.com` redirect URLs into real destination URLs. Nothing
 //! here needs an API key, a login, cookies or any user configuration.
 //!
-//! Image search is deliberately not implemented: Yahoo's image SERP
-//! (`images.search.yahoo.com`) returned HTTP 500 from every environment
-//! tested during the APK analysis (desktop/mobile UA, with/without
-//! cookies), so there is no verified way to read it over plain HTTP.
+//! Image search is the one exception to the shared HTTP client: the
+//! image host refuses plain HTTP clients (HTTP 500, empty body) while
+//! answering real browsers on the same connection, so that vertical's
+//! pages are fetched by a companion helper process running a
+//! browser-grade client (wreq, Firefox profile) — the same
+//! server-rendered page, no browser driven. See [`image`].
 //!
 //! # Library usage
 //!
@@ -73,6 +75,8 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 pub mod common;
+pub mod helper;
+pub mod image;
 pub mod news;
 pub mod suggest;
 pub mod urlbuild;
@@ -88,6 +92,10 @@ pub mod web;
 
 /// Text and URL helpers shared by all verticals.
 pub use common::{clean_text, decode_entities, decode_redirect_url, urldecode, urlencode};
+/// Image item returned by [`YahooUsSearchClient::image_search`].
+pub use image::ImageItem;
+/// Offline image parsers for saved SERP pages.
+pub use image::{parse_image_next_offset, parse_image_results, parse_image_total};
 /// News article item returned by [`YahooUsSearchClient::news_search`].
 pub use news::NewsItem;
 /// Offline news parsers for saved SERP pages.
@@ -183,6 +191,12 @@ impl<T> SearchResult<T> {
 /// Shared HTTP client. Cheap to clone; holds a connection pool. No cookie
 /// jar is needed — the US SERPs answer anonymous requests as-is (verified
 /// during the APK analysis).
+///
+/// Image search is served through a helper process (see
+/// [`helper`]): Yahoo's image host refuses plain HTTP clients with
+/// HTTP 500 while answering real browsers, so a browser-grade client
+/// reproduces the browser's TLS/HTTP2 request fingerprint — in a
+/// separate binary, because its TLS stack cannot link into this one.
 #[derive(Clone)]
 pub struct YahooUsSearchClient {
     http: Client,
@@ -227,6 +241,16 @@ impl YahooUsSearchClient {
         Ok(resp.text().await?)
     }
 
+    /// GET an image-search page as text through the helper process
+    /// (see [`helper`]): the helper's request carries a real Firefox
+    /// TLS/HTTP2 fingerprint (wreq emulation), which is what Yahoo's
+    /// image host demands — it returns HTTP 500 to plain HTTP
+    /// clients. Like the reqwest client above, proxying follows the
+    /// standard environment variables; no configuration is read.
+    pub(crate) async fn get_image_html(&self, url: &str) -> Result<String> {
+        helper::fetch_image_html(url).await
+    }
+
     pub(crate) async fn get_json(&self, url: &str, referer: &str) -> Result<serde_json::Value> {
         let resp = self
             .http
@@ -241,8 +265,8 @@ impl YahooUsSearchClient {
     }
 }
 
-/// Static description of the searchable verticals (web, video, news,
-/// suggest — plus image, marked unsupported) as a JSON value — powers the
+/// Static description of the searchable verticals (web, image, video,
+/// news, suggest) as a JSON value — powers the
 /// `yahoo_us_list_verticals` MCP tool so an agent can pick the right one,
 /// and doubles as machine-readable documentation for library users.
 pub fn verticals() -> serde_json::Value {
@@ -286,10 +310,10 @@ pub fn verticals() -> serde_json::Value {
             {
                 "id": "image",
                 "name": "Yahoo Image Search",
-                "tool": null,
-                "description": "Not supported: Yahoo's image SERP returned HTTP 500 from every environment tested (desktop/mobile UA, with/without cookies), so it cannot be read over plain HTTP.",
-                "paginated": false,
-                "supported": false
+                "tool": "yahoo_us_image_search",
+                "description": "Image search with the original image URL, source page, thumbnail and dimensions. 60 results per page. Pages are fetched by the bundled helper process with a browser-grade (Firefox-profile) client because Yahoo's image host returns HTTP 500 to plain HTTP clients.",
+                "paginated": true,
+                "supported": true
             }
         ]
     })

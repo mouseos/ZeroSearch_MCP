@@ -75,6 +75,19 @@ pub fn tool_definitions() -> Vec<Value> {
             }),
         ),
         tool_def(
+            "yahoo_us_image_search",
+            "Search Yahoo (US) images. Returns title, the page the image appears on, the original image URL, a thumbnail, dimensions and the source site. 60 results per page. Pages are fetched by the bundled helper process with a browser-grade client because Yahoo's image host refuses plain HTTP requests.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": query_prop(),
+                    "page": {"type": "integer", "description": "1-based page number.", "default": 1},
+                    "limit": {"type": "integer", "description": "Max results to return (1-60).", "default": 20}
+                },
+                "required": ["query"]
+            }),
+        ),
+        tool_def(
             "yahoo_us_news_search",
             "Search Yahoo (US) news articles. Returns headline, article URL, publisher, relative publish time and a snippet. 10 results per page.",
             json!({
@@ -101,7 +114,7 @@ pub fn tool_definitions() -> Vec<Value> {
         ),
         tool_def(
             "yahoo_us_build_search_url",
-            "Build the Yahoo (US) search URL for a query and vertical (web, image, video, news, suggest) without performing any search. Useful for handing a user a link to open themselves. Note: the image URL is a template only — this server cannot read image results (Yahoo's image SERP returns HTTP 500).",
+            "Build the Yahoo (US) search URL for a query and vertical (web, image, video, news, suggest) without performing any search. Useful for handing a user a link to open themselves.",
             json!({
                 "type": "object",
                 "properties": {
@@ -119,7 +132,7 @@ pub fn tool_definitions() -> Vec<Value> {
         ),
         tool_def(
             "yahoo_us_list_verticals",
-            "List the Yahoo (US) search verticals this server exposes, with the tool name and paging behaviour of each. Image search is listed as unsupported. Call this to decide which search tool fits a question.",
+            "List the Yahoo (US) search verticals this server exposes, with the tool name and paging behaviour of each. Call this to decide which search tool fits a question.",
             json!({"type": "object", "properties": {}}),
         ),
     ]
@@ -160,6 +173,10 @@ fn error_kind(e: &anyhow::Error) -> &'static str {
         .contains("not found (Yahoo page layout may have changed)")
     {
         "parse_error"
+    } else if e.to_string().contains("returned HTTP") {
+        // The browser-grade (wreq) path reports bare status errors with
+        // this wording instead of a typed reqwest error.
+        "http_error"
     } else {
         "search_error"
     }
@@ -201,6 +218,17 @@ pub async fn dispatch(name: &str, args: &Value, client: &YahooUsSearchClient) ->
         {
             Ok(result) => Ok(serde_json::to_value(result)?),
             Err(e) => Ok(error_result("video", e)),
+        },
+        "yahoo_us_image_search" => match client
+            .image_search(
+                &query_param(args)?,
+                int_param(args, "page", 1),
+                int_param(args, "limit", 20),
+            )
+            .await
+        {
+            Ok(result) => Ok(serde_json::to_value(result)?),
+            Err(e) => Ok(error_result("image", e)),
         },
         "yahoo_us_news_search" => match client
             .news_search(

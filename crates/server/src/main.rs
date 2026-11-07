@@ -365,12 +365,12 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_exposes_all_81_tools() {
+    fn tools_list_exposes_all_82_tools() {
         let defs = tools::tool_definitions();
         let names: Vec<&str> = defs.iter().filter_map(|d| d["name"].as_str()).collect();
-        assert_eq!(names.len(), 81, "tools: {names:?}");
+        assert_eq!(names.len(), 82, "tools: {names:?}");
         for expected in [
-            // web: baidu 5, yahoo 8, bing 7, naver 9, yahoo_us 6, yandex 6
+            // web: baidu 5, yahoo 8, bing 7, naver 9, yahoo_us 7, yandex 6
             "baidu_search",
             "baidu_list_sources",
             "yahoo_web_search",
@@ -380,6 +380,7 @@ mod tests {
             "naver_search",
             "naver_list_verticals",
             "yahoo_us_web_search",
+            "yahoo_us_image_search",
             "yahoo_us_list_verticals",
             "yandex_web_search",
             "yandex_list_verticals",
@@ -433,7 +434,7 @@ mod tests {
         assert!(resp["result"]["isError"].is_null());
         let parsed = result_json(&resp);
         assert_eq!(parsed["server"], json!("ZeroSearch_MCP"));
-        assert_eq!(parsed["tool_count"], json!(81));
+        assert_eq!(parsed["tool_count"], json!(82));
         let cats = parsed["categories"].as_array().unwrap();
         assert_eq!(cats.len(), 2);
         assert_eq!(cats[0]["id"], json!("web"));
@@ -441,14 +442,14 @@ mod tests {
         assert_eq!(cats[1]["id"], json!("shopping"));
         assert_eq!(cats[1]["engines"].as_array().unwrap().len(), 10);
         assert_eq!(cats[1]["shared_tools"], json!(["shopping_list_sources"]));
-        // Per-engine tool counts: web 5+8+7+9+6+6 = 41, shopping 5+6+7+4+3+3+3+2+3+2 = 38 (+1 shared).
+        // Per-engine tool counts: web 5+8+7+9+7+6 = 42, shopping 5+6+7+4+3+3+3+2+3+2 = 38 (+1 shared).
         let web_tools: usize = cats[0]["engines"]
             .as_array()
             .unwrap()
             .iter()
             .map(|e| e["tools"].as_array().unwrap().len())
             .sum();
-        assert_eq!(web_tools, 41);
+        assert_eq!(web_tools, 42);
         let shop_tools: usize = cats[1]["engines"]
             .as_array()
             .unwrap()

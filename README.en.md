@@ -20,7 +20,7 @@ Engines fall into two categories. The `zero_list_categories` tool returns this m
 | `web` | `baidu`, `yahoo_jp`, `bing`, `naver`, `yahoo_us`, `yandex` |
 | `shopping` | `aliexpress`, `goofish`, `mercari`, `yahoo_auctions`, `yahoo_fleamarket`, `rakuma`, `rakuten`, `qoo10`, `yahoo_shopping`, `amazon` |
 
-## Tools (81 total)
+## Tools (82 total)
 
 Tool names, arguments and result JSON are identical to the standalone servers this project merged.
 
@@ -32,7 +32,7 @@ Tool names, arguments and result JSON are identical to the standalone servers th
 | Yahoo! JAPAN (8) | `yahoo_web_search`, `yahoo_image_search`, `yahoo_video_search`, `yahoo_news_search`, `yahoo_realtime_search`, `yahoo_chiebukuro_search`, `yahoo_suggest_keywords`, `yahoo_list_verticals` |
 | Bing (7) | `bing_web_search`, `bing_image_search`, `bing_video_search`, `bing_news_search`, `bing_suggest`, `bing_build_search_url`, `bing_list_verticals` |
 | Naver (9) | `naver_search`, `naver_web_search`, `naver_image_search`, `naver_news_search`, `naver_video_search`, `naver_blog_search`, `naver_suggest`, `naver_build_search_url`, `naver_list_verticals` |
-| Yahoo (US) (6) | `yahoo_us_web_search`, `yahoo_us_video_search`, `yahoo_us_news_search`, `yahoo_us_suggest`, `yahoo_us_build_search_url`, `yahoo_us_list_verticals` |
+| Yahoo (US) (7) | `yahoo_us_web_search`, `yahoo_us_video_search`, `yahoo_us_image_search`, `yahoo_us_news_search`, `yahoo_us_suggest`, `yahoo_us_build_search_url`, `yahoo_us_list_verticals` |
 | Yandex (6) | `yandex_web_search`, `yandex_image_search`, `yandex_video_search`, `yandex_suggest`, `yandex_build_search_url`, `yandex_list_verticals` |
 
 ### shopping
@@ -82,6 +82,8 @@ The config is just this:
 ```
 
 Goofish is not an exception. The server finds and starts its signing runtime by itself, and generates its own device identity. The first Goofish call can take a few minutes while the signing runtime boots. See [runtime/goofish](runtime/goofish/README.md) for how the runtime bundle is assembled.
+
+Yahoo (US) image search follows the same pattern. Yahoo's image host returns HTTP 500 to plain HTTP clients, so this one vertical is fetched by the bundled helper process `zero-search-yahoo-us-image-helper` (placed next to the server binary), which requests the pages with a browser-grade client. No configuration is needed.
 
 ## Use as a library
 

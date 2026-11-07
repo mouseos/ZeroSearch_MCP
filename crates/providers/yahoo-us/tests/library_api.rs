@@ -9,8 +9,9 @@
 
 use yahoo_us_search::{
     build_search_url, clean_text, decode_entities, decode_redirect_url, parse_news_results,
-    parse_suggest_response, parse_video_results, parse_web_results, urlencode, verticals, NewsItem,
-    SearchResult, SuggestResult, Suggestion, VideoItem, WebItem, YahooUsSearchClient, PROVIDER,
+    parse_suggest_response, parse_video_results, parse_web_results, urlencode,
+    verticals, ImageItem, NewsItem, SearchResult, SuggestResult, Suggestion, VideoItem, WebItem,
+    YahooUsSearchClient, PROVIDER,
 };
 
 #[test]
@@ -26,6 +27,7 @@ fn search_methods_are_reachable_from_the_root_client_type() {
     // Referencing each method as a function item type-checks its public
     // signature without performing any request.
     let _web = YahooUsSearchClient::web_search;
+    let _image = YahooUsSearchClient::image_search;
     let _video = YahooUsSearchClient::video_search;
     let _news = YahooUsSearchClient::news_search;
     let _suggest = YahooUsSearchClient::suggest;
@@ -54,6 +56,31 @@ fn web_result_builds_and_serialises() {
 
     let back: SearchResult<WebItem> = serde_json::from_value(json).unwrap();
     assert_eq!(back.items[0].url, "https://www.apple.com/");
+}
+
+#[test]
+fn image_result_builds_and_serialises() {
+    let item = ImageItem {
+        rank: 1,
+        title: "Apple logo".to_string(),
+        url: "https://example.com/story".to_string(),
+        image_url: "https://example.com/logo.jpg".to_string(),
+        thumbnail: Some("https://tse1.mm.bing.net/th/id/OIP.x".to_string()),
+        source: Some("example.com".to_string()),
+        width: Some(1200),
+        height: Some(800),
+    };
+    let result = SearchResult::new("image", "apple", 1, vec![item]).with_total(Some(536));
+    let json = serde_json::to_value(&result).unwrap();
+    assert_eq!(json["vertical"], "image");
+    assert_eq!(
+        json["items"][0]["image_url"],
+        "https://example.com/logo.jpg"
+    );
+    assert_eq!(json["items"][0]["width"], 1200);
+
+    let back: SearchResult<ImageItem> = serde_json::from_value(json).unwrap();
+    assert_eq!(back.items[0].image_url, "https://example.com/logo.jpg");
 }
 
 #[test]

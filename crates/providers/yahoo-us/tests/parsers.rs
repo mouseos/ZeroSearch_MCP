@@ -4,13 +4,15 @@
 //! Everything here is offline.
 
 use yahoo_us_search::{
-    news_has_next_page, parse_news_results, parse_suggest_response, parse_video_next_offset,
-    parse_video_results, parse_video_total, parse_web_results, web_has_next_page,
+    news_has_next_page, parse_image_next_offset, parse_image_results, parse_image_total,
+    parse_news_results, parse_suggest_response, parse_video_next_offset, parse_video_results,
+    parse_video_total, parse_web_results, web_has_next_page,
 };
 
 const WEB_P1: &str = include_str!("fixtures/fixture-web.html");
 const WEB_P2: &str = include_str!("fixtures/fixture-web-p2.html");
 const VIDEO: &str = include_str!("fixtures/fixture-video.html");
+const IMAGE: &str = include_str!("fixtures/fixture-image.html");
 const NEWS: &str = include_str!("fixtures/fixture-news.html");
 const SUGGEST: &str = include_str!("fixtures/fixture-suggest.json");
 
@@ -42,6 +44,27 @@ fn video_fixture() {
     assert_eq!(items[0].duration.as_deref(), Some("01:57"));
     assert_eq!(parse_video_total(VIDEO), Some(70));
     assert_eq!(parse_video_next_offset(VIDEO), Some(60));
+}
+
+#[test]
+fn image_fixture() {
+    // Recorded through the browser-grade client (the image host
+    // refuses plain HTTP): query "apple", first page.
+    let items = parse_image_results(IMAGE, 60);
+    assert_eq!(items.len(), 60);
+    assert_eq!(
+        items[0].url,
+        "https://www.archyde.com/ios-27-introduces-wi-fi-setup-renaming-and-enhanced-connectivity/"
+    );
+    assert!(items[0].image_url.contains("media.cnn.com"));
+    assert_eq!(items[0].width, Some(2994));
+    assert_eq!(items[0].height, Some(1684));
+    assert!(items.iter().all(|i| i.image_url.starts_with("http")));
+    assert!(items
+        .iter()
+        .all(|i| !i.url.contains("images.search.yahoo.com")));
+    assert_eq!(parse_image_total(IMAGE), Some(536));
+    assert_eq!(parse_image_next_offset(IMAGE), Some(60));
 }
 
 #[test]

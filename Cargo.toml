@@ -20,6 +20,7 @@ members = [
     "crates/providers/qoo10",
     "crates/providers/yahoo-shopping",
     "crates/providers/amazon",
+    "crates/helpers/yahoo-us-image",
 ]
 
 [workspace.dependencies]
