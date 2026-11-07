@@ -458,12 +458,18 @@ impl UnidbgSigner {
             command.process_group(0);
             unsafe {
                 command.pre_exec(|| {
-                    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    // Race: the parent may already be gone.
-                    if libc::getppid() == 1 {
-                        libc::_exit(1);
+                    // PR_SET_PDEATHSIG is Linux-only; on other Unix
+                    // platforms the process-group kill above is the
+                    // orphan-prevention mechanism.
+                    #[cfg(target_os = "linux")]
+                    {
+                        if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                        // Race: the parent may already be gone.
+                        if libc::getppid() == 1 {
+                            libc::_exit(1);
+                        }
                     }
                     Ok(())
                 });
