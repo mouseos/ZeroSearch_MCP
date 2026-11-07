@@ -365,10 +365,10 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_exposes_all_80_tools() {
+    fn tools_list_exposes_all_81_tools() {
         let defs = tools::tool_definitions();
         let names: Vec<&str> = defs.iter().filter_map(|d| d["name"].as_str()).collect();
-        assert_eq!(names.len(), 80, "tools: {names:?}");
+        assert_eq!(names.len(), 81, "tools: {names:?}");
         for expected in [
             // web: baidu 5, yahoo 8, bing 7, naver 9, yahoo_us 6, yandex 6
             "baidu_search",
@@ -383,7 +383,7 @@ mod tests {
             "yahoo_us_list_verticals",
             "yandex_web_search",
             "yandex_list_verticals",
-            // shopping: 38
+            // shopping: 39
             "aliexpress_search_products",
             "goofish_search_products",
             "mercari_search_products",
@@ -397,6 +397,7 @@ mod tests {
             "qoo10_get_product",
             "yshopping_search_products",
             "yshopping_get_product",
+            "yshopping_get_reviews",
             "amazon_search_products",
             "amazon_get_product",
             "shopping_list_sources",
@@ -432,7 +433,7 @@ mod tests {
         assert!(resp["result"]["isError"].is_null());
         let parsed = result_json(&resp);
         assert_eq!(parsed["server"], json!("ZeroSearch_MCP"));
-        assert_eq!(parsed["tool_count"], json!(80));
+        assert_eq!(parsed["tool_count"], json!(81));
         let cats = parsed["categories"].as_array().unwrap();
         assert_eq!(cats.len(), 2);
         assert_eq!(cats[0]["id"], json!("web"));
@@ -440,7 +441,7 @@ mod tests {
         assert_eq!(cats[1]["id"], json!("shopping"));
         assert_eq!(cats[1]["engines"].as_array().unwrap().len(), 10);
         assert_eq!(cats[1]["shared_tools"], json!(["shopping_list_sources"]));
-        // Per-engine tool counts: web 5+8+7+9+6+6 = 41, shopping 5+6+7+4+3+3+3+2+2+2 = 37 (+1 shared).
+        // Per-engine tool counts: web 5+8+7+9+6+6 = 41, shopping 5+6+7+4+3+3+3+2+3+2 = 38 (+1 shared).
         let web_tools: usize = cats[0]["engines"]
             .as_array()
             .unwrap()
@@ -454,7 +455,7 @@ mod tests {
             .iter()
             .map(|e| e["tools"].as_array().unwrap().len())
             .sum();
-        assert_eq!(shop_tools, 37);
+        assert_eq!(shop_tools, 38);
     }
 
     #[tokio::test]

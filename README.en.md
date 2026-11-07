@@ -20,7 +20,7 @@ Engines fall into two categories. The `zero_list_categories` tool returns this m
 | `web` | `baidu`, `yahoo_jp`, `bing`, `naver`, `yahoo_us`, `yandex` |
 | `shopping` | `aliexpress`, `goofish`, `mercari`, `yahoo_auctions`, `yahoo_fleamarket`, `rakuma`, `rakuten`, `qoo10`, `yahoo_shopping`, `amazon` |
 
-## Tools (80 total)
+## Tools (81 total)
 
 Tool names, arguments and result JSON are identical to the standalone servers this project merged.
 
@@ -47,7 +47,7 @@ Tool names, arguments and result JSON are identical to the standalone servers th
 | Rakuma (3) | `rakuma_search_products`, `rakuma_get_product`, `rakuma_get_reviews` |
 | Rakuten Ichiba (3) | `rakuten_search_products`, `rakuten_get_product`, `rakuten_get_reviews` |
 | Qoo10 (2) | `qoo10_search_products`, `qoo10_get_product` |
-| Yahoo! Shopping (2) | `yshopping_search_products`, `yshopping_get_product` |
+| Yahoo! Shopping (3) | `yshopping_search_products`, `yshopping_get_product`, `yshopping_get_reviews` |
 | Amazon.co.jp (2) | `amazon_search_products`, `amazon_get_product` |
 | Shared (1) | `shopping_list_sources` |
 
@@ -61,7 +61,7 @@ Tool names, arguments and result JSON are identical to the standalone servers th
 
 - **Rakuten Ichiba**: uses the app's guest BFF as-is; no authentication. The detail endpoint can answer HTTP 207 for partial success — that is its normal form, and success is judged from the core item data.
 - **Qoo10**: uses the app's mobile API; sorting and filtering cover every search option the app offers. Product detail has no native API, so the app's WebView page is reproduced instead. The device-derived token in the user agent cannot be reproduced off-device, so a format-preserving placeholder is sent in its place; live verification confirmed the service accepts it. The service does not respond to non-Japan-side access.
-- **Yahoo! Shopping**: uses the app's native API; the appid is a constant built into the app and no authentication is needed. The current API has no review-list endpoint, so there is no reviews tool (search results do carry rating aggregates). Suggestions are likewise not provided, as their parameters are not established.
+- **Yahoo! Shopping**: search and detail use the app's native API; the appid is a constant built into the app and no authentication is needed. The native API has no review-list endpoint, so reviews are read from the review page the app itself opens in a WebView (shopping.yahoo.co.jp/review/item/list) — see `yshopping_get_reviews`. Suggestions are not provided, as their parameters are not established.
 - **Amazon.co.jp**: the app has no native search API. Its WebView display is reproduced with plain HTTP requests, using the app-format user agent and the cookies the app syncs before navigation; no browser engine is involved. This service also does not respond to non-Japan-side access.
 
 ## Install

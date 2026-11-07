@@ -472,7 +472,7 @@ pub fn tool_definitions() -> Vec<Value> {
         })),
 
         // ── Yahoo! Shopping ──
-        tool_def("yshopping_search_products", "Search Yahoo! Shopping Japan products through the Yahoo! Shopping app's native API (searchList/v4). No login; the app's built-in appid is used. order is one of: Recommend, Price, TotalPrice, ReviewCount, ReviewScoreAverage, DiscountRate, CatalogReleaseDate, RegistrationDate, GoodDelivery (asc applies mainly to Price / TotalPrice). Result product_id is \"{storeId}_{itemCode}\" and feeds yshopping_get_product. The current API has no review-list endpoint, so there is no reviews tool.", json!({
+        tool_def("yshopping_search_products", "Search Yahoo! Shopping Japan products through the Yahoo! Shopping app's native API (searchList/v4). No login; the app's built-in appid is used. order is one of: Recommend, Price, TotalPrice, ReviewCount, ReviewScoreAverage, DiscountRate, CatalogReleaseDate, RegistrationDate, GoodDelivery (asc applies mainly to Price / TotalPrice). Result product_id is \"{storeId}_{itemCode}\" and feeds yshopping_get_product and yshopping_get_reviews.", json!({
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search query"},
@@ -517,6 +517,14 @@ pub fn tool_definitions() -> Vec<Value> {
                 "prefectures": {"type": "string", "default": ""},
                 "sku_id": {"type": "string", "default": ""},
                 "donation_id": {"type": "string", "default": ""}
+            },
+            "required": ["product"]
+        })),
+        tool_def("yshopping_get_reviews", "Fetch Yahoo! Shopping Japan product reviews. The app's native API has no review-list endpoint; the app itself shows reviews by opening the review page (shopping.yahoo.co.jp/review/item/list) in a WebView, and this tool reads the review list from that page's server-rendered data. product is the search result's product_id (\"{storeId}_{itemCode}\") or a store product URL. Returns the rating summary (total, average, per-star counts) and the first page of reviews (the page carries 20); limit caps how many of them are returned.", json!({
+            "type": "object",
+            "properties": {
+                "product": {"type": "string", "description": "\"{storeId}_{itemCode}\" or store product URL"},
+                "limit": {"type": "integer", "default": 20, "description": "Max reviews to return (the page carries 20)"}
             },
             "required": ["product"]
         })),
@@ -1058,6 +1066,14 @@ pub async fn dispatch(tool: &str, args: &Value, p: &Providers) -> Result<Value> 
             let result = p.yshopping.get_product(params).await?;
             Ok(serde_json::to_value(result)?)
         }
+        "yshopping_get_reviews" => {
+            let params = shopping_mcp_yahoo_shopping::ReviewParams {
+                item_id: product_param(args),
+                limit: int_param(args, "limit", 20),
+            };
+            let result = p.yshopping.get_reviews(params).await?;
+            Ok(result)
+        }
 
         // ── Amazon ──
         "amazon_search_products" => {
@@ -1142,7 +1158,7 @@ pub async fn dispatch(tool: &str, args: &Value, p: &Providers) -> Result<Value> 
                     "name": "yahoo_shopping",
                     "display_name": "Yahoo! Shopping Japan (Yahoo!ショッピング)",
                     "auth": "anonymous (official app API, appid)",
-                    "tools": ["yshopping_search_products", "yshopping_get_product"]
+                    "tools": ["yshopping_search_products", "yshopping_get_product", "yshopping_get_reviews"]
                 },
                 {
                     "name": "amazon",

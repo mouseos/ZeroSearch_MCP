@@ -10,8 +10,13 @@
 //! `itemId` Bundle key).
 //!
 //! The current API has no review-list endpoint (search results
-//! carry rating aggregates only) and the suggest endpoint's
-//! parameters are not established, so neither is provided here.
+//! carry rating aggregates only). Reviews are served the way the
+//! app itself shows them: `ItemReviewDeepLinkRouter` opens
+//! `https://shopping.yahoo.co.jp/review/item/list` in
+//! `WebViewActivity`, and that page's server-rendered data block
+//! carries the review list, so `get_reviews` reads it from there.
+//! The suggest endpoint's parameters are not established, so it
+//! is not provided here.
 
 use anyhow::{anyhow, Result};
 use reqwest::Client;
@@ -23,6 +28,14 @@ const APPID: &str = "dj00aiZpPWtHdjlEQk16eVA1ZCZzPWNvbnN1bWVyc2VjcmV0Jng9OGM-";
 const APP_VERSION: &str = "16.12.0";
 const USER_AGENT: &str = "okhttp/4.12.0";
 const IMAGE_BASE: &str = "https://item-shopping.c.yimg.jp/i/k/";
+/// The item review page the app opens in its WebView
+/// (`ItemReviewDeepLinkRouter` builds this URL from the store id
+/// and page key).
+const REVIEW_PAGE_BASE: &str = "https://shopping.yahoo.co.jp/review/item/list";
+/// A standard Android WebView user agent, used only for the
+/// review page (the API calls keep the okhttp agent above). The
+/// mobile variant of the page carries the review data.
+const WEBVIEW_USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
 
 /// Sort orders for `yshopping_search_products` (the app's
 /// `SearchResultV2Options$Order$Sort` enum names, sent verbatim).
@@ -521,6 +534,167 @@ pub fn extract_item_id(product: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Reviews (the app's WebView review page)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct ReviewParams {
+    /// `{storeId}_{itemCode}` — the search result's `itemId`.
+    pub item_id: String,
+    /// Cap on returned reviews. The page itself carries 20.
+    pub limit: i32,
+}
+
+impl Default for ReviewParams {
+    fn default() -> Self {
+        Self {
+            item_id: String::new(),
+            limit: 20,
+        }
+    }
+}
+
+/// Build the review page URL from a `{storeId}_{itemCode}` id
+/// (split at the first `_`, the same split the app applies to
+/// ysrId). Returns `None` when either side is empty. Pure;
+/// unit-tested.
+pub fn build_review_url(item_id: &str) -> Option<String> {
+    let (store_id, page_key) = item_id.split_once('_')?;
+    if store_id.is_empty() || page_key.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{REVIEW_PAGE_BASE}?store_id={store_id}&page_key={page_key}"
+    ))
+}
+
+/// Format an epoch-milliseconds timestamp as a `YYYY-MM-DD` date
+/// in JST (UTC+9, no DST). Pure; unit-tested.
+fn jst_date(epoch_ms: i64) -> String {
+    let days = (epoch_ms + 9 * 3600 * 1000).div_euclid(86_400_000);
+    // Civil-from-days algorithm (Howard Hinnant).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Extract the JSON of the page's `<script id="__NEXT_DATA__">`
+/// block. The review page is server-side rendered, so the data
+/// is present in the static HTML. Pure; unit-tested.
+pub fn extract_next_data(html: &str) -> Option<Value> {
+    let marker = html.find("id=\"__NEXT_DATA__\"")?;
+    let start = html[marker..].find('>')? + marker + 1;
+    let end = html[start..].find("</script>")? + start;
+    serde_json::from_str(&html[start..end]).ok()
+}
+
+fn normalize_review(r: &Value) -> Value {
+    let posted_time = r["postedTime"].as_i64().unwrap_or(0);
+    let variant: Vec<String> = r["subCodeOptions"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|o| o["value"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let aspect_ratings: Vec<Value> = r["subReviews"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|s| {
+                    json!({
+                        "name": s["name"].as_str().unwrap_or_default(),
+                        "value": s["valueName"].as_str().unwrap_or_default(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let images: Vec<String> = r["images"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|i| i["url"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    json!({
+        "id": r["id"].as_str().unwrap_or_default(),
+        "author": r["maskYid"].as_str().unwrap_or_default(),
+        "rating": r["rating"].as_i64().unwrap_or(0),
+        "title": r["title"].as_str().unwrap_or_default(),
+        "body": r["body"].as_str().unwrap_or_default(),
+        "posted_time": posted_time,
+        "posted_date": jst_date(posted_time),
+        "helpful_count": r["referenceCount"].as_i64().unwrap_or(0),
+        "edited": r["edited"].as_bool().unwrap_or(false),
+        "variant": variant,
+        "aspect_ratings": aspect_ratings,
+        "images": images,
+        "store_reply": r["storeReply"].clone(),
+    })
+}
+
+/// Parse a review page's HTML into the tool's result JSON. Pure;
+/// unit-tested against a captured live page.
+pub fn parse_reviews_page(html: &str, item_id: &str, limit: i32) -> Value {
+    let url = build_review_url(item_id).unwrap_or_default();
+    let fail = |error: &str| {
+        json!({
+            "provider": "yahoo_shopping",
+            "ok": false,
+            "item_id": item_id,
+            "url": url,
+            "error": error,
+        })
+    };
+    let Some(data) = extract_next_data(html) else {
+        return fail("review page carried no __NEXT_DATA__ block");
+    };
+    let item_review = data.pointer("/props/pageProps/reviewEntity/itemReview");
+    let Some(item_review) = item_review.filter(|v| v.is_object()) else {
+        return fail("review page carried no reviewEntity.itemReview");
+    };
+    let reviews: Vec<Value> = item_review["reviews"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .take(limit.clamp(1, 100) as usize)
+                .map(normalize_review)
+                .collect()
+        })
+        .unwrap_or_default();
+    let summary = &item_review["reviewSummary"];
+    json!({
+        "provider": "yahoo_shopping",
+        "ok": true,
+        "item_id": item_id,
+        "url": url,
+        "total": summary["count"].as_i64(),
+        "average_rating": summary["average"].as_f64(),
+        "rating_counts": {
+            "1": summary["one"].as_i64().unwrap_or(0),
+            "2": summary["two"].as_i64().unwrap_or(0),
+            "3": summary["three"].as_i64().unwrap_or(0),
+            "4": summary["four"].as_i64().unwrap_or(0),
+            "5": summary["five"].as_i64().unwrap_or(0),
+        },
+        "reviews": reviews,
+        "count": reviews.len(),
+        "next_offset": item_review["nextOffset"].as_i64(),
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
 
@@ -587,6 +761,26 @@ impl YahooShoppingClient {
         }
         let parsed: Value = resp.json().await?;
         Ok(parse_detail_response(&parsed))
+    }
+
+    /// Fetch item reviews from the review page the app opens in
+    /// its WebView (the native API has no review-list endpoint).
+    pub async fn get_reviews(&self, params: ReviewParams) -> Result<Value> {
+        let item_id = extract_item_id(&params.item_id);
+        let url = build_review_url(&item_id)
+            .ok_or_else(|| anyhow!("invalid item id for reviews: {item_id}"))?;
+        let resp = self
+            .client
+            .get(&url)
+            .header("User-Agent", WEBVIEW_USER_AGENT)
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(anyhow!("yahoo shopping review page returned HTTP {status}"));
+        }
+        let html = resp.text().await?;
+        Ok(parse_reviews_page(&html, &item_id, params.limit))
     }
 }
 
@@ -707,6 +901,90 @@ mod tests {
             extract_item_id("dripcoffee_house-500-4"),
             "dripcoffee_house-500-4"
         );
+    }
+
+    #[test]
+    fn review_url_shape() {
+        assert_eq!(
+            build_review_url("dripcoffee_rrich-500-4").as_deref(),
+            Some(
+                "https://shopping.yahoo.co.jp/review/item/list?store_id=dripcoffee&page_key=rrich-500-4"
+            )
+        );
+        // The page key itself may contain further underscores and
+        // hyphens; only the first `_` separates the store.
+        assert_eq!(
+            build_review_url("store_a_b-c").as_deref(),
+            Some("https://shopping.yahoo.co.jp/review/item/list?store_id=store&page_key=a_b-c")
+        );
+        assert_eq!(build_review_url("noseparator"), None);
+        assert_eq!(build_review_url("_code"), None);
+        assert_eq!(build_review_url("store_"), None);
+    }
+
+    #[test]
+    fn jst_date_shape() {
+        assert_eq!(jst_date(1_763_360_207_730), "2025-11-17");
+        assert_eq!(jst_date(1_718_369_771_054), "2024-06-14");
+        assert_eq!(jst_date(0), "1970-01-01");
+    }
+
+    #[test]
+    fn parse_reviews_fixture() {
+        let html = include_str!("../tests/fixtures/reviews.html");
+        let out = parse_reviews_page(html, "dripcoffee_rrich-500-4", 20);
+        assert_eq!(out["ok"], json!(true), "{out}");
+        assert_eq!(out["total"], json!(7394));
+        assert_eq!(out["average_rating"], json!(4.5));
+        assert_eq!(out["rating_counts"]["5"], json!(4653));
+        assert_eq!(out["rating_counts"]["1"], json!(58));
+        assert_eq!(out["next_offset"], json!(20));
+        assert_eq!(out["count"], json!(20));
+        let reviews = out["reviews"].as_array().unwrap();
+        let first = &reviews[0];
+        assert_eq!(first["author"], json!("meg********"));
+        assert_eq!(first["rating"], json!(5));
+        assert_eq!(first["title"], json!("少し苦みのあるブラジル系で美味しい"));
+        assert!(first["body"].as_str().unwrap().contains("酸味が低い"));
+        assert_eq!(first["posted_date"], json!("2025-11-17"));
+        assert_eq!(first["helpful_count"], json!(27));
+        assert_eq!(first["edited"], json!(true));
+        assert_eq!(first["variant"][1], json!("【4571621610115】豆のまま"));
+        assert_eq!(first["aspect_ratings"][0]["name"], json!("香り"));
+        assert_eq!(first["aspect_ratings"][0]["value"], json!("非常に良い"));
+        assert!(first["images"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("https://review-shopping.c.yimg.jp/"));
+    }
+
+    #[test]
+    fn parse_reviews_limit_and_missing_data() {
+        let html = include_str!("../tests/fixtures/reviews.html");
+        let out = parse_reviews_page(html, "dripcoffee_rrich-500-4", 3);
+        assert_eq!(out["count"], json!(3));
+        assert_eq!(out["reviews"].as_array().unwrap().len(), 3);
+
+        let out = parse_reviews_page("<html><body>no data</body></html>", "a_b", 20);
+        assert_eq!(out["ok"], json!(false));
+        assert!(out["error"].as_str().unwrap().contains("__NEXT_DATA__"));
+    }
+
+    #[tokio::test]
+    #[ignore = "live test: run with --ignored"]
+    async fn test_live_reviews() {
+        let client = YahooShoppingClient::new();
+        let out = client
+            .get_reviews(ReviewParams {
+                item_id: "dripcoffee_rrich-500-4".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(out["ok"], json!(true), "{out}");
+        assert!(out["total"].as_i64().unwrap() > 0);
+        assert!(!out["reviews"].as_array().unwrap().is_empty());
+        assert!(!out["reviews"][0]["body"].as_str().unwrap().is_empty());
     }
 
     #[tokio::test]
