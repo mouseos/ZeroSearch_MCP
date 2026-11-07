@@ -1,12 +1,13 @@
 //! `zero_search` — the ZeroSearch library.
 //!
-//! One zero-config entry point to sixteen search providers: six web
-//! engines (Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo US, Yandex) and
-//! ten shopping providers (AliExpress, Goofish, Mercari, Yahoo!
+//! One zero-config entry point to nineteen search providers: six web
+//! engines (Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo US, Yandex), ten
+//! shopping providers (AliExpress, Goofish, Mercari, Yahoo!
 //! Auctions, Yahoo! Flea Market, Rakuma, Rakuten, Qoo10, Yahoo!
-//! Shopping, Amazon). No API key, no environment
-//! variables, no configuration files — construct a [`Client`] (or
-//! call the free functions) and search.
+//! Shopping, Amazon) and three media platforms (YouTube, Bilibili,
+//! CSDN). No API key, no environment variables, no configuration
+//! files — construct a [`Client`] (or call the free functions) and
+//! search.
 //!
 //! The crate works on two levels:
 //!
@@ -14,9 +15,10 @@
 //!   [`search`] for one web engine, [`Client::search_all`] /
 //!   [`search_all`] for every web engine at once (per-engine
 //!   success/failure kept separate), [`Client::search_category`] for
-//!   a whole [`Category`], and [`Client::search_products`] /
-//!   [`search_products`] for shopping. Web results are normalised
-//!   into [`SearchItem`].
+//!   a whole [`Category`], [`Client::search_products`] /
+//!   [`search_products`] for shopping, and [`Client::search_media`] /
+//!   [`search_media`] for the media platforms. Web results are
+//!   normalised into [`SearchItem`].
 //! - The **raw providers**, re-exported under [`providers`] (and at
 //!   the crate root under their original crate names), so every
 //!   provider's own client, request types and result types stay
@@ -31,13 +33,16 @@ use serde_json::Value;
 // ---------------------------------------------------------------------------
 
 pub use baidu_search;
+pub use bilibili_provider;
 pub use bing_search;
+pub use csdn_search;
 pub use naver_search;
 pub use yahoo_search;
 pub use yahoo_us_search;
 pub use yandex_search;
+pub use youtube_search;
 
-/// All sixteen provider crates under one module, by role.
+/// All nineteen provider crates under one module, by role.
 pub mod providers {
     pub use baidu_search;
     pub use bing_search;
@@ -56,13 +61,17 @@ pub mod providers {
     pub use shopping_mcp_yahoo_auctions as yahoo_auctions;
     pub use shopping_mcp_yahoo_flea as yahoo_flea;
     pub use shopping_mcp_yahoo_shopping as yahoo_shopping;
+
+    pub use bilibili_provider as bilibili;
+    pub use csdn_search as csdn;
+    pub use youtube_search as youtube;
 }
 
 // ---------------------------------------------------------------------------
 // Categories and engines
 // ---------------------------------------------------------------------------
 
-/// The two engine categories.
+/// The three engine categories.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Category {
@@ -70,14 +79,17 @@ pub enum Category {
     Web,
     /// Shopping / marketplace search providers.
     Shopping,
+    /// Media content platforms (videos and articles).
+    Media,
 }
 
 impl Category {
-    /// Stable category id (`"web"` / `"shopping"`).
+    /// Stable category id (`"web"` / `"shopping"` / `"media"`).
     pub fn id(&self) -> &'static str {
         match self {
             Category::Web => "web",
             Category::Shopping => "shopping",
+            Category::Media => "media",
         }
     }
 
@@ -97,12 +109,42 @@ impl Category {
                 "yahoo_shopping",
                 "amazon",
             ],
+            Category::Media => &["youtube", "bilibili", "csdn"],
         }
     }
 
-    /// Both categories.
+    /// All three categories.
     pub fn all() -> &'static [Category] {
-        &[Category::Web, Category::Shopping]
+        &[Category::Web, Category::Shopping, Category::Media]
+    }
+}
+
+/// A media platform (category [`Category::Media`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaProvider {
+    YouTube,
+    Bilibili,
+    Csdn,
+}
+
+impl MediaProvider {
+    /// Stable provider id.
+    pub fn id(&self) -> &'static str {
+        match self {
+            MediaProvider::YouTube => "youtube",
+            MediaProvider::Bilibili => "bilibili",
+            MediaProvider::Csdn => "csdn",
+        }
+    }
+
+    /// Every media provider, in canonical order.
+    pub fn all() -> &'static [MediaProvider] {
+        &[
+            MediaProvider::YouTube,
+            MediaProvider::Bilibili,
+            MediaProvider::Csdn,
+        ]
     }
 }
 
@@ -235,12 +277,26 @@ pub struct ShopOutcome {
     pub error: Option<String>,
 }
 
+/// The outcome of one provider inside a multi-provider media
+/// search. `result` is the provider's own JSON payload (the exact
+/// value the corresponding MCP tool returns).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaOutcome {
+    pub provider: MediaProvider,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// The outcome of a category-wide search ([`Client::search_category`]).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CategoryOutcome {
     Web(Vec<EngineOutcome>),
     Shopping(Vec<ShopOutcome>),
+    Media(Vec<MediaOutcome>),
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +325,9 @@ pub struct Client {
     qoo10: shopping_mcp_qoo10::Qoo10Client,
     yshopping: shopping_mcp_yahoo_shopping::YahooShoppingClient,
     amazon: shopping_mcp_amazon::AmazonClient,
+    youtube: youtube_search::YoutubeClient,
+    bilibili: bilibili_provider::BilibiliClient,
+    csdn: csdn_search::CsdnClient,
 }
 
 impl Client {
@@ -292,6 +351,9 @@ impl Client {
             qoo10: shopping_mcp_qoo10::Qoo10Client::new(),
             yshopping: shopping_mcp_yahoo_shopping::YahooShoppingClient::new(),
             amazon: shopping_mcp_amazon::AmazonClient::new(),
+            youtube: youtube_search::YoutubeClient::new(),
+            bilibili: bilibili_provider::BilibiliClient::new(),
+            csdn: csdn_search::CsdnClient::new(),
         })
     }
 
@@ -344,6 +406,15 @@ impl Client {
     }
     pub fn amazon(&self) -> &shopping_mcp_amazon::AmazonClient {
         &self.amazon
+    }
+    pub fn youtube(&self) -> &youtube_search::YoutubeClient {
+        &self.youtube
+    }
+    pub fn bilibili(&self) -> &bilibili_provider::BilibiliClient {
+        &self.bilibili
+    }
+    pub fn csdn(&self) -> &csdn_search::CsdnClient {
+        &self.csdn
     }
 
     /// Search one web engine (first page, provider-default size).
@@ -638,16 +709,96 @@ impl Client {
         out
     }
 
+    /// Search one media provider. The returned JSON is the
+    /// provider's own payload — what the matching MCP tool
+    /// (`youtube_search_videos`, `bilibili_search_videos` or
+    /// `csdn_search_articles`) returns with default options, except
+    /// that `limit` bounds the page: Bilibili and CSDN pass it to
+    /// the service, YouTube returns its app page trimmed to `limit`
+    /// items (its continuation token stays valid).
+    pub async fn search_media(
+        &self,
+        provider: MediaProvider,
+        query: &str,
+        limit: i64,
+    ) -> Result<Value> {
+        let limit = limit.max(1);
+        match provider {
+            MediaProvider::YouTube => {
+                let filters = youtube_search::SearchFilters::default();
+                match self.youtube.search_videos(query, &filters).await {
+                    Ok(page) => {
+                        let mut value = page.to_value(query);
+                        if let Some(items) = value["items"].as_array_mut() {
+                            items.truncate(limit as usize);
+                            let count = items.len();
+                            value["count"] = serde_json::json!(count);
+                        }
+                        Ok(value)
+                    }
+                    Err(e) => Ok(serde_json::json!({
+                        "provider": "youtube",
+                        "ok": false,
+                        "error": e.to_value(),
+                    })),
+                }
+            }
+            MediaProvider::Bilibili => {
+                let page_size = i32::try_from(limit).unwrap_or(20);
+                match self.bilibili.search_videos(query, page_size, "", 0).await {
+                    Ok(value) => Ok(value),
+                    Err(e) => Ok(bilibili_provider::error_json(&e)),
+                }
+            }
+            MediaProvider::Csdn => Ok(csdn_search::search_articles(
+                &self.csdn,
+                query,
+                1,
+                u32::try_from(limit).unwrap_or(20).clamp(1, 50),
+                None,
+            )
+            .await),
+        }
+    }
+
+    /// Search every media provider with the same query. Each
+    /// provider's success or failure is reported separately.
+    /// Providers run sequentially and each performs a live request,
+    /// so callers should treat this as three searches, not one.
+    pub async fn search_media_all(&self, query: &str, limit: i64) -> Vec<MediaOutcome> {
+        let mut out = Vec::with_capacity(MediaProvider::all().len());
+        for &provider in MediaProvider::all() {
+            let outcome = match self.search_media(provider, query, limit).await {
+                Ok(result) => MediaOutcome {
+                    provider,
+                    ok: result.get("ok").and_then(Value::as_bool).unwrap_or(true),
+                    result: Some(result),
+                    error: None,
+                },
+                Err(e) => MediaOutcome {
+                    provider,
+                    ok: false,
+                    result: None,
+                    error: Some(format!("{e:#}")),
+                },
+            };
+            out.push(outcome);
+        }
+        out
+    }
+
     /// Search a whole category with one query: every web engine for
     /// [`Category::Web`], every shopping provider for
     /// [`Category::Shopping`] (with the shopping default limit of
-    /// 10 per provider).
+    /// 10 per provider), every media provider for
+    /// [`Category::Media`] (also with a limit of 10 per provider).
     pub async fn search_category(&self, category: Category, query: &str) -> CategoryOutcome {
         match category {
             Category::Web => CategoryOutcome::Web(self.search_all(query).await),
             Category::Shopping => {
                 CategoryOutcome::Shopping(self.search_products_all(query, 10).await)
             }
+            Category::Media => CategoryOutcome::Media(self.search_media_all(query, 10).await),
         }
     }
 }
@@ -670,4 +821,9 @@ pub async fn search_all(query: &str) -> Result<Vec<EngineOutcome>> {
 /// Search one shopping provider with a throwaway client.
 pub async fn search_products(provider: ShopProvider, query: &str, limit: i64) -> Result<Value> {
     Client::new()?.search_products(provider, query, limit).await
+}
+
+/// Search one media provider with a throwaway client.
+pub async fn search_media(provider: MediaProvider, query: &str, limit: i64) -> Result<Value> {
+    Client::new()?.search_media(provider, query, limit).await
 }

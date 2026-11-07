@@ -1,26 +1,28 @@
 # ZeroSearch MCP
 
-Six search engines and ten shopping sites behind one MCP server.
+Six search engines, ten shopping sites and three media platforms behind one MCP server.
 
 **The only setup is registering the server. No API key. No environment variables.**
 Point your MCP config at the binary and it works.
 
 Web search: Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo (US), Yandex.
 Shopping search: AliExpress, Goofish (Xianyu), Mercari, Yahoo! Auctions, Yahoo! Flea Market, Rakuma, Rakuten Ichiba, Qoo10, Yahoo! Shopping, Amazon.co.jp.
+Media: YouTube, Bilibili, CSDN.
 Every provider works anonymously, with no login.
 
 It also ships as a Rust library, with a unified API meant to be dropped into your own agent harness as its default search tool.
 
 ## Categories and engines
 
-Engines fall into two categories. The `zero_list_categories` tool returns this mapping over MCP.
+Engines fall into three categories. The `zero_list_categories` tool returns this mapping over MCP.
 
 | Category | Engines |
 |---|---|
 | `web` | `baidu`, `yahoo_jp`, `bing`, `naver`, `yahoo_us`, `yandex` |
 | `shopping` | `aliexpress`, `goofish`, `mercari`, `yahoo_auctions`, `yahoo_fleamarket`, `rakuma`, `rakuten`, `qoo10`, `yahoo_shopping`, `amazon` |
+| `media` | `youtube`, `bilibili`, `csdn` |
 
-## Tools (82 total)
+## Tools (89 total)
 
 Tool names, arguments and result JSON are identical to the standalone servers this project merged.
 
@@ -51,6 +53,14 @@ Tool names, arguments and result JSON are identical to the standalone servers th
 | Amazon.co.jp (2) | `amazon_search_products`, `amazon_get_product` |
 | Shared (1) | `shopping_list_sources` |
 
+### media
+
+| Provider | Tools |
+|---|---|
+| YouTube (4) | `youtube_search_videos`, `youtube_get_video`, `youtube_get_related`, `youtube_get_comments` |
+| Bilibili (1) | `bilibili_search_videos` |
+| CSDN (2) | `csdn_search_articles`, `csdn_get_article` |
+
 ### ZeroSearch
 
 | Tool | What it does |
@@ -63,6 +73,12 @@ Tool names, arguments and result JSON are identical to the standalone servers th
 - **Qoo10**: uses the app's mobile API; sorting and filtering cover every search option the app offers. Product detail has no native API, so the app's WebView page is reproduced instead. The device-derived token in the user agent cannot be reproduced off-device, so a format-preserving placeholder is sent in its place; live verification confirmed the service accepts it. The service does not respond to non-Japan-side access.
 - **Yahoo! Shopping**: search and detail use the app's native API; the appid is a constant built into the app and no authentication is needed. The native API has no review-list endpoint, so reviews are read from the review page the app itself opens in a WebView (shopping.yahoo.co.jp/review/item/list) — see `yshopping_get_reviews`. Reviews past the first 20 and the page's sort orders (recommended, highest rated, most helpful, newest, pick-up) go through the same continuation endpoint the page itself uses, with the token the page issued; choose them with `offset` and `sort`. The page's star-rating and aspect filters are available as `rating` and `sub_review_id` through the same endpoint. Suggestions are not provided, as their parameters are not established.
 - **Amazon.co.jp**: the app has no native search API. Its WebView display is reproduced with plain HTTP requests, using the app-format user agent and the cookies the app syncs before navigation; no browser engine is involved. This service also does not respond to non-Japan-side access.
+
+## Notes on the providers added in v0.3.0
+
+- **YouTube**: reproduces the Android app's own retrieval route (InnerTube). Search supports sorting (relevance, rating, upload date, view count) and filtering (upload window, duration), with continuation-token paging; video details, related videos and comments (with paging) are also available. The guest identifier (visitorData) is the server-issued value, held and replayed as the app does — no login. Note that the Android client's detail response contains no publish date or like count, so those two fields cannot be returned (they come back null).
+- **Bilibili**: reproduces the Android app's gRPC search (SearchAll), with the order code, the region (tid) and duration filter formats, a publish-time range, and `next`-token paging. Only search is offered: the app's video detail (View) and related (RelatesFeed) endpoints refuse requests without the app's device context (business error), and the metadata carrying that context cannot cross the service's public edge, which rejects header values containing control bytes — so no detail or related tools are provided.
+- **CSDN**: reproduces the Android app's gateway API with the app's own X-Ca signature (key embedded in the app). Article search (with paging) and article detail (including the full body HTML and text) work without login.
 
 ## Install
 

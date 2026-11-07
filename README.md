@@ -1,26 +1,28 @@
 # ZeroSearch MCP
 
-検索エンジン6つとショッピング10サイトを、1つのMCPサーバーに統合したものです。
+検索エンジン6つとショッピング10サイト、メディア3つを、1つのMCPサーバーに統合したものです。
 
 **設定はMCP登録だけです。APIキーは不要。環境変数も不要。**
 サーバーのパスをMCP設定に書けば、そのまま使えます。
 
 Web検索は Baidu、Yahoo! JAPAN、Bing、Naver、Yahoo (US)、Yandex。
 ショッピング検索は AliExpress、Goofish（闲鱼）、Mercari、ヤフオク、Yahoo!フリマ、楽天ラクマ、楽天市場、Qoo10、Yahoo!ショッピング、Amazon.co.jp です。
+メディアは YouTube、Bilibili、CSDN です。
 どのプロバイダも匿名・ログイン不要で動きます。
 
 Rustライブラリとしても使えます。自作ハーネスのデフォルト検索ツールとして組み込むための統一APIを用意しています。
 
 ## カテゴリとエンジン
 
-エンジンは2つのカテゴリに分かれます。MCPでは `zero_list_categories` ツールがこの対応を返します。
+エンジンは3つのカテゴリに分かれます。MCPでは `zero_list_categories` ツールがこの対応を返します。
 
 | カテゴリ | エンジン |
 |---|---|
 | `web`（Web検索） | `baidu`、`yahoo_jp`、`bing`、`naver`、`yahoo_us`、`yandex` |
 | `shopping`（ショッピング検索） | `aliexpress`、`goofish`、`mercari`、`yahoo_auctions`、`yahoo_fleamarket`、`rakuma`、`rakuten`、`qoo10`、`yahoo_shopping`、`amazon` |
+| `media`（メディア） | `youtube`、`bilibili`、`csdn` |
 
-## ツール一覧（全82件）
+## ツール一覧（全89件）
 
 ツール名・引数・返却形式は、統合前の各単体サーバーと完全に同一です。
 
@@ -51,6 +53,14 @@ Rustライブラリとしても使えます。自作ハーネスのデフォル�
 | Amazon.co.jp（2件） | `amazon_search_products`、`amazon_get_product` |
 | 共通（1件） | `shopping_list_sources` |
 
+### media
+
+| プロバイダ | ツール |
+|---|---|
+| YouTube（4件） | `youtube_search_videos`、`youtube_get_video`、`youtube_get_related`、`youtube_get_comments` |
+| Bilibili（1件） | `bilibili_search_videos` |
+| CSDN（2件） | `csdn_search_articles`、`csdn_get_article` |
+
 ### ZeroSearch共通
 
 | ツール | 内容 |
@@ -63,6 +73,12 @@ Rustライブラリとしても使えます。自作ハーネスのデフォル�
 - **Qoo10**: アプリのモバイルAPIを使います。並び替えと絞り込みは、アプリの検索条件の全項目に対応します。商品詳細はネイティブAPIがないため、アプリのWebView表示を再現して取得します。ユーザーエージェントに含まれる端末由来のトークンは端末の外では再現できないため、形式を保った代替値を送ります。この形で実通信の受理を確認済みです。なお、このサービスは日本側からの接続でないと応答しません。
 - **Yahoo!ショッピング**: 検索と詳細はアプリのネイティブAPIを使います。appidはアプリ内蔵の定数で、認証は不要です。レビュー一覧はネイティブAPIにないため、アプリ自身がWebViewで開くレビューページ（shopping.yahoo.co.jp/review/item/list）から取得します（`yshopping_get_reviews`）。21件目以降と並び替え（おすすめ順・評価の高い順・いいねの多い順・新着順・ピックアップ）は、ページ自身が続きを読むときに使うAPIを、ページが発行したトークンとともに利用し、`offset` と `sort` で指定できます。星評価と項目別評価での絞り込み（`rating`、`sub_review_id`）も同じAPIで指定できます。サジェストはパラメータが確定していないため、用意していません。
 - **Amazon.co.jp**: アプリに検索用のネイティブAPIはありません。アプリのWebView表示を通常のHTTP取得で再現します。使うのはアプリ形式のユーザーエージェントと、表示前にアプリが同期するCookieです。ブラウザエンジンは使いません。このサービスも日本側からの接続でないと応答しません。
+
+## プロバイダの補足（v0.3.0で追加した3件）
+
+- **YouTube**: Androidアプリ自身の取得方式（InnerTube）を再現します。検索は並び替え（関連度・評価・アップロード日・再生数）と絞り込み（アップロード時期・長さ）に対応し、ページ送りは継続トークンでたどります。動画詳細・関連動画・コメント（ページ送り対応）も取得できます。ゲストの識別子（visitorData）はサーバーが払い出すものを保持して使う形で、ログインは不要です。なお、Androidクライアントの詳細応答には公開日といいね数が含まれないため、その2項目は返せません（nullになります）。
+- **Bilibili**: AndroidアプリのgRPC検索（SearchAll）を再現します。並び替えコード、地域（tid）・長さの絞り込み形式、公開日時の範囲指定、ページ送り（`next`）に対応します。用意するのは検索だけです。アプリの動画詳細（View）と関連（RelatesFeed）は、端末文脈なしの要求をサーバーが業務エラーで拒否します。その文脈を運ぶメタデータは、サービスの公開エッジが制御バイトを含むヘッダ値を拒否するため通すことができず、詳細と関連はツールとして用意していません。
+- **CSDN**: AndroidアプリのゲートウェイAPIを、アプリ内蔵の鍵によるX-Ca署名つきで再現します。記事検索（ページ指定対応）と記事詳細（本文HTMLとテキストまで）がログインなしで取得できます。
 
 ## インストール
 

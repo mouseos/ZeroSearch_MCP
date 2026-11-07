@@ -1,9 +1,9 @@
 [package]
 name = "zero-search-mcp-server"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
-description = "ZeroSearch MCP server — Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo (US), Yandex, AliExpress, Goofish, Mercari, Yahoo Auctions, Yahoo Flea Market, Rakuma, Rakuten, Qoo10, Yahoo Shopping and Amazon behind one stdio MCP server. No API key, no configuration."
+description = "ZeroSearch MCP server — Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo (US), Yandex, AliExpress, Goofish, Mercari, Yahoo Auctions, Yahoo Flea Market, Rakuma, Rakuten, Qoo10, Yahoo Shopping, Amazon, YouTube, Bilibili and CSDN behind one stdio MCP server. No API key, no configuration."
 repository = "https://github.com/mouseos/ZeroSearch_MCP"
 
 [[bin]]
@@ -35,6 +35,9 @@ shopping-mcp-rakuten = { path = "../providers/rakuten" }
 shopping-mcp-qoo10 = { path = "../providers/qoo10" }
 shopping-mcp-yahoo-shopping = { path = "../providers/yahoo-shopping" }
 shopping-mcp-amazon = { path = "../providers/amazon" }
+youtube-mcp-provider = { path = "../providers/youtube" }
+bilibili-provider = { path = "../providers/bilibili" }
+csdn-provider = { path = "../providers/csdn" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

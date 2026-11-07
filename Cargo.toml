@@ -20,6 +20,9 @@ members = [
     "crates/providers/qoo10",
     "crates/providers/yahoo-shopping",
     "crates/providers/amazon",
+    "crates/providers/youtube",
+    "crates/providers/bilibili",
+    "crates/providers/csdn",
 ]
 # The Yahoo US image helper is deliberately NOT a workspace member:
 # its BoringSSL dependency must stay out of this workspace's build

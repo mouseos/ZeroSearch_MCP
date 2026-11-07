@@ -9,6 +9,7 @@
 
 pub mod baidu;
 pub mod bing;
+pub mod media;
 pub mod naver;
 pub mod shopping;
 pub mod yahoo;
@@ -21,7 +22,8 @@ use serde_json::{json, Value};
 use crate::Providers;
 
 /// All tool definitions exposed by the unified server: the six web
-/// engines' tools, the shopping tools, and `zero_list_categories`.
+/// engines' tools, the shopping tools, the media tools, and
+/// `zero_list_categories`.
 pub fn tool_definitions() -> Vec<Value> {
     let mut defs = Vec::new();
     defs.extend(baidu::tool_definitions());
@@ -31,6 +33,7 @@ pub fn tool_definitions() -> Vec<Value> {
     defs.extend(yahoo_us::tool_definitions());
     defs.extend(yandex::tool_definitions());
     defs.extend(shopping::tool_definitions());
+    defs.extend(media::tool_definitions());
     defs.push(zero_list_categories_definition());
     defs
 }
@@ -51,7 +54,7 @@ fn names_with_prefix(defs: &[Value], prefix: &str) -> Vec<String> {
 fn zero_list_categories_definition() -> Value {
     json!({
         "name": "zero_list_categories",
-        "description": "List the ZeroSearch engine categories (web / shopping), the engines in each category, and the MCP tools that belong to each engine. Takes no arguments.",
+        "description": "List the ZeroSearch engine categories (web / shopping / media), the engines in each category, and the MCP tools that belong to each engine. Takes no arguments.",
         "inputSchema": {
             "type": "object",
             "properties": {},
@@ -66,6 +69,7 @@ fn zero_list_categories_definition() -> Value {
 pub fn categories() -> Value {
     let shopping_defs = shopping::tool_definitions();
     let shopping_shared = vec!["shopping_list_sources".to_string()];
+    let media_defs = media::tool_definitions();
     let engine = |id: &str, tools: Vec<String>| json!({ "id": id, "tools": tools });
     json!({
         "server": "ZeroSearch_MCP",
@@ -98,6 +102,15 @@ pub fn categories() -> Value {
                     engine("amazon", names_with_prefix(&shopping_defs, "amazon_")),
                 ],
                 "shared_tools": shopping_shared,
+            },
+            {
+                "id": "media",
+                "label": "Media platforms",
+                "engines": [
+                    engine("youtube", names_with_prefix(&media_defs, "youtube_")),
+                    engine("bilibili", names_with_prefix(&media_defs, "bilibili_")),
+                    engine("csdn", names_with_prefix(&media_defs, "csdn_")),
+                ],
             },
         ],
         "tool_count": tool_definitions().len(),
@@ -138,6 +151,9 @@ pub async fn dispatch(name: &str, args: &Value, p: &Providers) -> Result<Value> 
         n if n.starts_with("bing_") => bing::dispatch(n, args, &p.bing).await,
         n if n.starts_with("naver_") => naver::dispatch(n, args, &p.naver).await,
         n if n.starts_with("yandex_") => yandex::dispatch(n, args, &p.yandex).await,
+        n if n.starts_with("youtube_") || n.starts_with("bilibili_") || n.starts_with("csdn_") => {
+            media::dispatch(n, args, p).await
+        }
         n if is_shopping_tool(n) => shopping::dispatch(n, args, p).await,
         other => Err(anyhow!("Unknown tool: {other}")),
     }

@@ -1,11 +1,12 @@
 //! ZeroSearch MCP server — JSON-RPC 2.0 over stdio.
 //!
-//! One server for sixteen providers in two categories: web search
-//! (Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo US, Yandex) and shopping
+//! One server for nineteen providers in three categories: web search
+//! (Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo US, Yandex), shopping
 //! search (AliExpress, Goofish, Mercari, Yahoo! Auctions, Yahoo!
 //! Flea Market, Rakuma, Rakuten, Qoo10, Yahoo! Shopping, Amazon
-//! Japan). Tool names, arguments and result JSON are
-//! identical to the standalone servers this code was merged from.
+//! Japan) and media platforms (YouTube, Bilibili, CSDN). Tool names,
+//! arguments and result JSON are identical to the standalone servers
+//! this code was merged from.
 
 #![windows_subsystem = "windows"]
 
@@ -37,6 +38,34 @@ pub struct Providers {
     pub qoo10: shopping_mcp_qoo10::Qoo10Client,
     pub yshopping: shopping_mcp_yahoo_shopping::YahooShoppingClient,
     pub amazon: shopping_mcp_amazon::AmazonClient,
+    pub youtube: youtube_search::YoutubeClient,
+    pub bilibili: bilibili_provider::BilibiliClient,
+    pub csdn: csdn_search::CsdnClient,
+}
+
+/// The Bilibili client, honouring the same egress convention as the
+/// reqwest-based providers: reqwest is built with its system-proxy
+/// support, so a SOCKS5 proxy from the standard `all_proxy` /
+/// `ALL_PROXY` environment variables already routes those providers;
+/// Bilibili's hand-written transport gets the same treatment here.
+/// Unset (or a non-SOCKS value) means a direct connection — no
+/// configuration is ever required.
+fn bilibili_client() -> bilibili_provider::BilibiliClient {
+    let client = bilibili_provider::BilibiliClient::new();
+    let Ok(raw) = std::env::var("all_proxy").or_else(|_| std::env::var("ALL_PROXY")) else {
+        return client;
+    };
+    let host = raw
+        .trim()
+        .strip_prefix("socks5h://")
+        .or_else(|| raw.trim().strip_prefix("socks5://"))
+        .unwrap_or("")
+        .trim_end_matches('/');
+    if host.is_empty() {
+        client
+    } else {
+        client.with_socks5(host.to_string())
+    }
 }
 
 impl Providers {
@@ -58,6 +87,9 @@ impl Providers {
             qoo10: shopping_mcp_qoo10::Qoo10Client::new(),
             yshopping: shopping_mcp_yahoo_shopping::YahooShoppingClient::new(),
             amazon: shopping_mcp_amazon::AmazonClient::new(),
+            youtube: youtube_search::YoutubeClient::new(),
+            bilibili: bilibili_client(),
+            csdn: csdn_search::CsdnClient::new(),
         })
     }
 }
@@ -67,10 +99,10 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
 const INSTRUCTIONS: &str = "\
-ZeroSearch: sixteen search providers behind one server, in two categories — web search \
-(baidu_*, yahoo_* for Yahoo! JAPAN, bing_*, naver_*, yahoo_us_*, yandex_*) and shopping search \
+ZeroSearch: nineteen search providers behind one server, in three categories — web search \
+(baidu_*, yahoo_* for Yahoo! JAPAN, bing_*, naver_*, yahoo_us_*, yandex_*), shopping search \
 (aliexpress_*, goofish_*, mercari_*, yauction_*, yflea_*, rakuma_*, rakuten_*, qoo10_*, \
-yshopping_*, amazon_*). No API key, login, \
+yshopping_*, amazon_*) and media platforms (youtube_*, bilibili_*, csdn_*). No API key, login, \
 environment variables or configuration are required for any provider. Call zero_list_categories \
 for the category / engine / tool map.
 
@@ -79,6 +111,11 @@ sources, Yahoo! JAPAN for Japanese web/image/video/news plus realtime and Chiebu
 the general-purpose engine, Naver for Korea and Korean-language sources, Yahoo (US) for \
 English-language US sources, and Yandex for Russia and Russian-language sources. Queries in the \
 engine's own language usually return substantially better results.
+
+Media tools search the platforms' own catalogues as a guest: youtube_* for YouTube videos, \
+their details, related videos and comments; bilibili_* for Bilibili video search (search only — \
+the app's detail and related endpoints refuse guest requests without the app's device context); \
+csdn_* for CSDN article search and full article text.
 
 Shopping tools search live marketplace listings anonymously. Goofish requests are signed by a \
 signing runtime bundled with the server (it boots in the background at server start and takes \
@@ -365,10 +402,10 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_exposes_all_82_tools() {
+    fn tools_list_exposes_all_89_tools() {
         let defs = tools::tool_definitions();
         let names: Vec<&str> = defs.iter().filter_map(|d| d["name"].as_str()).collect();
-        assert_eq!(names.len(), 82, "tools: {names:?}");
+        assert_eq!(names.len(), 89, "tools: {names:?}");
         for expected in [
             // web: baidu 5, yahoo 8, bing 7, naver 9, yahoo_us 7, yandex 6
             "baidu_search",
@@ -402,6 +439,14 @@ mod tests {
             "amazon_search_products",
             "amazon_get_product",
             "shopping_list_sources",
+            // media: youtube 4, bilibili 1, csdn 2
+            "youtube_search_videos",
+            "youtube_get_video",
+            "youtube_get_related",
+            "youtube_get_comments",
+            "bilibili_search_videos",
+            "csdn_search_articles",
+            "csdn_get_article",
             // zero-search native
             "zero_list_categories",
         ] {
@@ -434,15 +479,18 @@ mod tests {
         assert!(resp["result"]["isError"].is_null());
         let parsed = result_json(&resp);
         assert_eq!(parsed["server"], json!("ZeroSearch_MCP"));
-        assert_eq!(parsed["tool_count"], json!(82));
+        assert_eq!(parsed["tool_count"], json!(89));
         let cats = parsed["categories"].as_array().unwrap();
-        assert_eq!(cats.len(), 2);
+        assert_eq!(cats.len(), 3);
         assert_eq!(cats[0]["id"], json!("web"));
         assert_eq!(cats[0]["engines"].as_array().unwrap().len(), 6);
         assert_eq!(cats[1]["id"], json!("shopping"));
         assert_eq!(cats[1]["engines"].as_array().unwrap().len(), 10);
         assert_eq!(cats[1]["shared_tools"], json!(["shopping_list_sources"]));
-        // Per-engine tool counts: web 5+8+7+9+7+6 = 42, shopping 5+6+7+4+3+3+3+2+3+2 = 38 (+1 shared).
+        assert_eq!(cats[2]["id"], json!("media"));
+        assert_eq!(cats[2]["engines"].as_array().unwrap().len(), 3);
+        // Per-engine tool counts: web 5+8+7+9+7+6 = 42, shopping 5+6+7+4+3+3+3+2+3+2 = 38 (+1 shared),
+        // media 4+1+2 = 7.
         let web_tools: usize = cats[0]["engines"]
             .as_array()
             .unwrap()
@@ -457,6 +505,13 @@ mod tests {
             .map(|e| e["tools"].as_array().unwrap().len())
             .sum();
         assert_eq!(shop_tools, 38);
+        let media_tools: usize = cats[2]["engines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["tools"].as_array().unwrap().len())
+            .sum();
+        assert_eq!(media_tools, 7);
     }
 
     #[tokio::test]
