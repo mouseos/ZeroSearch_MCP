@@ -853,6 +853,7 @@ impl Drop for UnidbgSigner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     fn req() -> SignRequest {
@@ -1068,6 +1069,7 @@ sys.stdout.write("\n")
         assert!(SubprocessSigner::new(vec![]).is_err());
     }
 
+    #[cfg(unix)]
     fn write_shell_script(body: &str, name: &str) -> Vec<String> {
         let dir =
             std::env::temp_dir().join(format!("gf_unidbg_test_{}_{}", std::process::id(), name));
@@ -1080,6 +1082,7 @@ sys.stdout.write("\n")
         vec![path.to_string_lossy().to_string()]
     }
 
+    #[cfg(unix)]
     #[test]
     fn unidbg_signer_fake_harness_round_trip() {
         // Fake serve harness: ready line, then one {"sign": ...} per request line.
@@ -1098,6 +1101,7 @@ sys.stdout.write("\n")
         signer.close();
     }
 
+    #[cfg(unix)]
     #[test]
     fn unidbg_signer_survives_spawner_thread_exit() {
         // Regression test (K1-4): the server pre-warms the harness
@@ -1130,6 +1134,7 @@ sys.stdout.write("\n")
         signer.close();
     }
 
+    #[cfg(unix)]
     #[test]
     fn unidbg_signer_ready_line_validation() {
         // initRc != 0 must be refused at startup, before any sign request.
@@ -1168,6 +1173,7 @@ sys.stdout.write("\n")
         assert!(!err.contains("boom"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn unidbg_signer_startup_timeout_is_separate_from_sign_timeout() {
         // Harness that takes ~0.4s to report ready, then answers
@@ -1203,6 +1209,7 @@ sys.stdout.write("\n")
         split.close();
     }
 
+    #[cfg(unix)]
     #[test]
     fn unidbg_signer_ensure_started_latches_failure() {
         // A harness that never reports ready: ensure_started fails
@@ -1222,7 +1229,7 @@ sys.stdout.write("\n")
         assert_eq!(err, err2);
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     fn process_alive(pid: i32) -> bool {
         // Alive = /proc entry exists and is not a zombie.
         match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
@@ -1234,7 +1241,7 @@ sys.stdout.write("\n")
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn unidbg_signer_drop_kills_harness_tree() {
         // Fake harness that spawns a grandchild (sleep) and records
