@@ -29,6 +29,29 @@
             <artifactId>unidbg-dynarmic</artifactId>
             <version>${unidbg.version}</version>
         </dependency>
+        <dependency>
+            <groupId>com.github.zhkl0228</groupId>
+            <artifactId>unidbg-hypervisor</artifactId>
+            <version>${unidbg.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.zhkl0228</groupId>
+            <artifactId>unidbg-kvm</artifactId>
+            <version>${unidbg.version}</version>
+        </dependency>
+        <!-- build-payload.sh pins slf4j 1.7.36 (the set the harness
+             was verified with); unidbg's tree alone resolves 2.0.16,
+             and no binding is pulled in at all -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>1.7.36</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>1.7.36</version>
+        </dependency>
     </dependencies>
     <build>
         <pluginManagement>
