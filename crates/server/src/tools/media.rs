@@ -1,7 +1,7 @@
-//! Media-category tools: YouTube, Bilibili and CSDN — content
-//! platforms reached through each app's own protocol (YouTube's
-//! InnerTube, Bilibili's polymer gRPC search, CSDN's signed app
-//! gateway), all as guests, no login.
+//! Media-category tools: YouTube and Bilibili — video platforms
+//! reached through each app's own protocol (YouTube's InnerTube,
+//! Bilibili's polymer gRPC search), all as guests, no login.
+//! (CSDN, a text article platform, lives in the articles category.)
 //!
 //! Scope notes (measured, see the provider crates' reports):
 //! - YouTube's ANDROID player response carries no publish date or
@@ -167,31 +167,6 @@ pub fn tool_definitions() -> Vec<Value> {
                 "required": ["query"]
             }),
         ),
-        tool_def(
-            "csdn_search_articles",
-            "Search CSDN articles through the CSDN app's own gateway API (the same assembled search the Android app uses). Returns article titles, authors, digests, URLs and view counts. Works without login.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search keywords. Chinese works best; CSDN is a Chinese developer platform."},
-                    "page": {"type": "integer", "minimum": 1, "description": "1-based page (default 1)"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Results per page (default 20)"},
-                    "sort": {"type": "string", "description": "Optional sort key passed to the app's second_rank_name_sort field"}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "csdn_get_article",
-            "Fetch a CSDN blog article (title, author, full body HTML and text, tags, counts) through the CSDN app's BlogPhoenix API. Works without login.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "article_id": {"type": "string", "description": "Numeric article id, or a blog.csdn.net article URL"}
-                },
-                "required": ["article_id"]
-            }),
-        ),
     ]
 }
 
@@ -227,22 +202,6 @@ pub async fn dispatch(name: &str, args: &Value, p: &Providers) -> Result<Value> 
             }
         }
         "bilibili_search_videos" => bilibili_search(args, p).await,
-        "csdn_search_articles" => {
-            let query = query_param(args)?;
-            let page = int_param(args, "page", 1).max(1) as u32;
-            let limit = int_param(args, "limit", 20).clamp(1, 50) as u32;
-            let sort = args.get("sort").and_then(Value::as_str);
-            Ok(csdn_search::search_articles(&p.csdn, &query, page, limit, sort).await)
-        }
-        "csdn_get_article" => {
-            let article_id = str_param(args, "article_id");
-            if article_id.is_empty() {
-                return Err(anyhow!(
-                    "`article_id` is required and must be a non-empty string"
-                ));
-            }
-            Ok(csdn_search::get_article(&p.csdn, &article_id).await)
-        }
         other => Err(anyhow!("Unknown tool: {other}")),
     }
 }
@@ -341,7 +300,7 @@ mod tests {
     #[test]
     fn every_tool_has_a_schema_and_description() {
         let defs = tool_definitions();
-        assert_eq!(defs.len(), 7);
+        assert_eq!(defs.len(), 5);
         for tool in defs {
             assert!(!tool["name"].as_str().unwrap().is_empty());
             assert!(tool["description"].as_str().unwrap().len() > 40);

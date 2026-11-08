@@ -1,12 +1,12 @@
 //! ZeroSearch MCP server — JSON-RPC 2.0 over stdio.
 //!
-//! One server for nineteen providers in three categories: web search
+//! One server for nineteen providers in four categories: web search
 //! (Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo US, Yandex), shopping
 //! search (AliExpress, Goofish, Mercari, Yahoo! Auctions, Yahoo!
 //! Flea Market, Rakuma, Rakuten, Qoo10, Yahoo! Shopping, Amazon
-//! Japan) and media platforms (YouTube, Bilibili, CSDN). Tool names,
-//! arguments and result JSON are identical to the standalone servers
-//! this code was merged from.
+//! Japan), media platforms (YouTube, Bilibili) and article platforms
+//! (CSDN). Tool names, arguments and result JSON are identical to
+//! the standalone servers this code was merged from.
 
 #![windows_subsystem = "windows"]
 
@@ -99,10 +99,11 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
 const INSTRUCTIONS: &str = "\
-ZeroSearch: nineteen search providers behind one server, in three categories — web search \
+ZeroSearch: nineteen search providers behind one server, in four categories — web search \
 (baidu_*, yahoo_* for Yahoo! JAPAN, bing_*, naver_*, yahoo_us_*, yandex_*), shopping search \
 (aliexpress_*, goofish_*, mercari_*, yauction_*, yflea_*, rakuma_*, rakuten_*, qoo10_*, \
-yshopping_*, amazon_*) and media platforms (youtube_*, bilibili_*, csdn_*). No API key, login, \
+yshopping_*, amazon_*), media platforms (youtube_*, bilibili_*) and article platforms \
+(csdn_*). No API key, login, \
 environment variables or configuration are required for any provider. Call zero_list_categories \
 for the category / engine / tool map.
 
@@ -114,8 +115,8 @@ engine's own language usually return substantially better results.
 
 Media tools search the platforms' own catalogues as a guest: youtube_* for YouTube videos, \
 their details, related videos and comments; bilibili_* for Bilibili video search (search only — \
-the app's detail and related endpoints refuse guest requests without the app's device context); \
-csdn_* for CSDN article search and full article text.
+the app's detail and related endpoints refuse guest requests without the app's device context). \
+Article tools likewise work as a guest: csdn_* for CSDN article search and full article text.
 
 Shopping tools search live marketplace listings anonymously. Goofish requests are signed by a \
 signing runtime bundled with the server (it boots in the background at server start and takes \
@@ -439,12 +440,13 @@ mod tests {
             "amazon_search_products",
             "amazon_get_product",
             "shopping_list_sources",
-            // media: youtube 4, bilibili 1, csdn 2
+            // media: youtube 4, bilibili 1
             "youtube_search_videos",
             "youtube_get_video",
             "youtube_get_related",
             "youtube_get_comments",
             "bilibili_search_videos",
+            // articles: csdn 2
             "csdn_search_articles",
             "csdn_get_article",
             // zero-search native
@@ -481,16 +483,19 @@ mod tests {
         assert_eq!(parsed["server"], json!("ZeroSearch_MCP"));
         assert_eq!(parsed["tool_count"], json!(89));
         let cats = parsed["categories"].as_array().unwrap();
-        assert_eq!(cats.len(), 3);
+        assert_eq!(cats.len(), 4);
         assert_eq!(cats[0]["id"], json!("web"));
         assert_eq!(cats[0]["engines"].as_array().unwrap().len(), 6);
         assert_eq!(cats[1]["id"], json!("shopping"));
         assert_eq!(cats[1]["engines"].as_array().unwrap().len(), 10);
         assert_eq!(cats[1]["shared_tools"], json!(["shopping_list_sources"]));
         assert_eq!(cats[2]["id"], json!("media"));
-        assert_eq!(cats[2]["engines"].as_array().unwrap().len(), 3);
+        assert_eq!(cats[2]["engines"].as_array().unwrap().len(), 2);
+        assert_eq!(cats[3]["id"], json!("articles"));
+        assert_eq!(cats[3]["engines"].as_array().unwrap().len(), 1);
+        assert_eq!(cats[3]["engines"][0]["id"], json!("csdn"));
         // Per-engine tool counts: web 5+8+7+9+7+6 = 42, shopping 5+6+7+4+3+3+3+2+3+2 = 38 (+1 shared),
-        // media 4+1+2 = 7.
+        // media 4+1 = 5, articles 2.
         let web_tools: usize = cats[0]["engines"]
             .as_array()
             .unwrap()
@@ -511,7 +516,14 @@ mod tests {
             .iter()
             .map(|e| e["tools"].as_array().unwrap().len())
             .sum();
-        assert_eq!(media_tools, 7);
+        assert_eq!(media_tools, 5);
+        let article_tools: usize = cats[3]["engines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["tools"].as_array().unwrap().len())
+            .sum();
+        assert_eq!(article_tools, 2);
     }
 
     #[tokio::test]

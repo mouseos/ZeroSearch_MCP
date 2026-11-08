@@ -1,26 +1,27 @@
 # ZeroSearch MCP
 
-Six search engines, ten shopping sites and three media platforms behind one MCP server.
+Six search engines, ten shopping sites, two media platforms and one article platform behind one MCP server.
 
 **The only setup is registering the server. No API key. No environment variables.**
 Point your MCP config at the binary and it works.
 
 Web search: Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo (US), Yandex.
 Shopping search: AliExpress, Goofish (Xianyu), Mercari, Yahoo! Auctions, Yahoo! Flea Market, Rakuma, Rakuten Ichiba, Qoo10, Yahoo! Shopping, Amazon.co.jp.
-Media: YouTube, Bilibili, CSDN.
+Media: YouTube, Bilibili. Articles: CSDN.
 Every provider works anonymously, with no login.
 
 It also ships as a Rust library, with a unified API meant to be dropped into your own agent harness as its default search tool.
 
 ## Categories and engines
 
-Engines fall into three categories. The `zero_list_categories` tool returns this mapping over MCP.
+Engines fall into four categories. The `zero_list_categories` tool returns this mapping over MCP.
 
 | Category | Engines |
 |---|---|
 | `web` | `baidu`, `yahoo_jp`, `bing`, `naver`, `yahoo_us`, `yandex` |
 | `shopping` | `aliexpress`, `goofish`, `mercari`, `yahoo_auctions`, `yahoo_fleamarket`, `rakuma`, `rakuten`, `qoo10`, `yahoo_shopping`, `amazon` |
-| `media` | `youtube`, `bilibili`, `csdn` |
+| `media` | `youtube`, `bilibili` |
+| `articles` | `csdn` |
 
 ## Tools (89 total)
 
@@ -59,6 +60,11 @@ Tool names, arguments and result JSON are identical to the standalone servers th
 |---|---|
 | YouTube (4) | `youtube_search_videos`, `youtube_get_video`, `youtube_get_related`, `youtube_get_comments` |
 | Bilibili (1) | `bilibili_search_videos` |
+
+### articles
+
+| Provider | Tools |
+|---|---|
 | CSDN (2) | `csdn_search_articles`, `csdn_get_article` |
 
 ### ZeroSearch

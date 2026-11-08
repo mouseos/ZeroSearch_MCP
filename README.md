@@ -1,26 +1,27 @@
 # ZeroSearch MCP
 
-検索エンジン6つとショッピング10サイト、メディア3つを、1つのMCPサーバーに統合したものです。
+検索エンジン6つとショッピング10サイト、メディア2つと記事プラットフォーム1つを、1つのMCPサーバーに統合したものです。
 
 **設定はMCP登録だけです。APIキーは不要。環境変数も不要。**
 サーバーのパスをMCP設定に書けば、そのまま使えます。
 
 Web検索は Baidu、Yahoo! JAPAN、Bing、Naver、Yahoo (US)、Yandex。
 ショッピング検索は AliExpress、Goofish（闲鱼）、Mercari、ヤフオク、Yahoo!フリマ、楽天ラクマ、楽天市場、Qoo10、Yahoo!ショッピング、Amazon.co.jp です。
-メディアは YouTube、Bilibili、CSDN です。
+メディアは YouTube、Bilibili。記事プラットフォームは CSDN です。
 どのプロバイダも匿名・ログイン不要で動きます。
 
 Rustライブラリとしても使えます。自作ハーネスのデフォルト検索ツールとして組み込むための統一APIを用意しています。
 
 ## カテゴリとエンジン
 
-エンジンは3つのカテゴリに分かれます。MCPでは `zero_list_categories` ツールがこの対応を返します。
+エンジンは4つのカテゴリに分かれます。MCPでは `zero_list_categories` ツールがこの対応を返します。
 
 | カテゴリ | エンジン |
 |---|---|
 | `web`（Web検索） | `baidu`、`yahoo_jp`、`bing`、`naver`、`yahoo_us`、`yandex` |
 | `shopping`（ショッピング検索） | `aliexpress`、`goofish`、`mercari`、`yahoo_auctions`、`yahoo_fleamarket`、`rakuma`、`rakuten`、`qoo10`、`yahoo_shopping`、`amazon` |
-| `media`（メディア） | `youtube`、`bilibili`、`csdn` |
+| `media`（メディア） | `youtube`、`bilibili` |
+| `articles`（記事） | `csdn` |
 
 ## ツール一覧（全89件）
 
@@ -59,6 +60,11 @@ Rustライブラリとしても使えます。自作ハーネスのデフォル�
 |---|---|
 | YouTube（4件） | `youtube_search_videos`、`youtube_get_video`、`youtube_get_related`、`youtube_get_comments` |
 | Bilibili（1件） | `bilibili_search_videos` |
+
+### articles
+
+| プロバイダ | ツール |
+|---|---|
 | CSDN（2件） | `csdn_search_articles`、`csdn_get_article` |
 
 ### ZeroSearch共通

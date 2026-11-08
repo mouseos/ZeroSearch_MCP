@@ -4,8 +4,8 @@
 //! covered by the server e2e tests and the harness example.
 
 use zero_search::{
-    Category, CategoryOutcome, Client, EngineOutcome, MediaOutcome, MediaProvider, SearchItem,
-    ShopOutcome, ShopProvider, WebEngine,
+    ArticleOutcome, ArticleProvider, Category, CategoryOutcome, Client, EngineOutcome,
+    MediaOutcome, MediaProvider, SearchItem, ShopOutcome, ShopProvider, WebEngine,
 };
 
 #[test]
@@ -13,6 +13,7 @@ fn categories_cover_nineteen_engines() {
     assert_eq!(Category::Web.id(), "web");
     assert_eq!(Category::Shopping.id(), "shopping");
     assert_eq!(Category::Media.id(), "media");
+    assert_eq!(Category::Articles.id(), "articles");
     assert_eq!(
         Category::Web.engine_ids(),
         &["baidu", "yahoo_jp", "bing", "naver", "yahoo_us", "yandex"]
@@ -32,10 +33,9 @@ fn categories_cover_nineteen_engines() {
             "amazon"
         ]
     );
-    assert_eq!(
-        Category::Media.engine_ids(),
-        &["youtube", "bilibili", "csdn"]
-    );
+    assert_eq!(Category::Media.engine_ids(), &["youtube", "bilibili"]);
+    assert_eq!(Category::Articles.engine_ids(), &["csdn"]);
+    assert_eq!(Category::all().len(), 4);
     let total: usize = Category::all().iter().map(|c| c.engine_ids().len()).sum();
     assert_eq!(total, 19);
 }
@@ -59,12 +59,16 @@ fn engine_registries_are_complete_and_unique() {
     assert_eq!(shop, Category::Shopping.engine_ids());
 
     let media: Vec<&str> = MediaProvider::all().iter().map(|p| p.id()).collect();
-    assert_eq!(media.len(), 3);
+    assert_eq!(media.len(), 2);
     let mut sorted = media.clone();
     sorted.sort_unstable();
     sorted.dedup();
-    assert_eq!(sorted.len(), 3, "media provider ids must be unique");
+    assert_eq!(sorted.len(), 2, "media provider ids must be unique");
     assert_eq!(media, Category::Media.engine_ids());
+
+    let articles: Vec<&str> = ArticleProvider::all().iter().map(|p| p.id()).collect();
+    assert_eq!(articles.len(), 1);
+    assert_eq!(articles, Category::Articles.engine_ids());
 }
 
 #[test]
@@ -111,6 +115,15 @@ fn outcome_types_serialise() {
     }]);
     let value = serde_json::to_value(&media).unwrap();
     assert_eq!(value[0]["provider"], serde_json::json!("bilibili"));
+
+    let articles = CategoryOutcome::Articles(vec![ArticleOutcome {
+        provider: ArticleProvider::Csdn,
+        ok: true,
+        result: Some(serde_json::json!({"ok": true})),
+        error: None,
+    }]);
+    let value = serde_json::to_value(&articles).unwrap();
+    assert_eq!(value[0]["provider"], serde_json::json!("csdn"));
 }
 
 #[test]

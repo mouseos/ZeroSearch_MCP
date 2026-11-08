@@ -1,6 +1,6 @@
 [package]
 name = "zero-search-mcp-server"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 license = "MIT"
 description = "ZeroSearch MCP server — Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo (US), Yandex, AliExpress, Goofish, Mercari, Yahoo Auctions, Yahoo Flea Market, Rakuma, Rakuten, Qoo10, Yahoo Shopping, Amazon, YouTube, Bilibili and CSDN behind one stdio MCP server. No API key, no configuration."
