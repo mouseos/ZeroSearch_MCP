@@ -66,23 +66,23 @@ jobs:
       - name: Build image helper binary
         run: cargo build --release --target ${{ matrix.target }} --manifest-path crates/helpers/yahoo-us-image/Cargo.toml
 
-      # Goofish signing payload: a pinned Java 8 runtime plus the
-      # compiled unidbg signing harness, shipped next to the server
-      # binary. The Goofish app package itself is not redistributable
-      # and is NOT in the payload — the server downloads it on first
+      # The Goofish signer is a standalone crate outside the
+      # workspace (its Unicorn build — cmake + bindgen, libclang
+      # required — must not be able to break the workspace build);
+      # build it separately into its own target directory, like the
+      # image helper above. The Linux dependency step already
+      # installs libclang-dev and cmake; the macOS and Windows
+      # runner images carry libclang with their toolchains.
+      - name: Build Goofish signer binary
+        run: cargo build --release --target ${{ matrix.target }} --manifest-path crates/helpers/goofish-signer/Cargo.toml
+
+      # Goofish signing payload: the Rust signer binary plus the
+      # Android system libraries it loads SecurityGuard against,
+      # shipped next to the server binary. There is no JVM. The
+      # Goofish app package itself is not redistributable and is
+      # NOT in the payload — the server downloads it on first
       # Goofish use and assembles the runtime in its data directory
       # (see runtime/goofish/build-payload.sh).
-      - name: Set up JDK 8 for the Goofish payload build
-        uses: actions/setup-java@v4
-        with:
-          # Zulu: Temurin's setup-java catalog no longer offers a
-          # macOS arm64 JDK 8 (the v0.4.0 release run failed there
-          # with "Could not find satisfied version for SemVer '8'").
-          # Zulu 8 exists for all three runner platforms and is
-          # already the payload's macOS JRE source.
-          distribution: zulu
-          java-version: '8'
-
       - name: Build Goofish signing payload
         shell: bash
         run: |

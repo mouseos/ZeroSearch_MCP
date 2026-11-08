@@ -65,6 +65,23 @@ jobs:
       - name: Helper crate tests
         run: cargo test --manifest-path crates/helpers/yahoo-us-image/Cargo.toml
 
+      # The Goofish signer is a standalone crate outside the
+      # workspace (its Unicorn build — cmake + bindgen, libclang
+      # required — must not be able to break the workspace build),
+      # so it is formatted, linted and built separately. The Linux
+      # dependency step above installs libclang-dev and cmake; the
+      # macOS and Windows runner images carry libclang with their
+      # toolchains.
+      - name: Signer crate formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --manifest-path crates/helpers/goofish-signer/Cargo.toml -- --check
+
+      - name: Signer crate clippy
+        run: cargo clippy --manifest-path crates/helpers/goofish-signer/Cargo.toml --all-targets -- -D warnings
+
+      - name: Signer crate build
+        run: cargo build --release --manifest-path crates/helpers/goofish-signer/Cargo.toml
+
   live:
     name: Live search tests (serial)
     runs-on: ubuntu-latest

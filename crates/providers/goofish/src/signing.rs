@@ -1,5 +1,5 @@
 //! Signer provider abstraction — port of `goofish_client/signing.py`
-//! and `goofish_client/unidbg_signer.py`. The SecurityGuard final
+//! and `goofish_client/serve_signer.py`. The SecurityGuard final
 //! computation is native and is NOT reimplemented here; this module
 //! assembles the INPUT string exactly and bridges to caller-owned
 //! external signing processes. No fake signature is ever produced.
@@ -363,7 +363,7 @@ fn class_name(e: &std::io::Error) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// UnidbgSigner (persistent serve process)
+// ServeSigner (persistent serve process)
 // ---------------------------------------------------------------------------
 
 enum LineEvent {
@@ -379,7 +379,7 @@ enum LineEvent {
 /// have been OOM-killed under host memory pressure (the harness
 /// tree was SIGKILLed exactly that way in round 19) or killed
 /// with its process group, and a fresh instance serves normally.
-/// `UnidbgSigner::sign` restarts a dead harness a bounded number
+/// `ServeSigner::sign` restarts a dead harness a bounded number
 /// of times; deterministic failures latch exactly as before. This
 /// is about the local subprocess only — it never retries an MTOP
 /// send, so it cannot lift a server-side send halt.
@@ -481,7 +481,7 @@ fn describe_exit(status: &std::process::ExitStatus) -> String {
 /// error. Deterministic failures never consume restarts.
 const MAX_HARNESS_RESTARTS: u32 = 3;
 
-pub struct UnidbgSigner {
+pub struct ServeSigner {
     pub command: Vec<String>,
     pub timeout: Duration,
     /// Budget for the harness *startup* (spawn -> ready line). Kept
@@ -498,7 +498,7 @@ pub struct UnidbgSigner {
     inner: Mutex<UnidbgInner>,
 }
 
-impl UnidbgSigner {
+impl ServeSigner {
     pub fn new(command: Vec<String>) -> Result<Self> {
         Self::with_options(command, Duration::from_secs(120), false)
     }
@@ -519,11 +519,11 @@ impl UnidbgSigner {
     ) -> Result<Self> {
         if command.is_empty() || command.iter().any(|c| c.is_empty()) {
             return Err(anyhow!(
-                "UnidbgSigner command must be a non-empty sequence of strings"
+                "ServeSigner command must be a non-empty sequence of strings"
             ));
         }
         if timeout.is_zero() || startup_timeout.is_zero() {
-            return Err(anyhow!("UnidbgSigner timeout must be positive"));
+            return Err(anyhow!("ServeSigner timeout must be positive"));
         }
         Ok(Self {
             command,
@@ -588,12 +588,12 @@ impl UnidbgSigner {
                 // Typed so `sign` can restart the harness instead
                 // of latching (see HarnessDied).
                 Err(HarnessDied(format!(
-                    "unidbg signing harness closed its output during {phase}{detail}: exit"
+                    "signing harness closed its output during {phase}{detail}: exit"
                 ))
                 .into())
             }
             Err(_) => Err(anyhow!(
-                "unidbg signing harness timed out during {phase} after {}s: timeout",
+                "signing harness timed out during {phase} after {}s: timeout",
                 timeout.as_secs_f64()
             )),
         }
@@ -637,7 +637,7 @@ impl UnidbgSigner {
         }
         let (mut child, release) = spawn_harness(command).map_err(|e| {
             anyhow!(
-                "unidbg signing harness could not be started ({}): startup",
+                "signing harness could not be started ({}): startup",
                 class_name(&e)
             )
         })?;
@@ -665,14 +665,12 @@ impl UnidbgSigner {
         inner.rx = Some(rx);
         let line = Self::read_line(inner, self.startup_timeout, "startup")?;
         let ready: Value = serde_json::from_str(line.trim())
-            .map_err(|_| anyhow!("unidbg signing harness sent a malformed ready line: startup"))?;
+            .map_err(|_| anyhow!("signing harness sent a malformed ready line: startup"))?;
         let ready_obj = ready
             .as_object()
-            .ok_or_else(|| anyhow!("unidbg signing harness did not report ready: startup"))?;
+            .ok_or_else(|| anyhow!("signing harness did not report ready: startup"))?;
         if ready_obj.get("ready").and_then(|v| v.as_bool()) != Some(true) {
-            return Err(anyhow!(
-                "unidbg signing harness did not report ready: startup"
-            ));
+            return Err(anyhow!("signing harness did not report ready: startup"));
         }
         // Round 28: ready=true alone does not mean usable — validate
         // initRc / appKey when present (absent keys are accepted).
@@ -683,7 +681,7 @@ impl UnidbgSigner {
                     .map(|n| format!(" (initRc={n})"))
                     .unwrap_or_default();
                 return Err(anyhow!(
-                    "unidbg signing harness reported SG init failure{detail}: startup"
+                    "signing harness reported SG init failure{detail}: startup"
                 ));
             }
         }
@@ -691,7 +689,7 @@ impl UnidbgSigner {
             let ok = matches!(app_key, Value::String(s) if !s.is_empty());
             if !ok {
                 return Err(anyhow!(
-                    "unidbg signing harness reported no appKey at startup: startup"
+                    "signing harness reported no appKey at startup: startup"
                 ));
             }
         }
@@ -712,7 +710,7 @@ impl UnidbgSigner {
     pub fn ensure_started(&self) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
         if inner.closed {
-            return Err(anyhow!("unidbg signer is closed"));
+            return Err(anyhow!("serve signer is closed"));
         }
         if let Some(broken) = &inner.broken {
             return Err(anyhow!("{broken}"));
@@ -803,7 +801,7 @@ impl UnidbgSigner {
             if let Ok(Some(status)) = child.try_wait() {
                 let detail = describe_exit(&status);
                 return Err(HarnessDied(format!(
-                    "unidbg signing harness is no longer running ({detail}): exit"
+                    "signing harness is no longer running ({detail}): exit"
                 ))
                 .into());
             }
@@ -823,16 +821,16 @@ impl UnidbgSigner {
                 .map_err(|e| {
                     // A broken pipe here means the harness is gone.
                     HarnessDied(format!(
-                        "could not write to the unidbg signing harness ({}): exit",
+                        "could not write to the signing harness ({}): exit",
                         class_name(&e)
                     ))
                 })?;
         }
         let line = Self::read_line(inner, self.timeout, "sign")?;
         let doc: Value = serde_json::from_str(line.trim())
-            .map_err(|_| anyhow!("unidbg signing harness returned malformed JSON: malformed"))?;
+            .map_err(|_| anyhow!("signing harness returned malformed JSON: malformed"))?;
         let doc = doc.as_object().ok_or_else(|| {
-            anyhow!("unidbg signing harness returned a non-object JSON value: malformed")
+            anyhow!("signing harness returned a non-object JSON value: malformed")
         })?;
         if let Some(err) = doc.get("error") {
             let truthy = match err {
@@ -844,17 +842,13 @@ impl UnidbgSigner {
             if truthy {
                 // The harness's error text is deliberately not propagated.
                 return Err(anyhow!(
-                    "unidbg signing harness reported an error for the sign request: protocol"
+                    "signing harness reported an error for the sign request: protocol"
                 ));
             }
         }
         let sign_value = match doc.get("sign") {
             Some(Value::String(s)) if !s.is_empty() => s.clone(),
-            _ => {
-                return Err(anyhow!(
-                    "unidbg signing harness returned no sign value: no_sign"
-                ))
-            }
+            _ => return Err(anyhow!("signing harness returned no sign value: no_sign")),
         };
         Ok(SignResult {
             sign: sign_value,
@@ -863,11 +857,11 @@ impl UnidbgSigner {
     }
 }
 
-impl Signer for UnidbgSigner {
+impl Signer for ServeSigner {
     fn sign(&self, request: &SignRequest) -> Result<SignResult> {
         let mut inner = self.inner.lock().unwrap();
         if inner.closed {
-            return Err(anyhow!("unidbg signer is closed"));
+            return Err(anyhow!("serve signer is closed"));
         }
         if let Some(broken) = &inner.broken {
             return Err(anyhow!("{broken}"));
@@ -900,7 +894,7 @@ impl Signer for UnidbgSigner {
     }
 }
 
-impl Drop for UnidbgSigner {
+impl Drop for ServeSigner {
     /// Dropping the signer (client dropped, server shutting down)
     /// must not leave the harness tree running (issue #2). The
     /// PDEATHSIG set at spawn covers abrupt process death; this
@@ -1135,7 +1129,7 @@ sys.stdout.write("\n")
     #[cfg(unix)]
     fn write_shell_script(body: &str, name: &str) -> Vec<String> {
         let dir =
-            std::env::temp_dir().join(format!("gf_unidbg_test_{}_{}", std::process::id(), name));
+            std::env::temp_dir().join(format!("gf_serve_test_{}_{}", std::process::id(), name));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("serve.sh");
         std::fs::write(&path, body).unwrap();
@@ -1147,10 +1141,10 @@ sys.stdout.write("\n")
 
     #[cfg(unix)]
     #[test]
-    fn unidbg_signer_fake_harness_round_trip() {
+    fn serve_signer_fake_harness_round_trip() {
         // Fake serve harness: ready line, then one {"sign": ...} per request line.
         let script = "#!/bin/sh\necho '{\"ready\": true, \"initRc\": 0, \"appKey\": \"21407387\"}'\nwhile IFS= read -r line; do echo '{\"sign\": \"FAKESIGN\"}'; done\n";
-        let signer = UnidbgSigner::with_options(
+        let signer = ServeSigner::with_options(
             write_shell_script(script, "ok"),
             Duration::from_secs(10),
             false,
@@ -1166,7 +1160,7 @@ sys.stdout.write("\n")
 
     #[cfg(unix)]
     #[test]
-    fn unidbg_signer_survives_spawner_thread_exit() {
+    fn serve_signer_survives_spawner_thread_exit() {
         // Regression test (K1-4): the server pre-warms the harness
         // from a short-lived background thread that exits as soon as
         // the start completes. PR_SET_PDEATHSIG is delivered when
@@ -1179,7 +1173,7 @@ sys.stdout.write("\n")
         use std::sync::Arc;
         let script = "#!/bin/sh\necho '{\"ready\": true, \"initRc\": 0, \"appKey\": \"21407387\"}'\nwhile IFS= read -r line; do echo '{\"sign\": \"FAKESIGN\"}'; done\n";
         let signer = Arc::new(
-            UnidbgSigner::with_options(
+            ServeSigner::with_options(
                 write_shell_script(script, "threadexit"),
                 Duration::from_secs(10),
                 false,
@@ -1199,10 +1193,10 @@ sys.stdout.write("\n")
 
     #[cfg(unix)]
     #[test]
-    fn unidbg_signer_ready_line_validation() {
+    fn serve_signer_ready_line_validation() {
         // initRc != 0 must be refused at startup, before any sign request.
         let script = "#!/bin/sh\necho '{\"ready\": true, \"initRc\": 1, \"appKey\": \"21407387\"}'\nwhile IFS= read -r line; do echo '{\"sign\": \"X\"}'; done\n";
-        let signer = UnidbgSigner::with_options(
+        let signer = ServeSigner::with_options(
             write_shell_script(script, "badrc"),
             Duration::from_secs(10),
             false,
@@ -1215,7 +1209,7 @@ sys.stdout.write("\n")
         assert_eq!(err, err2);
         // empty appKey also refused
         let script2 = "#!/bin/sh\necho '{\"ready\": true, \"initRc\": 0, \"appKey\": \"\"}'\nwhile IFS= read -r line; do echo '{\"sign\": \"X\"}'; done\n";
-        let signer2 = UnidbgSigner::with_options(
+        let signer2 = ServeSigner::with_options(
             write_shell_script(script2, "badkey"),
             Duration::from_secs(10),
             false,
@@ -1225,7 +1219,7 @@ sys.stdout.write("\n")
         assert!(err.contains("appKey"), "{err}");
         // harness error reply -> protocol failure, sign value never surfaces
         let script3 = "#!/bin/sh\necho '{\"ready\": true}'\nwhile IFS= read -r line; do echo '{\"error\": \"boom\"}'; done\n";
-        let signer3 = UnidbgSigner::with_options(
+        let signer3 = ServeSigner::with_options(
             write_shell_script(script3, "errreply"),
             Duration::from_secs(10),
             false,
@@ -1238,14 +1232,14 @@ sys.stdout.write("\n")
 
     #[cfg(unix)]
     #[test]
-    fn unidbg_signer_startup_timeout_is_separate_from_sign_timeout() {
+    fn serve_signer_startup_timeout_is_separate_from_sign_timeout() {
         // Harness that takes ~0.4s to report ready, then answers
         // sign requests immediately. A single shared 100ms budget
         // (with_options) kills the start; a split budget with a
         // generous startup allowance (with_timeouts) lets it boot —
         // the regression shape of the 300s startup timeouts.
         let script = "#!/bin/sh\nsleep 0.4\necho '{\"ready\": true, \"initRc\": 0, \"appKey\": \"21407387\"}'\nwhile IFS= read -r line; do echo '{\"sign\": \"FAKESIGN\"}'; done\n";
-        let shared = UnidbgSigner::with_options(
+        let shared = ServeSigner::with_options(
             write_shell_script(script, "sharedbudget"),
             Duration::from_millis(100),
             false,
@@ -1255,7 +1249,7 @@ sys.stdout.write("\n")
         assert!(err.contains("startup"), "{err}");
         assert!(err.contains("timed out"), "{err}");
 
-        let split = UnidbgSigner::with_timeouts(
+        let split = ServeSigner::with_timeouts(
             write_shell_script(script, "splitbudget"),
             Duration::from_millis(100),
             Duration::from_secs(5),
@@ -1274,12 +1268,12 @@ sys.stdout.write("\n")
 
     #[cfg(unix)]
     #[test]
-    fn unidbg_signer_ensure_started_latches_failure() {
+    fn serve_signer_ensure_started_latches_failure() {
         // A harness that never reports ready: ensure_started fails
         // within the startup budget, and the failure is latched —
         // a later sign returns the same error without restarting.
         let script = "#!/bin/sh\nsleep 30\n";
-        let signer = UnidbgSigner::with_timeouts(
+        let signer = ServeSigner::with_timeouts(
             write_shell_script(script, "neverready"),
             Duration::from_secs(5),
             Duration::from_millis(300),
@@ -1306,19 +1300,19 @@ sys.stdout.write("\n")
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn unidbg_signer_drop_kills_harness_tree() {
+    fn serve_signer_drop_kills_harness_tree() {
         // Fake harness that spawns a grandchild (sleep) and records
         // its pid: dropping the signer must kill the whole tree,
         // not just the direct child (issue #2 orphan processes).
         let name = "tree";
         let dir =
-            std::env::temp_dir().join(format!("gf_unidbg_test_{}_{}", std::process::id(), name));
+            std::env::temp_dir().join(format!("gf_serve_test_{}_{}", std::process::id(), name));
         let pid_file = dir.join("grandchild.pid");
         let body = format!(
             "#!/bin/sh\nsleep 300 &\necho $! > '{}'\necho '{{\"ready\": true, \"initRc\": 0, \"appKey\": \"21407387\"}}'\nwhile IFS= read -r line; do echo '{{\"sign\": \"FAKESIGN\"}}'; done\n",
             pid_file.display()
         );
-        let signer = UnidbgSigner::with_options(
+        let signer = ServeSigner::with_options(
             write_shell_script(&body, name),
             Duration::from_secs(10),
             false,
@@ -1350,7 +1344,7 @@ sys.stdout.write("\n")
 
     #[cfg(unix)]
     #[test]
-    fn unidbg_signer_restarts_dead_harness() {
+    fn serve_signer_restarts_dead_harness() {
         // The first harness instance answers one sign and then
         // dies mid-stream (its output closes). The signer must
         // restart it in place and serve the next sign from the new
@@ -1358,13 +1352,13 @@ sys.stdout.write("\n")
         // a deterministic failure.
         let name = "restart";
         let dir =
-            std::env::temp_dir().join(format!("gf_unidbg_test_{}_{}", std::process::id(), name));
+            std::env::temp_dir().join(format!("gf_serve_test_{}_{}", std::process::id(), name));
         let counter = dir.join("instances");
         let body = format!(
             "#!/bin/sh\nn=0\n[ -f '{c}' ] && n=$(cat '{c}')\nn=$((n+1))\necho $n > '{c}'\necho '{{\"ready\": true, \"initRc\": 0, \"appKey\": \"21407387\"}}'\nif [ \"$n\" -eq 1 ]; then\n  IFS= read -r line; echo '{{\"sign\": \"FIRST\"}}'\n  IFS= read -r line; exit 1\nfi\nwhile IFS= read -r line; do echo '{{\"sign\": \"SECOND\"}}'; done\n",
             c = counter.display()
         );
-        let signer = UnidbgSigner::with_options(
+        let signer = ServeSigner::with_options(
             write_shell_script(&body, name),
             Duration::from_secs(10),
             false,
@@ -1387,20 +1381,20 @@ sys.stdout.write("\n")
 
     #[cfg(unix)]
     #[test]
-    fn unidbg_signer_restart_cap_latches() {
+    fn serve_signer_restart_cap_latches() {
         // A harness that dies right after ready on every start:
         // restarts are bounded (1 initial + MAX_HARNESS_RESTARTS),
         // then the death latches and later signs fail immediately
         // without spawning further instances.
         let name = "crashloop";
         let dir =
-            std::env::temp_dir().join(format!("gf_unidbg_test_{}_{}", std::process::id(), name));
+            std::env::temp_dir().join(format!("gf_serve_test_{}_{}", std::process::id(), name));
         let counter = dir.join("instances");
         let body = format!(
             "#!/bin/sh\nn=0\n[ -f '{c}' ] && n=$(cat '{c}')\nn=$((n+1))\necho $n > '{c}'\necho '{{\"ready\": true, \"initRc\": 0, \"appKey\": \"21407387\"}}'\nexit 1\n",
             c = counter.display()
         );
-        let signer = UnidbgSigner::with_options(
+        let signer = ServeSigner::with_options(
             write_shell_script(&body, name),
             Duration::from_secs(10),
             false,

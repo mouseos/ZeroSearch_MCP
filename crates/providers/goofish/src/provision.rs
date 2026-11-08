@@ -1,9 +1,11 @@
 //! First-use provisioning of the Goofish signing runtime.
 //!
 //! The release ships a `goofish-payload/` directory next to the
-//! server executable: a Java 8 runtime and the compiled unidbg
-//! signing harness (see `runtime/goofish/build-payload.sh`). The
-//! one piece that cannot be shipped is the Goofish app package
+//! server executable: the Rust signing harness (`sgharness`, which
+//! runs the app's own SecurityGuard native library under the
+//! Unicorn engine — no JVM) and the Android system libraries it
+//! loads the library against (see `runtime/goofish/build-payload.sh`).
+//! The one piece that cannot be shipped is the Goofish app package
 //! itself (~269 MB, Alibaba-proprietary). On the first Goofish
 //! call — normally from the server's background pre-warm, before
 //! any MTOP request is even built — this module assembles the
@@ -13,8 +15,10 @@
 //!    the harness emulates) from the app-store CDN URL recorded in
 //!    `payload.json`, verifying its SHA-256;
 //! 2. extract the SecurityGuard native libraries from it;
-//! 3. generate the bundle's `serve.sh` / `serve.cmd`, pointing the
-//!    harness at the payload's JRE and classes.
+//! 3. stage the harness's root filesystem (the app package placed
+//!    at the path the emulated environment expects it);
+//! 4. generate the bundle's `serve.sh` / `serve.cmd`, pointing the
+//!    harness at the payload's signer binary and system libraries.
 //!
 //! The assembled bundle lands in the same data-directory location
 //! the resolver has always discovered (`<data dir>/goofish-runtime/
@@ -61,6 +65,14 @@ const SO_PREFIXES: [&str; 5] = [
     "libsgnocaptcha",
 ];
 
+/// Marker value naming the signer generation a runtime was
+/// assembled for. Runtimes assembled by the retired JVM payload
+/// carry no such field (or a different one) and are re-assembled:
+/// their `serve.sh` points into a payload layout that no longer
+/// exists. The app package itself is reused — re-assembly only
+/// rewrites the scripts and the staged root filesystem.
+pub(crate) const SIGNER_KIND: &str = "rust-sgharness";
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PayloadInfo {
     pub dir: PathBuf,
@@ -69,7 +81,12 @@ pub(crate) struct PayloadInfo {
     pub apk_sha256: String,
     pub apk_size: u64,
     pub main_so: String,
-    pub jars: Vec<String>,
+    /// File name of the signer binary inside `signer/`
+    /// (`sgharness`, or `sgharness.exe` on Windows).
+    pub signer_binary: String,
+    /// Android system libraries inside `syslibs/` that the signer
+    /// loads the SecurityGuard library against.
+    pub syslibs: Vec<String>,
 }
 
 fn log(msg: &str) {
@@ -111,9 +128,29 @@ pub(crate) fn load_payload(dir: &Path) -> Result<PayloadInfo, String> {
             .map(|s| s.to_string())
             .filter(|s| !s.is_empty())
     };
-    let jars: Vec<String> = doc
-        .get("harness")
-        .and_then(|h| h.get("jars"))
+    let signer = doc.get("signer");
+    if signer.is_none() {
+        // A payload without a signer section is the retired JVM
+        // layout (jre/ + harness/); it cannot drive this server.
+        return Err(format!(
+            "payload in {} is not a Rust-signer payload (no signer section)",
+            dir.display()
+        ));
+    }
+    let signer_binary = signer
+        .and_then(|s| s.get("binary"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| format!("payload.json in {} names no signer binary", dir.display()))?
+        .to_string();
+    if !dir.join("signer").join(&signer_binary).is_file() {
+        return Err(format!(
+            "payload in {} is missing signer/{signer_binary}",
+            dir.display()
+        ));
+    }
+    let syslibs: Vec<String> = signer
+        .and_then(|s| s.get("syslibs"))
         .and_then(|j| j.as_array())
         .map(|arr| {
             arr.iter()
@@ -121,19 +158,16 @@ pub(crate) fn load_payload(dir: &Path) -> Result<PayloadInfo, String> {
                 .collect()
         })
         .unwrap_or_default();
-    if jars.is_empty() {
+    if syslibs.is_empty() {
         return Err(format!(
-            "payload.json in {} lists no harness jars",
+            "payload.json in {} lists no signer syslibs",
             dir.display()
         ));
     }
-    if !dir.join("jre").join("bin").is_dir() {
-        return Err(format!("payload in {} has no jre/bin", dir.display()));
-    }
-    for jar in &jars {
-        if !dir.join("harness").join("lib").join(jar).is_file() {
+    for lib in &syslibs {
+        if !dir.join("syslibs").join(lib).is_file() {
             return Err(format!(
-                "payload in {} is missing harness/lib/{jar}",
+                "payload in {} is missing syslibs/{lib}",
                 dir.display()
             ));
         }
@@ -150,7 +184,8 @@ pub(crate) fn load_payload(dir: &Path) -> Result<PayloadInfo, String> {
             .and_then(|v| v.as_u64())
             .unwrap_or(DEFAULT_APK_SIZE),
         main_so: pick_str("main_so").unwrap_or_else(|| DEFAULT_MAIN_SO.to_string()),
-        jars,
+        signer_binary,
+        syslibs,
     })
 }
 
@@ -168,8 +203,22 @@ fn serve_file_name() -> &'static str {
     }
 }
 
+/// Where the staged app package lives inside the harness rootfs:
+/// the install path the emulated environment reports for the app,
+/// which the SecurityGuard init opens and verifies in place.
+fn staged_apk_path(rt: &Path) -> PathBuf {
+    rt.join("rootfs")
+        .join("data")
+        .join("app")
+        .join("com.taobao.idlefish-1")
+        .join("base.apk")
+}
+
 /// Runtime state check: marker written by a previous provisioning
-/// run, the serve script, and an app package of the expected size.
+/// run, the serve script, an app package of the expected size, and
+/// its staged copy inside the rootfs. The marker must name the
+/// current signer generation — a runtime assembled for the retired
+/// JVM payload is re-assembled, not reused.
 fn runtime_complete(rt: &Path, payload: &PayloadInfo) -> bool {
     if !rt.join(serve_file_name()).is_file() {
         return false;
@@ -188,10 +237,15 @@ fn runtime_complete(rt: &Path, payload: &PayloadInfo) -> bool {
     {
         return false;
     }
-    let apk = rt.join(APK_FILE_NAME);
-    std::fs::metadata(&apk)
-        .map(|m| m.is_file() && m.len() == payload.apk_size)
-        .unwrap_or(false)
+    if marker.get("signer").and_then(|v| v.as_str()) != Some(SIGNER_KIND) {
+        return false;
+    }
+    let size_ok = |p: &Path| {
+        std::fs::metadata(p)
+            .map(|m| m.is_file() && m.len() == payload.apk_size)
+            .unwrap_or(false)
+    };
+    size_ok(&rt.join(APK_FILE_NAME)) && size_ok(&staged_apk_path(rt))
 }
 
 static PROVISION_LOCK: Mutex<()> = Mutex::new(());
@@ -217,8 +271,8 @@ pub(crate) fn ensure_provisioned() -> Result<PathBuf, String> {
         .and_then(|_| std::fs::create_dir_all(rt.join("logs")))
         .map_err(|e| format!("cannot create {}: {e}", rt.display()))?;
 
-    // 1. The app package (download once; the harness re-verifies
-    //    its SHA-256 at every boot via -DapkSha256).
+    // 1. The app package (downloaded once, SHA-256 verified during
+    //    the download; later runs only re-check its size).
     let apk_path = rt.join(APK_FILE_NAME);
     let apk_ok = std::fs::metadata(&apk_path)
         .map(|m| m.is_file() && m.len() == payload.apk_size)
@@ -239,11 +293,16 @@ pub(crate) fn ensure_provisioned() -> Result<PathBuf, String> {
         ));
     }
 
-    // 3. The serve script + marker (regenerated whenever any input
+    // 3. The harness root filesystem, with the verified package
+    //    staged at the app's install path inside it.
+    stage_rootfs(&rt, &payload)?;
+
+    // 4. The serve script + marker (regenerated whenever any input
     //    above changed, so a moved install re-points itself).
     write_serve_script(&rt, &payload)?;
     let marker = json!({
-        "format": 1,
+        "format": 2,
+        "signer": SIGNER_KIND,
         "apk_version": payload.apk_version,
         "apk_sha256": payload.apk_sha256,
         "payload_dir": payload.dir.to_string_lossy(),
@@ -456,6 +515,53 @@ fn extract_libraries(apk_path: &Path, libs_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Stage the harness root filesystem: the directory skeleton the
+/// emulated environment expects, with the verified app package
+/// placed at the app's install path. The package is hard-linked
+/// (it lives in the same data directory, so the link costs no
+/// space); a filesystem that refuses the link falls back to a
+/// copy. The signer only ever reads the staged package — the
+/// SecurityGuard init opens it and verifies its signing block in
+/// place — and writes its own state under the app's data dirs.
+fn stage_rootfs(rt: &Path, payload: &PayloadInfo) -> Result<(), String> {
+    let rootfs = rt.join("rootfs");
+    let app_dir = rootfs
+        .join("data")
+        .join("app")
+        .join("com.taobao.idlefish-1");
+    let data_dir = rootfs.join("data").join("data").join("com.taobao.idlefish");
+    for dir in [
+        app_dir.clone(),
+        data_dir.join("files"),
+        data_dir.join("cache"),
+        rootfs.join("tmp"),
+        rootfs.join("system"),
+    ] {
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    }
+    let staged = app_dir.join("base.apk");
+    let staged_ok = std::fs::metadata(&staged)
+        .map(|m| m.is_file() && m.len() == payload.apk_size)
+        .unwrap_or(false);
+    if !staged_ok {
+        let _ = std::fs::remove_file(&staged);
+        let src = rt.join(APK_FILE_NAME);
+        if std::fs::hard_link(&src, &staged).is_err() {
+            std::fs::copy(&src, &staged)
+                .map_err(|e| format!("cannot stage the app package into the rootfs: {e}"))?;
+        }
+        let len = std::fs::metadata(&staged).map(|m| m.len()).unwrap_or(0);
+        if len != payload.apk_size {
+            return Err(format!(
+                "staged app package has the wrong size ({len} bytes, expected {})",
+                payload.apk_size
+            ));
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Serve script generation
 // ---------------------------------------------------------------------------
@@ -469,13 +575,6 @@ fn sh_escape(s: &str) -> String {
 
 pub(crate) fn serve_script_unix(rt: &Path, payload: &PayloadInfo) -> String {
     let payload_str = payload.dir.to_string_lossy();
-    let mut cp = format!(
-        "{}/harness/classes-patched:{}/harness/classes",
-        payload_str, payload_str
-    );
-    for jar in &payload.jars {
-        cp.push_str(&format!(":{}/harness/lib/{jar}", payload_str));
-    }
     let _ = rt;
     format!(
         "#!/bin/sh\n\
@@ -486,29 +585,19 @@ pub(crate) fn serve_script_unix(rt: &Path, payload: &PayloadInfo) -> String {
          PAYLOAD=\"{payload_esc}\"\n\
          mkdir -p \"$RT/logs\" \"$RT/rootfs\"\n\
          cd \"$RT\"\n\
-         exec \"$PAYLOAD/jre/bin/java\" \\\n\
-         \x20 -Dapk=\"$RT/{apk}\" \\\n\
-         \x20 -DapkSha256={sha} \\\n\
-         \x20 -Dso=\"$RT/libs/{so}\" \\\n\
-         \x20 -Xmx512m -cp \"{cp_esc}\" local.goofish.SgHarness serve \\\n\
+         exec \"$PAYLOAD/signer/{bin}\" serve \\\n\
+         \x20 --rootfs \"$RT/rootfs\" \\\n\
+         \x20 --sg \"$RT/libs/{so}\" \\\n\
+         \x20 --syslibs \"$PAYLOAD/syslibs\" \\\n\
          \x20 2>>\"$RT/logs/serve_stderr.log\"\n",
         payload_esc = sh_escape(&payload_str),
-        apk = APK_FILE_NAME,
-        sha = payload.apk_sha256,
+        bin = payload.signer_binary,
         so = payload.main_so,
-        cp_esc = sh_escape(&cp),
     )
 }
 
 pub(crate) fn serve_script_windows(rt: &Path, payload: &PayloadInfo) -> String {
     let payload_str = payload.dir.to_string_lossy().replace('/', "\\");
-    let mut cp = format!(
-        "{}\\harness\\classes-patched;{}\\harness\\classes",
-        payload_str, payload_str
-    );
-    for jar in &payload.jars {
-        cp.push_str(&format!(";{}\\harness\\lib\\{jar}", payload_str));
-    }
     let _ = rt;
     format!(
         "@echo off\n\
@@ -519,11 +608,9 @@ pub(crate) fn serve_script_windows(rt: &Path, payload: &PayloadInfo) -> String {
          if not exist \"%RT%logs\" mkdir \"%RT%logs\"\n\
          if not exist \"%RT%rootfs\" mkdir \"%RT%rootfs\"\n\
          cd /d \"%RT%\"\n\
-         \"%PAYLOAD%\\jre\\bin\\java.exe\" -Dapk=\"%RT%{apk}\" -DapkSha256={sha} -Dso=\"%RT%libs\\{so}\" -Xmx512m -cp \"{cp}\" local.goofish.SgHarness serve 2>>\"%RT%logs\\serve_stderr.log\"\n",
-        apk = APK_FILE_NAME,
-        sha = payload.apk_sha256,
+         \"%PAYLOAD%\\signer\\{bin}\" serve --rootfs \"%RT%rootfs\" --sg \"%RT%libs\\{so}\" --syslibs \"%PAYLOAD%\\syslibs\" 2>>\"%RT%logs\\serve_stderr.log\"\n",
+        bin = payload.signer_binary,
         so = payload.main_so,
-        cp = cp,
     )
 }
 
@@ -560,7 +647,8 @@ mod tests {
             apk_sha256: DEFAULT_APK_SHA256.to_string(),
             apk_size: DEFAULT_APK_SIZE,
             main_so: DEFAULT_MAIN_SO.to_string(),
-            jars: vec!["a.jar".to_string(), "b.jar".to_string()],
+            signer_binary: "sgharness".to_string(),
+            syslibs: vec!["libc.so".to_string(), "libz.so".to_string()],
         }
     }
 
@@ -568,9 +656,33 @@ mod tests {
     fn payload_json_round_trip() {
         let dir = std::env::temp_dir().join(format!("gf_prov_test_{}", std::process::id()));
         let payload_dir = dir.join("goofish-payload");
-        std::fs::create_dir_all(payload_dir.join("jre").join("bin")).unwrap();
-        std::fs::create_dir_all(payload_dir.join("harness").join("lib")).unwrap();
-        std::fs::write(payload_dir.join("harness").join("lib").join("a.jar"), b"x").unwrap();
+        std::fs::create_dir_all(payload_dir.join("signer")).unwrap();
+        std::fs::create_dir_all(payload_dir.join("syslibs")).unwrap();
+        std::fs::write(payload_dir.join("signer").join("sgharness"), b"x").unwrap();
+        std::fs::write(payload_dir.join("syslibs").join("libc.so"), b"x").unwrap();
+        std::fs::write(
+            payload_dir.join("payload.json"),
+            json!({
+                "format": 2,
+                "platform": "linux-x64",
+                "signer": {"kind": SIGNER_KIND, "binary": "sgharness",
+                           "syslibs": ["libc.so"]},
+                "apk": {"version": "7.28.70", "url": DEFAULT_APK_URL,
+                        "sha256": DEFAULT_APK_SHA256, "size": DEFAULT_APK_SIZE},
+                "main_so": DEFAULT_MAIN_SO,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let info = load_payload(&payload_dir).unwrap();
+        assert_eq!(info.apk_sha256, DEFAULT_APK_SHA256);
+        assert_eq!(info.apk_size, DEFAULT_APK_SIZE);
+        assert_eq!(info.signer_binary, "sgharness");
+        assert_eq!(info.syslibs, vec!["libc.so".to_string()]);
+        // A payload whose syslib is gone is refused, not half-used.
+        std::fs::remove_file(payload_dir.join("syslibs").join("libc.so")).unwrap();
+        assert!(load_payload(&payload_dir).is_err());
+        // The retired JVM layout (no signer section) is refused too.
         std::fs::write(
             payload_dir.join("payload.json"),
             json!({
@@ -584,12 +696,6 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        let info = load_payload(&payload_dir).unwrap();
-        assert_eq!(info.apk_sha256, DEFAULT_APK_SHA256);
-        assert_eq!(info.apk_size, DEFAULT_APK_SIZE);
-        assert_eq!(info.jars, vec!["a.jar".to_string()]);
-        // A payload whose jar is gone is refused, not half-used.
-        std::fs::remove_file(payload_dir.join("harness").join("lib").join("a.jar")).unwrap();
         assert!(load_payload(&payload_dir).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -598,17 +704,68 @@ mod tests {
     fn serve_script_unix_shape() {
         let payload = fake_payload(Path::new("/opt/zero search/goofish-payload"));
         let script = serve_script_unix(Path::new("/data/goofish-runtime"), &payload);
-        // Patched classes precede the harness classes, which precede
-        // the dependency jars (the verified classpath order).
-        let patched = script.find("classes-patched").unwrap();
-        let classes = script.find("classes:").unwrap();
-        let jar = script.find("lib/a.jar").unwrap();
-        assert!(patched < classes && classes < jar, "{script}");
-        assert!(script.contains(&format!("-DapkSha256={DEFAULT_APK_SHA256}")));
-        assert!(script.contains("-Dso=\"$RT/libs/libsgmainso-6.7.260202.so\""));
-        assert!(script.contains("\"$PAYLOAD/jre/bin/java\""));
+        // The signer binary is exec'd with the runtime's rootfs, the
+        // extracted SecurityGuard library, and the payload's syslibs.
+        assert!(
+            script.contains("exec \"$PAYLOAD/signer/sgharness\" serve"),
+            "{script}"
+        );
+        assert!(script.contains("--rootfs \"$RT/rootfs\""), "{script}");
+        assert!(
+            script.contains("--sg \"$RT/libs/libsgmainso-6.7.260202.so\""),
+            "{script}"
+        );
+        assert!(
+            script.contains("--syslibs \"$PAYLOAD/syslibs\""),
+            "{script}"
+        );
         // The space in the payload path is safe inside the quoting.
         assert!(script.contains("PAYLOAD=\"/opt/zero search/goofish-payload\""));
+        // No JVM anywhere in the generated script.
+        assert!(!script.contains("java"), "{script}");
+    }
+
+    #[test]
+    fn serve_script_windows_shape() {
+        let payload = fake_payload(Path::new("C:\\zero search\\goofish-payload"));
+        let script = serve_script_windows(Path::new("D:\\data\\goofish-runtime"), &payload);
+        assert!(script.contains("\\signer\\sgharness"), "{script}");
+        assert!(script.contains("--rootfs \"%RT%rootfs\""), "{script}");
+        assert!(
+            script.contains("libs\\libsgmainso-6.7.260202.so"),
+            "{script}"
+        );
+        assert!(!script.contains("java"), "{script}");
+    }
+
+    #[test]
+    fn stage_rootfs_places_the_package() {
+        let dir = std::env::temp_dir().join(format!("gf_stage_test_{}", std::process::id()));
+        let rt = dir.join("goofish-runtime");
+        std::fs::create_dir_all(&rt).unwrap();
+        let mut payload = fake_payload(Path::new("/payload"));
+        payload.apk_size = 11;
+        std::fs::write(rt.join(APK_FILE_NAME), b"FAKEAPKDATA").unwrap();
+        stage_rootfs(&rt, &payload).unwrap();
+        let staged = staged_apk_path(&rt);
+        assert_eq!(std::fs::read(&staged).unwrap(), b"FAKEAPKDATA");
+        assert!(rt
+            .join("rootfs")
+            .join("data")
+            .join("data")
+            .join("com.taobao.idlefish")
+            .join("files")
+            .is_dir());
+        // Idempotent: a second run keeps the staged package.
+        stage_rootfs(&rt, &payload).unwrap();
+        // A truncated staged copy is replaced. (Remove + rewrite:
+        // the staged copy is a hard link, so writing through it
+        // would truncate the source package too.)
+        std::fs::remove_file(&staged).unwrap();
+        std::fs::write(&staged, b"SHORT").unwrap();
+        stage_rootfs(&rt, &payload).unwrap();
+        assert_eq!(std::fs::read(&staged).unwrap(), b"FAKEAPKDATA");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

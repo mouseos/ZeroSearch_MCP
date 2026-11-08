@@ -1,6 +1,6 @@
 [package]
 name = "zero-search"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 license = "MIT"
 description = "Zero-config search library for AI harnesses: web search (Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo US, Yandex), shopping search (AliExpress, Goofish, Mercari, Yahoo Auctions, Yahoo Flea Market, Rakuma, Rakuten, Qoo10, Yahoo Shopping, Amazon) and media platforms (YouTube, Bilibili, CSDN) behind one unified API. No API key, no configuration."

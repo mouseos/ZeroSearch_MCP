@@ -17,4 +17,5 @@ Thumbs.db
 
 # Goofish payload build outputs (built by runtime/goofish/build-payload.sh)
 runtime/goofish/payload-dist/
+runtime/goofish/.jar-cache/
 runtime/goofish/.jre-cache/
