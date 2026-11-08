@@ -10,7 +10,7 @@
       "linux"
     ]
   },
-  "description": "Zero-config search for AI agents: Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo (US), Yandex, AliExpress, Goofish, Mercari, Yahoo Auctions, Yahoo Flea Market, Rakuma, Rakuten Ichiba, Qoo10, Yahoo! Shopping and Amazon in one MCP server. No API key, no login, no configuration.",
+  "description": "Zero-config search for AI agents: Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo (US), Yandex, AliExpress, Goofish, Mercari, Yahoo Auctions, Yahoo Flea Market, Rakuma, Rakuten Ichiba, Qoo10, Yahoo! Shopping, Amazon, YouTube, Bilibili and CSDN in one MCP server. No API key, no login, no configuration.",
   "display_name": "ZeroSearch MCP",
   "homepage": "https://github.com/mouseos/ZeroSearch_MCP",
   "keywords": [
@@ -29,10 +29,15 @@
     "rakuten",
     "qoo10",
     "yahoo-shopping",
-    "amazon"
+    "amazon",
+    "youtube",
+    "bilibili",
+    "csdn",
+    "video",
+    "articles"
   ],
   "license": "MIT",
-  "long_description": "ZeroSearch gives an AI agent sixteen search providers behind one MCP server, in two categories: web search (Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo US, Yandex) and shopping search (AliExpress, Goofish, Mercari, Yahoo! Auctions, Yahoo! Flea Market, Rakuma, Rakuten Ichiba, Qoo10, Yahoo! Shopping, Amazon).\n\nThere is nothing to configure: no API key, no account, no environment variables. Register the server binary in the MCP config and all 82 tools work. Each provider reuses the app-faithful access patterns established for the standalone servers (which this project merges and replaces), and tool names, arguments and result JSON are unchanged from those servers.\n\nThe same code is available as the Rust library `zero_search`: a unified API (per-engine search, all-engine search with per-engine outcomes, category-wide search, product search) designed to be embedded as an agent harness's default search tool, with every provider crate re-exported for full access.",
+  "long_description": "ZeroSearch gives an AI agent nineteen search providers behind one MCP server, in four categories: web search (Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo US, Yandex), shopping search (AliExpress, Goofish, Mercari, Yahoo! Auctions, Yahoo! Flea Market, Rakuma, Rakuten Ichiba, Qoo10, Yahoo! Shopping, Amazon), media platforms (YouTube, Bilibili) and article platforms (CSDN).\n\nThere is nothing to configure: no API key, no account, no environment variables. Register the server binary in the MCP config and its tools work — with one exception: Goofish's signing runtime embeds the Goofish APK and cannot be redistributed, so Goofish needs a one-time runtime assembly (see runtime/goofish in the repository). Each provider reuses the app-faithful access patterns established for the standalone servers (which this project merges and replaces), and tool names, arguments and result JSON are unchanged from those servers.\n\nThe same code is available as the Rust library `zero_search`: a unified API (per-engine search, all-engine search with per-engine outcomes, category-wide search, product search) designed to be embedded as an agent harness's default search tool, with every provider crate re-exported for full access.",
   "manifest_version": "0.3",
   "name": "zero-search-mcp",
   "repository": {
@@ -60,8 +65,12 @@
       "name": "baidu_search"
     },
     {
-      "description": "Fetch and parse exactly one Baidu search-result page. With page_url omitted the first-page URL is built from query; otherwise page_url is fetched as-is (server-issued pagination URL). Failures return {provider, ok:false, error:{kind,message,url,status_code}} with the Python client's error kind.",
+      "description": "Fetch and parse exactly one Baidu search-result page. With page_url omitted the first-page URL is built from query; otherwise page_url is fetched as-is (server-issued pagination URL). The optional page (1-based) builds the URL for that page instead (pn offset), taking precedence over page_url. Failures return {provider, ok:false, error:{kind,message,url,status_code}} with the Python client's error kind.",
       "name": "baidu_search_page"
+    },
+    {
+      "description": "Fetch Baidu search suggestions from the app's three suggestion systems: classic (the classic sug endpoint — on current server behaviour this returns an HTTP error, recorded per-system), recommendations (SugRec related/guess words) and inputbox (the AI input box: chat suggestions and content groups). With system omitted all three are queried and per-system failures are recorded in the systems field instead of failing the call.",
+      "name": "baidu_suggest"
     },
     {
       "description": "Parse a saved Baidu (APK/wise) search-result HTML page into structured JSON, offline (no network). Returns the Python baidu_parser page dict plus provider/ok.",
@@ -124,8 +133,20 @@
       "name": "bing_news_search"
     },
     {
-      "description": "Get Bing autocomplete suggestions for a partial query (the Bing app's own suggestions API). Useful for discovering how people phrase a topic before running a full search. Pass vertical \"images\" or \"videos\" for candidates in those verticals.",
+      "description": "Get Bing autocomplete suggestions for a partial query (the Bing app's own suggestions API). Useful for discovering how people phrase a topic before running a full search. Pass vertical \"images\" or \"videos\" for candidates in those verticals; mkt/setlang select the market the app would request for (the app derives them from the device locale).",
       "name": "bing_suggest"
+    },
+    {
+      "description": "Search Bing Shopping (the shop vertical the Bing app renders). Returns offer cards with title, price text, seller, rating, image and the product URL.",
+      "name": "bing_shopping_search"
+    },
+    {
+      "description": "Fetch Bing's current trending topics (the same feed the app shows). Takes no query; limit caps the topics returned. Note: on current server behaviour this endpoint answers anonymous requests with HTTP 401, which is reported as a structured error.",
+      "name": "bing_trending_topics"
+    },
+    {
+      "description": "Run Bing Visual Search over an image, the way the Bing app's camera search does: pass the image bytes base64-encoded. Returns identification tags with the actions (pages including the image, similar images, related searches) the service attaches. Note: on current server behaviour this endpoint answers anonymous requests with HTTP 401, which is reported as a structured error.",
+      "name": "bing_visual_search"
     },
     {
       "description": "Build the Bing search URL for a query and vertical (web, image, video, news) without performing any search. Works offline.",
@@ -160,6 +181,14 @@
       "name": "naver_blog_search"
     },
     {
+      "description": "Search the Naver Cafe tab (community posts). Returns title, post URL, cafe name, relative publish time and snippet. Only the first page exists as a server-rendered page (the app's continuation is a native API this build does not reproduce), so page > 1 is an explicit error.",
+      "name": "naver_cafe_search"
+    },
+    {
+      "description": "Search the Naver 지식iN (knowledge Q&A) tab. Returns question title, URL, relative publish time, snippet, answer count, category and the status badge (e.g. 답변완료). Only the first page exists as a server-rendered page, so page > 1 is an explicit error.",
+      "name": "naver_kin_search"
+    },
+    {
       "description": "Get Naver autocomplete suggestions for a partial query. Useful for discovering how Korean users actually phrase a topic before running a full search.",
       "name": "naver_suggest"
     },
@@ -176,12 +205,12 @@
       "name": "yahoo_us_web_search"
     },
     {
-      "description": "Search Yahoo (US) images. Returns title, the page the image appears on, the original image URL, a thumbnail, dimensions and the source site. 60 results per page. Pages are fetched by the bundled helper process with a browser-grade client because Yahoo's image host refuses plain HTTP requests.",
-      "name": "yahoo_us_image_search"
-    },
-    {
       "description": "Search Yahoo (US) videos across YouTube and other hosts. Returns title, watch URL, duration, source site, description and thumbnail. 60 results per page.",
       "name": "yahoo_us_video_search"
+    },
+    {
+      "description": "Search Yahoo (US) images. Returns title, the page the image appears on, the original image URL, a thumbnail, dimensions and the source site. 60 results per page. Pages are fetched by the bundled helper process with a browser-grade client because Yahoo's image host refuses plain HTTP requests. The optional filters are the image SERP's own filter parameters; related queries found on the page are returned as related_queries.",
+      "name": "yahoo_us_image_search"
     },
     {
       "description": "Search Yahoo (US) news articles. Returns headline, article URL, publisher, relative publish time and a snippet. 10 results per page.",
@@ -200,7 +229,7 @@
       "name": "yahoo_us_list_verticals"
     },
     {
-      "description": "Search the Yandex web index. Best general-purpose tool for finding Russian-language web pages, shops, official sites and documentation. Returns title, destination URL, displayed path and snippet. About 10 organic results per page; page is 1-based.",
+      "description": "Search the Yandex web index. Best general-purpose tool for finding Russian-language web pages, shops, official sites and documentation. Returns title, destination URL, displayed path and snippet. About 10 organic results per page; page is 1-based (the session flow is verified live for the first two pages). With include_special_cards the result also carries the page's non-organic cards (AI answer, ad blocks, related searches) under special_cards.",
       "name": "yandex_web_search"
     },
     {
@@ -214,6 +243,10 @@
     {
       "description": "Get Yandex autocomplete suggestions for a partial query. Useful for discovering how Russian users actually phrase a topic before running a full search.",
       "name": "yandex_suggest"
+    },
+    {
+      "description": "Get Yandex query-ending suggestions: the completions the search box offers for how a query could end (the suggest service's endings mode), as opposed to yandex_suggest's whole-query completions.",
+      "name": "yandex_suggest_endings"
     },
     {
       "description": "Build the Yandex search URL for a query and vertical (web, image, video, suggest) without performing a search. Useful for handing a link to the user. News has no URL builder: it moved to dzen.ru and requires Yandex SSO.",
@@ -240,11 +273,31 @@
       "name": "aliexpress_get_reviews"
     },
     {
+      "description": "Query one SKU of an AliExpress product (mtop.aliexpress.pdp.sku.query): price/stock for the selected SKU. Live-verified anonymously. The response data shape is not fully documented, so the raw data is returned alongside any extracted sku_combinations.",
+      "name": "aliexpress_query_sku"
+    },
+    {
+      "description": "Adjust the selected SKU of an AliExpress product (mtop.aliexpress.pdp.sku.adjust). Request shape is implemented from the app-derived builder, but this endpoint has NOT been live-verified yet (results carry live_verified: false).",
+      "name": "aliexpress_adjust_sku"
+    },
+    {
+      "description": "Adjust the PDP main block for a selected SKU (mtop.aliexpress.pdp.main.adjust). Request shape is implemented from the app-derived builder, but this endpoint has NOT been live-verified yet (results carry live_verified: false).",
+      "name": "aliexpress_adjust_pdp"
+    },
+    {
+      "description": "Fetch an AliExpress store's product groups (mtop.ae.shop.search.product.groupType). Request shape is implemented from the app-derived builder; live acceptance is not yet confirmed (results carry live_verified: false).",
+      "name": "aliexpress_get_store_groups"
+    },
+    {
+      "description": "Fetch an AliExpress store page module (ModuleAsyncService). Request shape is implemented from the app-derived builder; live acceptance is not yet confirmed (results carry live_verified: false).",
+      "name": "aliexpress_get_store_module"
+    },
+    {
       "description": "Search products in an AliExpress store through the captured Android store MTop endpoint. seller_id is required (measured: omitting it fails with FAIL_SYS_BIZPARAM_MISSED).",
       "name": "aliexpress_search_store_products"
     },
     {
-      "description": "Search Goofish (Xianyu) products through the APK-derived MTOP search endpoint. Requests are signed by the SecurityGuard runtime bundled with the server (auto-discovered and auto-started); the device identity is generated by the server itself. No configuration is required. The first Goofish call can take a few minutes while the signing harness boots. Sorted search may be rejected by the server (HTTP 419).",
+      "description": "Search Goofish (Xianyu) products through the APK-derived MTOP search endpoint. Requests are signed by the SecurityGuard runtime bundled with the server; the device identity is generated by the server itself. No configuration is required: on first use the server downloads the Goofish app package (~269 MB, SHA-256 verified) and assembles the runtime in its data directory. The signing harness boots in the background when the server starts; a Goofish call made before the boot finishes waits for it (the boot takes several minutes). Sorted or filtered search may be rejected by the server (HTTP 419; cause undetermined). The optional filter arguments (prop_selections = CPV property selections as {property_id: [value_id, ...]}, price_range in \"min,max\" form, province/city/area, category ids) switch the call to the full filter form.",
       "name": "goofish_search_products"
     },
     {
@@ -256,16 +309,68 @@
       "name": "goofish_suggest_keywords"
     },
     {
-      "description": "Fetch public comments for a Goofish (Xianyu) product through the APK-derived MTOP comment endpoint.",
+      "description": "Fetch public comments for a Goofish (Xianyu) product through the APK-derived MTOP comment endpoint. The app's comment.list has no page or cursor mechanism — rows_per_page is the only control; the response's next_page field is informational only and cannot be used to fetch further comments.",
       "name": "goofish_get_comments"
     },
     {
-      "description": "Fetch recommended items related to a Goofish (Xianyu) product through the APK-derived MTOP recommend endpoint.",
+      "description": "Fetch recommended items related to a Goofish (Xianyu) product through the APK-derived MTOP recommend endpoint. Continuation is caller-carried: pass the previous result's next_page_state back as page_state to fetch the next page; every result carries the advanced next_page_state and has_more.",
       "name": "goofish_get_recommendations"
     },
     {
-      "description": "Fetch the Goofish (Xianyu) home feed through the APK-derived MTOP home endpoint.",
+      "description": "Fetch the Goofish (Xianyu) home feed through the APK-derived MTOP home endpoint. Continuation is caller-carried: pass the previous result's next_page_state back as page_state (it takes precedence over page); results fetched through the state flow carry the advanced next_page_state.",
       "name": "goofish_home_feed"
+    },
+    {
+      "description": "Fetch items similar to a Goofish (Xianyu) product (search.spusimilar.itemlist). conditions is the caller-supplied conditions object (in the app it is built from the search response's server-issued spuId; the detail response carries no spu identifier). Continuation: pass page_no from the previous result's next_page_state. NOT live-verified: the one measured attempt was rejected by the server-side app-version gate FAIL_BIZ_SERVER_NEED_UPGRADE_MSG2, so a live call may return that business error instead of data.",
+      "name": "goofish_get_similar_items"
+    },
+    {
+      "description": "Fetch a Goofish (Xianyu) category guide tree through the APK-derived MTOP category endpoint. name optionally selects a guide by name.",
+      "name": "goofish_get_category_guide"
+    },
+    {
+      "description": "Fetch the seller evaluations (rate list) for one Goofish (Xianyu) item through the APK-derived MTOP rate endpoint. rated_uid is the rated seller's user id.",
+      "name": "goofish_get_rate_list"
+    },
+    {
+      "description": "Fetch a Goofish (Xianyu) user's header info through the APK-derived MTOP headinfo endpoint. NOT live-verified: the request shape is fixed by the app's typed classes, but no in-app caller was found, so reachability is unconfirmed.",
+      "name": "goofish_get_user_headinfo"
+    },
+    {
+      "description": "Fetch Goofish (Xianyu) publish.items. NOTE: the endpoint has no parameter identifying another user — its confirmed use is selecting one's own items; this is NOT another seller's public listing.",
+      "name": "goofish_get_seller_items"
+    },
+    {
+      "description": "Fetch the Goofish (Xianyu) same-city feed (local.home / local.home.feeds). data_source_id and version are caller-supplied (they are delivered to the app by its page configuration). feeds_api=true selects the feeds variant, which is NOT live-verified.",
+      "name": "goofish_get_city_feed"
+    },
+    {
+      "description": "Fetch Goofish (Xianyu) nearby corner info (local.near.by.corner.info). NOT live-verified. Coordinates are caller-supplied strings, never invented.",
+      "name": "goofish_get_city_nearby"
+    },
+    {
+      "description": "List Goofish (Xianyu) fishponds (鱼塘). NOT live-verified (the gateway registration record notes this API may not be registered).",
+      "name": "goofish_get_fishpond_list"
+    },
+    {
+      "description": "Fetch one Goofish (Xianyu) fishpond's detail (fishpool.id). NOT live-verified.",
+      "name": "goofish_get_fishpond_info"
+    },
+    {
+      "description": "Fetch a Goofish (Xianyu) fishpond's public posts/comments (fishpool.comment.list). NOT live-verified. Coordinates are caller-supplied and omitted when absent.",
+      "name": "goofish_get_fishpond_comments"
+    },
+    {
+      "description": "Fetch Goofish (Xianyu) video play info (video.play) for a video id. NOT live-verified.",
+      "name": "goofish_get_video_play"
+    },
+    {
+      "description": "Fetch Goofish (Xianyu) video play info from a normalized feed card (a card object as returned by the feed/search parsers, carrying video_id/has_video). Cards without a confirmed video, or with a mismatched item_id, are refused before sending. NOT live-verified.",
+      "name": "goofish_get_video_play_from_feed_card"
+    },
+    {
+      "description": "Fetch Goofish (Xianyu) fun/explore comments (fun.general.comment.list). Cursor paging: pass the previous response's last_cursor as begin_cursor. NOT live-verified.",
+      "name": "goofish_get_fun_comments"
     },
     {
       "description": "Search Mercari Japan products through the public web Connect-RPC JSON endpoint. Login-free: requests are authorized with a locally generated DPoP proof, no account or token needed. Each item carries is_auction and, for auction listings, an auction object (highest_bid is the current bid, not a buy-now price; also initial_price, total_bids, bid_deadline). Set exclude_auction to drop auction listings from the results.",
@@ -292,7 +397,7 @@
       "name": "mercari_search_categories"
     },
     {
-      "description": "Get seller reviews/ratings for a Mercari seller. Returns rating summary (good/normal/bad counts, star rating) and individual review messages.",
+      "description": "Get seller reviews/ratings for a Mercari seller. Returns rating summary (good/normal/bad counts, star rating) and individual review messages. Note: the endpoint ignores pagination (verified live — page 2 returns page 1), so page > 1 is rejected with an explicit error rather than silently repeating the first page; the real continuation mechanism is undetermined.",
       "name": "mercari_get_reviews"
     },
     {
@@ -316,11 +421,11 @@
       "name": "rakuma_get_product"
     },
     {
-      "description": "Get seller reviews/ratings for a Rakuma seller. Returns aggregate rating and individual reviews. The seller_hash (32-char hex) is available from rakuma_get_product item detail (seller.seller_hash field).",
+      "description": "Get seller reviews/ratings for a Rakuma seller. Returns aggregate rating and individual reviews. The seller_hash (32-char hex) is available from rakuma_get_product item detail (seller.seller_hash field). Reviews are sliced client-side from the shop page's full review list, so page/limit page through that list.",
       "name": "rakuma_get_reviews"
     },
     {
-      "description": "Search Yahoo Auctions Japan (ヤフオク) products via the official app API (anonymous, appid). Supports open and closed (落札済み) auctions.",
+      "description": "Search Yahoo Auctions Japan (ヤフオク) products via the official app API (anonymous, appid). Supports open and closed (落札済み) auctions. sort vocabulary: price_asc | price_desc | bids | bids_asc | end_time | end_time_desc | newest | total_price_asc | total_price_desc | watch_count | featured | start_price_asc | start_price_desc; literal API values (e.g. +TOTAL_PRICE) are also accepted for the matching status. seller_type is a comma-joined list of AUC_STORE / AUCTION / FLEAMARKET; prefecture_code takes comma-joined Prefecture values (e.g. TOKYO,OSAKA). conditions (raw ItemCondition ids, comma-joined) takes precedence over condition, and submit_type (ALL / AUCTION / FIXED) over buynow_only.",
       "name": "yauction_search_products"
     },
     {
@@ -328,7 +433,23 @@
       "name": "yauction_get_product"
     },
     {
-      "description": "Get seller reviews/ratings for a Yahoo Auctions Japan seller. Returns rating summary and individual reviews parsed from the seller rating page.",
+      "description": "Get closed-auction price statistics for a Yahoo Auctions Japan catalog id (search/items/statistics, hm1 variant): totals, the last closed item, and per-day count/avg/max/min. conditions takes ItemCondition ids (a single value is recommended until the multi-value joining form is live-confirmed).",
+      "name": "yauction_get_statistics"
+    },
+    {
+      "description": "Get closed-auction price statistics (yne variant, itemState=closed fixed) with the additional shp_spec / seller_type filters. Same result shape as yauction_get_statistics.",
+      "name": "yauction_get_statistics_closed"
+    },
+    {
+      "description": "Get a Yahoo Auctions Japan seller's profile (user/v2 profile): display name, icon, store flags, eKYC/speed-shipping flags and the ratings summary.",
+      "name": "yauction_get_seller_profile"
+    },
+    {
+      "description": "Get a Yahoo Auctions Japan store seller's store profile (user/v1 store-profile): announcement text and banners. Non-store sellers may legitimately error here.",
+      "name": "yauction_get_store_profile"
+    },
+    {
+      "description": "Get seller reviews/ratings for a Yahoo Auctions Japan seller. Returns individual reviews parsed from the seller rating page plus a ratings_summary (enriched from the seller profile API when available).",
       "name": "yauction_get_reviews"
     },
     {
@@ -336,14 +457,126 @@
       "name": "yauction_suggest_keywords"
     },
     {
+      "description": "Search Rakuten Ichiba products through the Rakuten app's guest BFF (dynamic/search/v1). No login or API key. Result product_id is \"{shop_id}_{item_id}\" and feeds rakuten_get_product / rakuten_get_reviews. sort is one of the app's sorts: the standard form (relevancy, price_low_to_high_all, price_high_to_low_all, newest, review_count_all, review_score_all, price_plus_shippingfee_low_to_high_all, price_plus_shippingfee_high_to_low_all) or the highRelevancy form without the _all suffix (price_low_to_high, price_high_to_low, review_count, review_score, and the two shipping-inclusive forms); the value passes through to the BFF.",
+      "name": "rakuten_search_products"
+    },
+    {
+      "description": "Fetch Rakuten Ichiba product detail through the app's guest BFF (itemscreen/get/v16). Identify the item by shop_id+item_id (or the search result's product \"{shop_id}_{item_id}\"), or by item_code, shop_id+manage_number, or item_url. The endpoint answers HTTP 207 for partial success; the tool reports ok from the core item data.",
+      "name": "rakuten_get_product"
+    },
+    {
+      "description": "Fetch Rakuten Ichiba product reviews through the app's guest BFF (review/list/v3). sort: -regtime (newest) | -evaluation | -judgment. sex: 0 = male, 1 = female. hits is capped at 30 by the server.",
+      "name": "rakuten_get_reviews"
+    },
+    {
+      "description": "Get Rakuten Ichiba keyword suggestions through the app's guest BFF (search/suggest): keyword completions and genre candidates for a partial keyword. No login.",
+      "name": "rakuten_suggest_keywords"
+    },
+    {
+      "description": "Search Rakuten Ichiba in the app's product-aggregated form (product/search/v1): results are grouped by product rather than by shop listing. No login.",
+      "name": "rakuten_search_products_aggregated"
+    },
+    {
+      "description": "Fetch a Rakuten Ichiba genre subtree (genre/search/v1): the genre itself plus, per the include flags, its children, siblings, tag groups and tags. No login.",
+      "name": "rakuten_get_genre_tree"
+    },
+    {
+      "description": "Fetch per-variant details for a Rakuten Ichiba item (variantdetails/get/v5): price, inventory and delivery captions for one variant. The state parameters (variant_id, is_available_for_sale, prices, inventory, is_subscription_eligible, delivery_caption_variant) are carried over from rakuten_get_product's response (its variants entries) — pass them from there. No login.",
+      "name": "rakuten_get_variant_details"
+    },
+    {
+      "description": "Search Qoo10 Japan products through the Qoo10 app's mobile API (GetMoveSearchData). No login. sort: 0 ranking, 1 best-selling, 2 newest, 3 price ascending, 4 price descending, 5 review score, 6 review count. Brand / shipping-from / color / attribute codes come from the service's filter info. Note: the app user agent carries a device-derived token that cannot be reproduced off-device; this client sends a format-preserving placeholder token in its place, which the service accepted in live verification. The service requires Japan-side access in practice.",
+      "name": "qoo10_search_products"
+    },
+    {
+      "description": "Fetch Qoo10 Japan product detail by GD_NO (goods code) or product URL. Qoo10 has no native detail API; this reproduces the app's WebView product page request and extracts the title, price and images from the returned page. Requires Japan-side access in practice (see qoo10_search_products).",
+      "name": "qoo10_get_product"
+    },
+    {
+      "description": "Get the Qoo10 Japan search filter information for a keyword (GetMoveSearchFilterInfo — the data the app's filter popup is built from): the brand, colour, price-band, category, shipping-from, review-score and attribute codes that qoo10_search_products accepts as filter values in this keyword's context. Optionally pass the category code or already-selected brand codes to scope the context. No login. Requires Japan-side access in practice (see qoo10_search_products).",
+      "name": "qoo10_get_search_filters"
+    },
+    {
+      "description": "Get Qoo10 Japan keyword suggestions through the Qoo10 app's mobile API (GetMoveAutoKeywordSearch). No login. Requires Japan-side access in practice (see qoo10_search_products).",
+      "name": "qoo10_suggest_keywords"
+    },
+    {
+      "description": "Search Yahoo! Shopping Japan products through the Yahoo! Shopping app's native API (searchList/v4). No login; the app's built-in appid is used. order is one of: Recommend, Price, TotalPrice, ReviewCount, ReviewScoreAverage, DiscountRate, CatalogReleaseDate, RegistrationDate, GoodDelivery (asc applies mainly to Price / TotalPrice). Result product_id is \"{storeId}_{itemCode}\" and feeds yshopping_get_product and yshopping_get_reviews.",
+      "name": "yshopping_search_products"
+    },
+    {
+      "description": "Fetch Yahoo! Shopping Japan product detail through the app's native API (item-detail/app/v2). product is the search result's product_id (\"{storeId}_{itemCode}\") or a store product URL. Detail images are returned as image_ids (the API hands out ids, not URLs); the main image URL is in image.",
+      "name": "yshopping_get_product"
+    },
+    {
+      "description": "Fetch Yahoo! Shopping Japan product reviews. The app's native API has no review-list endpoint; the app itself shows reviews by opening the review page (shopping.yahoo.co.jp/review/item/list) in a WebView, and this tool reads reviews from that page's server-rendered data and, for anything beyond the first 20, a non-default sort, or a filter, from the continuation endpoint the page's own SPA uses. product is the search result's product_id (\"{storeId}_{itemCode}\") or a store product URL. offset is the zero-based index of the first review to return (page through results with offset + count, or the returned next_offset). sort is one of the page's own sort orders: lengthDesc (default, おすすめ順), ratingDesc (評価の高い順), referenceCountDesc (いいねの多い順), postedTimeDesc (新着順), pickUp. rating and sub_review_id apply the page's own review filters (both live-verified). Returns the rating summary (total, average, per-star counts), the reviews, next_offset, and subReviewSummaries — the item's aspect summaries whose id values are what sub_review_id takes.",
+      "name": "yshopping_get_reviews"
+    },
+    {
+      "description": "Get Yahoo! Shopping Japan keyword suggestions through the suggest endpoint the app uses (suggest-shop.yahooapis.jp, appid built in). Returns keyword completions plus, with detailed (default), category candidates and direct store links. No login.",
+      "name": "yshopping_suggest_keywords"
+    },
+    {
+      "description": "Search Amazon.co.jp products by reproducing the Amazon Shopping app's WebView requests (app-format user agent and the app's pre-navigation cookies; no browser engine). sort (the web s parameter): relevancerank, price-asc-rank, price-desc-rank, review-rank, date-desc-rank. Refinements use Amazon's web facet vocabulary, passed through as the app does: department (i:), category_node (n:), price band (p_36), prime_only (p_85), in_stock_only, min_rating (p_72), brand (p_89), seller_id (me), plus raw rh entries. Note: Amazon serves these pages only to Japan-side access in practice.",
+      "name": "amazon_search_products"
+    },
+    {
+      "description": "Fetch Amazon.co.jp product detail by ASIN or product URL, reproducing the app's WebView request (see amazon_search_products). Extracts title, price, main image, rating and review count from the product page. Requires Japan-side access in practice.",
+      "name": "amazon_get_product"
+    },
+    {
+      "description": "Get Amazon.co.jp keyword suggestions through the completion endpoint the Amazon Shopping app uses. No login. Requires Japan-side access in practice (see amazon_search_products). Note: Amazon product reviews are not exposed — the review pages sit behind a sign-in wall (verified), so no review tool exists.",
+      "name": "amazon_suggest_keywords"
+    },
+    {
       "description": "List APK-derived endpoints and runtime data sources currently supported by Shopping_MCP.",
       "name": "shopping_list_sources"
     },
     {
-      "description": "List the ZeroSearch engine categories (web / shopping), the engines in each category, and the MCP tools that belong to each engine. Takes no arguments.",
+      "description": "Search YouTube through the YouTube Android app's own InnerTube API (guest session, no login). `items` holds the video results (id, title, watch URL, channel, view count, duration); `results` holds every result kind in page order — videos, Shorts, playlists and channels — each tagged with its kind. Also returns the estimated total and a continuation token. Pass `continuation` (from a previous call) to fetch the next page; filters and sort are the app's own search parameters.",
+      "name": "youtube_search_videos"
+    },
+    {
+      "description": "Get one YouTube video's details through the app's InnerTube API: title, channel, length, view count, description, keywords, thumbnail, caption tracks. The like count is merged from the watch-next response and the exact view count plus the relative upload time (upload_time_text, e.g. \"5y ago\") from updated_metadata — the same entities the app renders. No response in the app's flow carries an absolute calendar publish date, so published_date stays null.",
+      "name": "youtube_get_video"
+    },
+    {
+      "description": "Get the related videos shown next to a YouTube video (the app's watch-next list, about 20 entries with title, channel, view count and duration), the watched video's like count, and the continuation tokens: related_continuation pages this list (pass it back as `continuation`), comments_continuation opens the comments section — pass it to youtube_get_comments.",
+      "name": "youtube_get_related"
+    },
+    {
+      "description": "Get a YouTube video's caption transcript through the app's own two-step caption flow (player-issued track URL, then the timedtext document). Returns the cues with timestamps plus the joined text. `language` selects a track by language code; without it a manual track is preferred over the automatic (ASR) one.",
+      "name": "youtube_get_captions"
+    },
+    {
+      "description": "Get one page of a YouTube video's comments (about 20, with author, text, like count text and reply count) through the app's InnerTube next API. The first page's token comes from youtube_get_related (`comments_continuation`); the result's `next_continuation` fetches the following page.",
+      "name": "youtube_get_comments"
+    },
+    {
+      "description": "Get one Bilibili video's details through the app's viewunite View call, as a guest — no login. Identify the video by BV id / video URL (video_id) or by numeric aid. Returns title, author, cover, description, duration, play/danmaku/like/coin/favorite/share counts, publish time and the part (分P) list.",
+      "name": "bilibili_get_video"
+    },
+    {
+      "description": "Get the related videos Bilibili shows next to a video (viewunite RelatesFeed), as a guest — no login. Identify the video by BV id / video URL (video_id) or by numeric aid. `next` continues the feed.",
+      "name": "bilibili_get_related"
+    },
+    {
+      "description": "Search Bilibili videos through the Bilibili Android app's own gRPC search (SearchAll), as a guest — no login. Returns title, BV id, author, cover, duration, play and danmaku counts and the watch URL, plus a `next` token for paging.",
+      "name": "bilibili_search_videos"
+    },
+    {
+      "description": "Search CSDN through the CSDN app's own gateway API (the same assembled search the Android app uses, with its search categories). Returns titles, authors, digests, URLs and view counts. Works without login. There is no forum category: the app has no forum search (verified in the current app), so forum/bbs is rejected. The ebook category exists in the app but the server currently returns it empty. search_user_name switches to the app's personal-home search (only for categories all/blog/ask/download/vip, as in the app).",
+      "name": "csdn_search_articles"
+    },
+    {
+      "description": "Fetch a CSDN blog article (title, author, full body HTML and text, tags, counts) through the CSDN app's BlogPhoenix API. Works without login.",
+      "name": "csdn_get_article"
+    },
+    {
+      "description": "List the ZeroSearch engine categories (web / shopping / media / articles), the engines in each category, and the MCP tools that belong to each engine. Takes no arguments.",
       "name": "zero_list_categories"
     }
   ],
-  "tools_generated": false,
-  "version": "0.1.0"
+  "tools_generated": true,
+  "version": "0.4.0"
 }
