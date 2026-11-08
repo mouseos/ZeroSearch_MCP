@@ -66,6 +66,30 @@ jobs:
       - name: Build image helper binary
         run: cargo build --release --target ${{ matrix.target }} --manifest-path crates/helpers/yahoo-us-image/Cargo.toml
 
+      # Goofish signing payload: a pinned Java 8 runtime plus the
+      # compiled unidbg signing harness, shipped next to the server
+      # binary. The Goofish app package itself is not redistributable
+      # and is NOT in the payload — the server downloads it on first
+      # Goofish use and assembles the runtime in its data directory
+      # (see runtime/goofish/build-payload.sh).
+      - name: Set up JDK 8 for the Goofish payload build
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Build Goofish signing payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.platform }}-${{ matrix.arch }}" in
+            linux-x64) PAYLOAD_PLATFORM=linux-x64 ;;
+            win32-x64) PAYLOAD_PLATFORM=win32-x64 ;;
+            macos-arm64) PAYLOAD_PLATFORM=macos-arm64 ;;
+            *) echo "no Goofish payload platform mapping for ${{ matrix.platform }}-${{ matrix.arch }}" >&2; exit 1 ;;
+          esac
+          ./runtime/goofish/build-payload.sh "$PAYLOAD_PLATFORM"
+
       - name: Package installer and MCPB
         shell: bash
         run: |
@@ -85,12 +109,16 @@ jobs:
 
           mkdir -p dist
 
+          PAYLOAD_PLATFORM="${{ matrix.platform }}-${{ matrix.arch }}"
+          GOOFISH_PAYLOAD="runtime/goofish/payload-dist/${PAYLOAD_PLATFORM}/goofish-payload"
+
           # ── Installer package (server + launcher + image helper) ──
           INSTALLER_DIR="dist/${BUNDLE}"
           mkdir -p "${INSTALLER_DIR}"
           cp "${RELEASE_DIR}/${{ matrix.server_bin }}" "${INSTALLER_DIR}/"
           cp "${RELEASE_DIR}/${{ matrix.launcher_bin }}" "${INSTALLER_DIR}/"
           cp "${HELPER_DIR}/${{ matrix.helper_bin }}" "${INSTALLER_DIR}/"
+          cp -r "${GOOFISH_PAYLOAD}" "${INSTALLER_DIR}/"
           cp README.md README.en.md LICENSE "${INSTALLER_DIR}/"
 
           cd dist
@@ -107,8 +135,15 @@ jobs:
           mkdir -p "${MCPB_STAGE}/server"
           cp "${RELEASE_DIR}/${{ matrix.server_bin }}" "${MCPB_STAGE}/server/"
           cp "${HELPER_DIR}/${{ matrix.helper_bin }}" "${MCPB_STAGE}/server/"
+          cp -r "${GOOFISH_PAYLOAD}" "${MCPB_STAGE}/server/"
 
-          sed -e "s/\"version\": \"0.1.0\"/\"version\": \"${VERSION}\"/" \
+          # The committed manifest.json is generated from the server's
+          # tools/list (scripts/generate-manifest.py); only the version
+          # and the platform-specific entry point / command are patched
+          # here. The version substitution is line-anchored and matches
+          # any current value, so it cannot silently stop applying.
+          sed -E \
+              -e "s/^([[:space:]]*)\"version\": \"[^\"]*\"/\1\"version\": \"${VERSION}\"/" \
               -e "s|\"entry_point\": \"server/zero-search-mcp\"|\"entry_point\": \"server/${{ matrix.server_bin }}\"|" \
               -e "s|\"command\": \"server/zero-search-mcp\"|\"command\": \"server/${{ matrix.server_bin }}\"|" \
               manifest.json > "${MCPB_STAGE}/manifest.json"

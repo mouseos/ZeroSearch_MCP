@@ -14,3 +14,7 @@ Thumbs.db
 .idea/
 .vscode/
 .claude/worktrees/
+
+# Goofish payload build outputs (built by runtime/goofish/build-payload.sh)
+runtime/goofish/payload-dist/
+runtime/goofish/.jre-cache/

@@ -28,6 +28,7 @@ pub mod identity;
 pub mod netdiag;
 pub mod parse;
 pub mod protocol;
+mod provision;
 pub mod registry;
 pub mod requests;
 pub mod search_session;
@@ -368,13 +369,15 @@ impl GoofishClient {
 
     /// Pre-warm: resolve the runtime and start the signing harness
     /// now, so the first live call does not pay the whole startup
-    /// (measured in minutes; see STARTUP_TIMEOUT). Best-effort and
-    /// local-only — no network access, no MTOP send. Returns true
-    /// when the harness is started (or was already running). Any
-    /// failure is latched in the signer and surfaces, unchanged, on
-    /// the first real call.
+    /// (measured in minutes; see STARTUP_TIMEOUT). Best-effort. On
+    /// a distribution install the first pre-warm also assembles
+    /// the runtime (see `resolve_runtime_with_provision`): that
+    /// downloads the app package once, but still sends no MTOP
+    /// request. Returns true when the harness is started (or was
+    /// already running). Any failure is latched in the signer and
+    /// surfaces, unchanged, on the first real call.
     pub fn warm_up(&self) -> bool {
-        let runtime = resolve_runtime();
+        let runtime = resolve_runtime_with_provision();
         let Some(serve_path) = runtime.serve_command else {
             return false;
         };
@@ -412,8 +415,14 @@ impl GoofishClient {
         }
         let mut meta = CallMeta::new(Instant::now());
         // -- Resolve the local runtime BEFORE any network access.
+        //    Provisioning (first use on a distribution install)
+        //    downloads the app package, so it runs on a blocking
+        //    thread rather than this async one.
         let mut missing: Vec<String> = Vec::new();
-        let runtime = resolve_runtime();
+        let runtime = match tokio::task::spawn_blocking(resolve_runtime_with_provision).await {
+            Ok(runtime) => runtime,
+            Err(_) => resolve_runtime(),
+        };
         let identity_path = runtime.identity_path;
         let serve_path = runtime.serve_command;
         let mut utdid = String::new();
@@ -464,6 +473,16 @@ impl GoofishClient {
                  can point at one explicitly)"
                     .to_string(),
             );
+        }
+        if serve_path.is_none() {
+            if let Some(err) = PROVISION_ERROR.lock().unwrap().take() {
+                return meta.attach(error_value(
+                    "provisioning_failed",
+                    format!(
+                        "the Goofish signing runtime could not be assembled on first use: {err}"
+                    ),
+                ));
+            }
         }
         if !missing.is_empty() {
             return meta.attach(error_value(
@@ -1153,9 +1172,15 @@ fn env_first(names: &[&str]) -> Option<String> {
 //      own directory) holding `serve.sh` (or `serve_lowmem.sh`), the
 //      same directory under the server's data directory, or the
 //      legacy `$HOME/.shopping-mcp/goofish-runtime/`.
+//   4. when none of those resolve but the distribution shipped a
+//      `goofish-payload/` next to the executable, the bundle under
+//      the data directory is assembled on first use (the app
+//      package is downloaded and verified by the server itself;
+//      see the `provision` module) and step 3 then finds it.
 // The bundle is part of the deployment, not a user setting: the MCP
 // host configuration stays just the binary path. When no serve
 // command resolves at all, live calls refuse with missing_runtime
+// (or provisioning_failed when step 4 was attempted and failed)
 // and send nothing.
 //
 // Config file (overrides only):
@@ -1258,11 +1283,20 @@ struct RuntimeSettings {
     serve_command: Option<String>,
 }
 
+/// Serve script names a bundle may carry, in preference order.
+/// Provisioning generates `serve.cmd` on Windows and `serve.sh`
+/// elsewhere; the shell names stay valid on every platform so
+/// hand-assembled bundles keep working.
+#[cfg(windows)]
+const SERVE_CANDIDATES: [&str; 3] = ["serve.cmd", "serve.sh", "serve_lowmem.sh"];
+#[cfg(not(windows))]
+const SERVE_CANDIDATES: [&str; 2] = ["serve.sh", "serve_lowmem.sh"];
+
 /// Runtime pieces found in one bundle directory: a serve script
 /// (`serve.sh`, falling back to `serve_lowmem.sh`) and/or an
 /// `identity.json`. Either piece may be absent.
 fn bundle_in(dir: &Path) -> FileConfig {
-    let serve = ["serve.sh", "serve_lowmem.sh"]
+    let serve = SERVE_CANDIDATES
         .iter()
         .map(|name| dir.join(name))
         .find(|path| path.is_file());
@@ -1327,11 +1361,40 @@ fn resolve_runtime() -> RuntimeSettings {
     }
 }
 
-/// True when the signing serve command resolves (the identity is
-/// server-generated on demand, so it is never the missing piece).
-/// Used by the server e2e test to pick its expectation.
+/// The most recent first-use provisioning failure, if any. Kept
+/// so a live call can report `provisioning_failed` (the assembly
+/// error) instead of the generic `missing_runtime`.
+static PROVISION_ERROR: Mutex<Option<String>> = Mutex::new(None);
+
+/// `resolve_runtime`, plus first-use provisioning: when no serve
+/// command resolves but the distribution shipped a
+/// `goofish-payload/` next to the executable, assemble the runtime
+/// in the data directory (see the `provision` module) and resolve
+/// again. Synchronous and potentially slow (a ~269 MB download on
+/// the very first use); async callers run it on a blocking thread.
+fn resolve_runtime_with_provision() -> RuntimeSettings {
+    let runtime = resolve_runtime();
+    if runtime.serve_command.is_some() || !provision::payload_available() {
+        return runtime;
+    }
+    match provision::ensure_provisioned() {
+        Ok(_) => resolve_runtime(),
+        Err(e) => {
+            *PROVISION_ERROR.lock().unwrap() = Some(e);
+            resolve_runtime()
+        }
+    }
+}
+
+/// True when the signing serve command resolves — or can be made
+/// to resolve by first-use provisioning from a shipped payload
+/// (the identity is server-generated on demand, so it is never
+/// the missing piece). Used by the server to decide whether the
+/// background pre-warm (which performs any provisioning and then
+/// boots the harness) is worth starting, and by the e2e test to
+/// pick its expectation.
 pub fn runtime_configured() -> bool {
-    resolve_runtime().serve_command.is_some()
+    resolve_runtime().serve_command.is_some() || provision::payload_available()
 }
 
 /// Split a serve command into program + arguments, honouring single

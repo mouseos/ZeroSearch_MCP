@@ -34,6 +34,34 @@ if [ -z "$HOST_TRIPLE" ]; then
   esac
 fi
 
+# Refresh manifest.json's tool list and version from a locally built
+# server before packing, so a bundle can never ship a stale list
+# (the manifest is generated from the server's tools/list; see
+# scripts/generate-manifest.py). A cross-only pack with no local
+# server binary falls back to the committed manifest with a warning;
+# CI additionally guards freshness via generate-manifest.py --check.
+GEN_SERVER=""
+for cand in \
+  "$ROOT/target/release/zero-search-mcp" \
+  "$ROOT/target/release/zero-search-mcp.exe" \
+  "$ROOT/target/$HOST_TRIPLE/release/zero-search-mcp" \
+  "$ROOT/target/$HOST_TRIPLE/release/zero-search-mcp.exe" \
+  "$ROOT/target/debug/zero-search-mcp"; do
+  if [ -f "$cand" ]; then
+    GEN_SERVER="$cand"
+    break
+  fi
+done
+if [ -n "$GEN_SERVER" ] && command -v python3 >/dev/null 2>&1; then
+  python3 "$ROOT/scripts/generate-manifest.py" --server "$GEN_SERVER" --manifest "$ROOT/manifest.json"
+else
+  echo "[WARN] No local server binary found; packing with the committed manifest.json as-is."
+fi
+
+# Packed-platform hashes are collected here and written into
+# server.json at the end (fileSha256 per platform).
+HASHES_FILE="$(mktemp)"
+
 for row in "${TARGETS[@]}"; do
   read -r triple platform arch exe manifest_platform helper_exe <<<"$row"
   bin="$ROOT/target/$triple/release/$exe"
@@ -74,6 +102,17 @@ for row in "${TARGETS[@]}"; do
   cp "$bin" "$stage/server/$exe"
   cp "$helper_bin" "$stage/server/$helper_exe"
 
+  # Goofish signing payload (JRE + compiled harness), built by
+  # runtime/goofish/build-payload.sh. It ships next to the server
+  # binary; the server assembles the actual runtime from it on
+  # first Goofish use.
+  payload_src="$ROOT/runtime/goofish/payload-dist/$platform-$arch/goofish-payload"
+  if [ -d "$payload_src" ]; then
+    cp -r "$payload_src" "$stage/server/goofish-payload"
+  else
+    echo "[WARN] Goofish payload not found for $platform-$arch: $payload_src (bundle will lack the Goofish signing runtime)"
+  fi
+
   # manifest.json with platform-specific entry_point / command / platforms
   python3 - "$ROOT/manifest.json" "$stage/manifest.json" "$VERSION" "$exe" "$manifest_platform" <<'PY'
 import json, sys
@@ -91,8 +130,38 @@ PY
   hash="$(sha256sum "$DIST/$name.mcpb" | cut -d' ' -f1)"
   size="$(stat -c%s "$DIST/$name.mcpb")"
   echo "[OK] $name.mcpb ($size bytes, sha256: $hash)"
+  echo "$manifest_platform $hash" >> "$HASHES_FILE"
 done
+
+# Write the packed platforms' hashes (and the version) into
+# server.json so the registry metadata always matches the bundles
+# this run produced. Platforms not packed in this run keep their
+# previous fileSha256.
+if [ -s "$HASHES_FILE" ] && command -v python3 >/dev/null 2>&1; then
+  python3 - "$ROOT/server.json" "$VERSION" "$HASHES_FILE" <<'PY'
+import json, re, sys
+path, version, hashes_file = sys.argv[1:4]
+hashes = {}
+for line in open(hashes_file):
+    parts = line.split()
+    if len(parts) == 2:
+        hashes[parts[0]] = parts[1]
+doc = json.load(open(path))
+doc["version"] = version
+for pkg in doc.get("packages", []):
+    plats = pkg.get("supported_platforms") or []
+    if plats and plats[0] in hashes:
+        pkg["fileSha256"] = hashes[plats[0]]
+    ident = pkg.get("identifier", "")
+    ident = re.sub(r"/download/v[^/]+/", f"/download/v{version}/", ident)
+    ident = re.sub(r"-v\d+\.\d+\.\d+-", f"-v{version}-", ident)
+    pkg["identifier"] = ident
+json.dump(doc, open(path, "w"), ensure_ascii=False, separators=(",", ":"))
+print(f"server.json updated: version {version}, fileSha256 for {sorted(hashes)}")
+PY
+fi
+rm -f "$HASHES_FILE"
 
 echo
 echo "Done. Bundles are in: $DIST"
-echo "Update server.json fileSha256 fields with the hashes above before publishing."
+echo "server.json has been updated with the hashes above for the packed platforms."

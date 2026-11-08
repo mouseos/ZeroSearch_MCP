@@ -20,7 +20,11 @@
 //!   [`search_media`] for the media platforms, and
 //!   [`Client::search_articles`] / [`search_articles`] for the
 //!   article platforms. Web results are normalised into
-//!   [`SearchItem`].
+//!   [`SearchItem`]. Media and article searches also have paged
+//!   variants ([`Client::search_media_paged`],
+//!   [`Client::search_articles_paged`]) that thread the providers'
+//!   continuation tokens / page numbers; [`media_next_token`]
+//!   extracts the token for the next page from a media result.
 //! - The **raw providers**, re-exported under [`providers`] (and at
 //!   the crate root under their original crate names), so every
 //!   provider's own client, request types and result types stay
@@ -769,15 +773,7 @@ impl Client {
             MediaProvider::YouTube => {
                 let filters = youtube_search::SearchFilters::default();
                 match self.youtube.search_videos(query, &filters).await {
-                    Ok(page) => {
-                        let mut value = page.to_value(query);
-                        if let Some(items) = value["items"].as_array_mut() {
-                            items.truncate(limit as usize);
-                            let count = items.len();
-                            value["count"] = serde_json::json!(count);
-                        }
-                        Ok(value)
-                    }
+                    Ok(page) => Ok(youtube_page_value(page.to_value(query), limit)),
                     Err(e) => Ok(serde_json::json!({
                         "provider": "youtube",
                         "ok": false,
@@ -788,6 +784,53 @@ impl Client {
             MediaProvider::Bilibili => {
                 let page_size = i32::try_from(limit).unwrap_or(20);
                 match self.bilibili.search_videos(query, page_size, "", 0).await {
+                    Ok(value) => Ok(value),
+                    Err(e) => Ok(bilibili_provider::error_json(&e)),
+                }
+            }
+        }
+    }
+
+    /// Search one media provider, following a pagination token.
+    ///
+    /// `page_token` is the opaque continuation for the next page —
+    /// the value [`media_next_token`] extracts from a previous
+    /// result (`next_continuation` for YouTube, `next` for
+    /// Bilibili). Pass an empty token for the first page; the call
+    /// then behaves exactly like [`Client::search_media`]. The
+    /// returned JSON is the provider's own payload, including the
+    /// token for the page after it. YouTube continuation pages are
+    /// trimmed to `limit` items just like first pages; Bilibili
+    /// receives `limit` as its page size.
+    pub async fn search_media_paged(
+        &self,
+        provider: MediaProvider,
+        query: &str,
+        limit: i64,
+        page_token: &str,
+    ) -> Result<Value> {
+        let limit = limit.max(1);
+        match provider {
+            MediaProvider::YouTube => {
+                if page_token.is_empty() {
+                    return self.search_media(provider, query, limit).await;
+                }
+                match self.youtube.search_continuation(page_token).await {
+                    Ok(page) => Ok(youtube_page_value(page.to_value(query), limit)),
+                    Err(e) => Ok(serde_json::json!({
+                        "provider": "youtube",
+                        "ok": false,
+                        "error": e.to_value(),
+                    })),
+                }
+            }
+            MediaProvider::Bilibili => {
+                let page_size = i32::try_from(limit).unwrap_or(20);
+                match self
+                    .bilibili
+                    .search_videos(query, page_size, page_token, 0)
+                    .await
+                {
                     Ok(value) => Ok(value),
                     Err(e) => Ok(bilibili_provider::error_json(&e)),
                 }
@@ -831,12 +874,29 @@ impl Client {
         query: &str,
         limit: i64,
     ) -> Result<Value> {
+        self.search_articles_paged(provider, query, 1, limit).await
+    }
+
+    /// Search one article provider with an explicit page. Article
+    /// providers page by number rather than by token (CSDN —
+    /// currently the only one — takes a 1-based `page`), so this
+    /// is the articles counterpart of
+    /// [`Client::search_media_paged`]. `page` is 1-based; values
+    /// below 1 are clamped to the first page.
+    pub async fn search_articles_paged(
+        &self,
+        provider: ArticleProvider,
+        query: &str,
+        page: u32,
+        limit: i64,
+    ) -> Result<Value> {
         let limit = limit.max(1);
+        let page = page.max(1);
         match provider {
             ArticleProvider::Csdn => Ok(csdn_search::search_articles(
                 &self.csdn,
                 query,
-                1,
+                page,
                 u32::try_from(limit).unwrap_or(20).clamp(1, 50),
                 None,
             )
@@ -889,6 +949,36 @@ impl Client {
     }
 }
 
+/// Trim a YouTube search page's payload to `limit` items, keeping
+/// its continuation token valid (shared by the first-page and
+/// continuation paths).
+fn youtube_page_value(mut value: Value, limit: i64) -> Value {
+    if let Some(items) = value["items"].as_array_mut() {
+        items.truncate(limit as usize);
+        let count = items.len();
+        value["count"] = serde_json::json!(count);
+    }
+    value
+}
+
+/// Extract the pagination token for the next page from a media
+/// search result produced by [`Client::search_media`] /
+/// [`Client::search_media_paged`]. Returns `None` when the result
+/// carries no token (or an empty one) — i.e. there is no next
+/// page. YouTube names the field `next_continuation`, Bilibili
+/// `next`; feed the returned token back as `page_token`.
+pub fn media_next_token(provider: MediaProvider, result: &Value) -> Option<String> {
+    let field = match provider {
+        MediaProvider::YouTube => "next_continuation",
+        MediaProvider::Bilibili => "next",
+    };
+    result
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+}
+
 // ---------------------------------------------------------------------------
 // Free functions (build a Client per call — the zero-config shortcut)
 // ---------------------------------------------------------------------------
@@ -917,4 +1007,30 @@ pub async fn search_media(provider: MediaProvider, query: &str, limit: i64) -> R
 /// Search one article provider with a throwaway client.
 pub async fn search_articles(provider: ArticleProvider, query: &str, limit: i64) -> Result<Value> {
     Client::new()?.search_articles(provider, query, limit).await
+}
+
+/// Search one media provider, following a pagination token, with
+/// a throwaway client.
+pub async fn search_media_paged(
+    provider: MediaProvider,
+    query: &str,
+    limit: i64,
+    page_token: &str,
+) -> Result<Value> {
+    Client::new()?
+        .search_media_paged(provider, query, limit, page_token)
+        .await
+}
+
+/// Search one article provider with an explicit page, with a
+/// throwaway client.
+pub async fn search_articles_paged(
+    provider: ArticleProvider,
+    query: &str,
+    page: u32,
+    limit: i64,
+) -> Result<Value> {
+    Client::new()?
+        .search_articles_paged(provider, query, page, limit)
+        .await
 }

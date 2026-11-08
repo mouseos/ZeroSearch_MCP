@@ -403,10 +403,10 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_exposes_all_89_tools() {
+    fn tools_list_exposes_all_90_tools() {
         let defs = tools::tool_definitions();
         let names: Vec<&str> = defs.iter().filter_map(|d| d["name"].as_str()).collect();
-        assert_eq!(names.len(), 89, "tools: {names:?}");
+        assert_eq!(names.len(), 90, "tools: {names:?}");
         for expected in [
             // web: baidu 5, yahoo 8, bing 7, naver 9, yahoo_us 7, yandex 6
             "baidu_search",
@@ -422,7 +422,7 @@ mod tests {
             "yahoo_us_list_verticals",
             "yandex_web_search",
             "yandex_list_verticals",
-            // shopping: 39
+            // shopping: 40
             "aliexpress_search_products",
             "goofish_search_products",
             "mercari_search_products",
@@ -434,6 +434,7 @@ mod tests {
             "rakuten_get_reviews",
             "qoo10_search_products",
             "qoo10_get_product",
+            "qoo10_suggest_keywords",
             "yshopping_search_products",
             "yshopping_get_product",
             "yshopping_get_reviews",
@@ -481,7 +482,7 @@ mod tests {
         assert!(resp["result"]["isError"].is_null());
         let parsed = result_json(&resp);
         assert_eq!(parsed["server"], json!("ZeroSearch_MCP"));
-        assert_eq!(parsed["tool_count"], json!(89));
+        assert_eq!(parsed["tool_count"], json!(90));
         let cats = parsed["categories"].as_array().unwrap();
         assert_eq!(cats.len(), 4);
         assert_eq!(cats[0]["id"], json!("web"));
@@ -494,7 +495,7 @@ mod tests {
         assert_eq!(cats[3]["id"], json!("articles"));
         assert_eq!(cats[3]["engines"].as_array().unwrap().len(), 1);
         assert_eq!(cats[3]["engines"][0]["id"], json!("csdn"));
-        // Per-engine tool counts: web 5+8+7+9+7+6 = 42, shopping 5+6+7+4+3+3+3+2+3+2 = 38 (+1 shared),
+        // Per-engine tool counts: web 5+8+7+9+7+6 = 42, shopping 5+6+7+4+3+3+3+3+3+2 = 39 (+1 shared),
         // media 4+1 = 5, articles 2.
         let web_tools: usize = cats[0]["engines"]
             .as_array()
@@ -509,7 +510,7 @@ mod tests {
             .iter()
             .map(|e| e["tools"].as_array().unwrap().len())
             .sum();
-        assert_eq!(shop_tools, 38);
+        assert_eq!(shop_tools, 39);
         let media_tools: usize = cats[2]["engines"]
             .as_array()
             .unwrap()
@@ -647,5 +648,255 @@ mod tests {
         let parsed = result_json(&resp);
         assert_eq!(parsed["ok"], json!(true), "{parsed}");
         assert!(!parsed["items"].as_array().unwrap().is_empty());
+    }
+
+    // ── Live e2e for the shopping / media / articles tools ──
+    // These are #[ignore]d: several providers need a Japan-side
+    // egress (Qoo10, Amazon, YouTube from some networks), Goofish
+    // needs an assembled signing-runtime bundle and minutes of
+    // boot time, and none of them should fire on every CI run.
+    // Run them manually, serially:
+    //    cargo test -p zero-search-mcp-server -- --ignored e2e_ --test-threads=1
+
+    /// Shared shape assertion for the product/video/article search
+    /// tools: not a transport error, `ok: true`, non-empty items.
+    fn assert_search_ok(resp: &Value) -> Value {
+        assert!(resp["result"]["isError"].is_null(), "{resp}");
+        let parsed = result_json(resp);
+        assert_eq!(parsed["ok"], json!(true), "{parsed}");
+        assert!(
+            !parsed["items"].as_array().unwrap().is_empty(),
+            "no items: {parsed}"
+        );
+        parsed
+    }
+
+    async fn e2e_search_tool(tool: &str, args: Value) {
+        let p = providers();
+        let resp = call_tool(&p, tool, args).await;
+        assert_search_ok(&resp);
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test"]
+    async fn e2e_aliexpress_search_products() {
+        e2e_search_tool(
+            "aliexpress_search_products",
+            json!({ "query": "headphones", "limit": 3 }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test; needs an assembled goofish-runtime bundle and a minutes-long harness boot"]
+    async fn e2e_goofish_search_products() {
+        e2e_search_tool(
+            "goofish_search_products",
+            json!({ "query": "耳机", "limit": 3 }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test"]
+    async fn e2e_mercari_search_products() {
+        e2e_search_tool(
+            "mercari_search_products",
+            json!({ "query": "カメラ", "limit": 3 }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test"]
+    async fn e2e_yauction_search_products() {
+        e2e_search_tool(
+            "yauction_search_products",
+            json!({ "query": "カメラ", "limit": 3 }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test"]
+    async fn e2e_yflea_search_products() {
+        e2e_search_tool(
+            "yflea_search_products",
+            json!({ "query": "カメラ", "limit": 3 }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test"]
+    async fn e2e_rakuma_search_products() {
+        e2e_search_tool(
+            "rakuma_search_products",
+            json!({ "query": "カメラ", "limit": 3 }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test"]
+    async fn e2e_rakuten_search_products() {
+        e2e_search_tool(
+            "rakuten_search_products",
+            json!({ "query": "コーヒー豆", "limit": 3 }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test; Qoo10 requires Japan-side access in practice"]
+    async fn e2e_qoo10_search_products() {
+        e2e_search_tool(
+            "qoo10_search_products",
+            json!({ "query": "マスク", "limit": 3 }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test; Qoo10 requires Japan-side access in practice"]
+    async fn e2e_qoo10_suggest_keywords() {
+        let p = providers();
+        let resp = call_tool(&p, "qoo10_suggest_keywords", json!({ "keyword": "マスク" })).await;
+        assert!(resp["result"]["isError"].is_null(), "{resp}");
+        let parsed = result_json(&resp);
+        assert_eq!(parsed["ok"], json!(true), "{parsed}");
+        assert!(
+            !parsed["suggestions"].as_array().unwrap().is_empty(),
+            "no suggestions: {parsed}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test"]
+    async fn e2e_yshopping_search_products() {
+        e2e_search_tool(
+            "yshopping_search_products",
+            json!({ "query": "コーヒー", "limit": 3 }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test; Amazon requires Japan-side access in practice"]
+    async fn e2e_amazon_search_products() {
+        e2e_search_tool(
+            "amazon_search_products",
+            json!({ "query": "コーヒー", "limit": 3 }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test; fetched through the bundled browser-grade helper process"]
+    async fn e2e_yahoo_us_image_search() {
+        e2e_search_tool(
+            "yahoo_us_image_search",
+            json!({ "query": "apple", "limit": 3 }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test"]
+    async fn e2e_youtube_search_videos() {
+        let p = providers();
+        let resp = call_tool(
+            &p,
+            "youtube_search_videos",
+            json!({ "query": "rust programming language" }),
+        )
+        .await;
+        let parsed = assert_search_ok(&resp);
+        assert!(parsed["items"][0]["video_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty()));
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test"]
+    async fn e2e_youtube_video_chain() {
+        let p = providers();
+        let resp = call_tool(
+            &p,
+            "youtube_search_videos",
+            json!({ "query": "rust programming language" }),
+        )
+        .await;
+        let parsed = assert_search_ok(&resp);
+        let video_id = parsed["items"][0]["video_id"]
+            .as_str()
+            .expect("search result carries a video_id")
+            .to_string();
+
+        let resp = call_tool(&p, "youtube_get_video", json!({ "video_id": video_id })).await;
+        assert!(resp["result"]["isError"].is_null(), "{resp}");
+        let parsed = result_json(&resp);
+        assert_eq!(parsed["ok"], json!(true), "{parsed}");
+        assert!(parsed["title"].as_str().is_some_and(|t| !t.is_empty()));
+
+        let resp = call_tool(&p, "youtube_get_related", json!({ "video_id": video_id })).await;
+        assert!(resp["result"]["isError"].is_null(), "{resp}");
+        let parsed = result_json(&resp);
+        assert_eq!(parsed["ok"], json!(true), "{parsed}");
+        assert!(
+            !parsed["related"].as_array().unwrap().is_empty(),
+            "no related videos: {parsed}"
+        );
+        // The comments token is absent when the video has comments
+        // disabled; only then is the comments leg skipped.
+        if let Some(token) = parsed["comments_continuation"].as_str() {
+            assert!(!token.is_empty());
+            let resp =
+                call_tool(&p, "youtube_get_comments", json!({ "continuation": token })).await;
+            assert!(resp["result"]["isError"].is_null(), "{resp}");
+            let parsed = result_json(&resp);
+            assert_eq!(parsed["ok"], json!(true), "{parsed}");
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test"]
+    async fn e2e_bilibili_search_videos() {
+        let p = providers();
+        let resp = call_tool(
+            &p,
+            "bilibili_search_videos",
+            json!({ "query": "编程", "limit": 5 }),
+        )
+        .await;
+        let parsed = assert_search_ok(&resp);
+        assert!(parsed["items"][0]["bvid"]
+            .as_str()
+            .is_some_and(|b| !b.is_empty()));
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test"]
+    async fn e2e_csdn_search_and_article() {
+        let p = providers();
+        let resp = call_tool(
+            &p,
+            "csdn_search_articles",
+            json!({ "query": "rust", "limit": 5 }),
+        )
+        .await;
+        let parsed = assert_search_ok(&resp);
+        let article_id = parsed["items"][0]["id"]
+            .as_str()
+            .expect("search result carries an article id")
+            .to_string();
+
+        let resp = call_tool(&p, "csdn_get_article", json!({ "article_id": article_id })).await;
+        assert!(resp["result"]["isError"].is_null(), "{resp}");
+        let parsed = result_json(&resp);
+        assert_eq!(parsed["ok"], json!(true), "{parsed}");
+        assert!(parsed["item"]["title"]
+            .as_str()
+            .is_some_and(|t| !t.is_empty()));
     }
 }

@@ -23,7 +23,7 @@ Rustライブラリとしても使えます。自作ハーネスのデフォル�
 | `media`（メディア） | `youtube`、`bilibili` |
 | `articles`（記事） | `csdn` |
 
-## ツール一覧（全89件）
+## ツール一覧（全90件）
 
 ツール名・引数・返却形式は、統合前の各単体サーバーと完全に同一です。
 
@@ -49,7 +49,7 @@ Rustライブラリとしても使えます。自作ハーネスのデフォル�
 | Yahoo!フリマ（3件） | `yflea_search_products`、`yflea_get_product`、`yflea_get_reviews` |
 | 楽天ラクマ（3件） | `rakuma_search_products`、`rakuma_get_product`、`rakuma_get_reviews` |
 | 楽天市場（3件） | `rakuten_search_products`、`rakuten_get_product`、`rakuten_get_reviews` |
-| Qoo10（2件） | `qoo10_search_products`、`qoo10_get_product` |
+| Qoo10（3件） | `qoo10_search_products`、`qoo10_get_product`、`qoo10_suggest_keywords` |
 | Yahoo!ショッピング（3件） | `yshopping_search_products`、`yshopping_get_product`、`yshopping_get_reviews` |
 | Amazon.co.jp（2件） | `amazon_search_products`、`amazon_get_product` |
 | 共通（1件） | `shopping_list_sources` |
@@ -103,7 +103,7 @@ MCP設定はこれだけです。
 }
 ```
 
-Goofishも例外ではありません。署名ランタイムはサーバーが自動で見つけて起動し、端末の識別情報はサーバー自身が生成します。初回のGoofish呼び出しだけ、署名ランタイムの起動に数分かかることがあります。署名ランタイムの組み立て方法は [runtime/goofish](runtime/goofish/README.md) にあります。
+Goofishも例外ではありません。配布物には署名用の Java ランタイムとハーネスが同梱されています。初回の Goofish 利用時に、サーバーが Goofish のアプリパッケージ（7.28.70、約269MB）をアプリストアの CDN から自動でダウンロードし、SHA-256 で検証して、自分のデータディレクトリに署名ランタイムを組み立てます。端末の識別情報もサーバー自身が生成します。利用者が用意するもの、設定するものはありません。初回だけはダウンロードと署名ランタイムの起動のため、呼び出しに数分から数十分かかることがあります。ディスクは合計で約1GB（同梱ランタイム＋アプリパッケージ＋エミュレータの作業領域）を見込んでください。仕組みの詳細は [runtime/goofish](runtime/goofish/README.md) にあります。
 
 Yahoo (US) の画像検索も同じ考え方です。Yahoo の画像ホストは通常の HTTP クライアントに HTTP 500 を返すため、この検索だけは同梱のヘルパープロセス `zero-search-yahoo-us-image-helper`（サーバーと同じフォルダに置かれます）がブラウザ相当のクライアントでページを取得します。設定は要りません。
 

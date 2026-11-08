@@ -371,11 +371,37 @@ enum LineEvent {
     Eof,
 }
 
+/// Marker error for "the harness process died" (its output closed
+/// underneath us, or it was already gone when we looked). Kept
+/// distinct from every deterministic failure — a malformed ready
+/// line, an SG init rejection, a protocol error reply — because
+/// death is transient in a way those are not: the process may
+/// have been OOM-killed under host memory pressure (the harness
+/// tree was SIGKILLed exactly that way in round 19) or killed
+/// with its process group, and a fresh instance serves normally.
+/// `UnidbgSigner::sign` restarts a dead harness a bounded number
+/// of times; deterministic failures latch exactly as before. This
+/// is about the local subprocess only — it never retries an MTOP
+/// send, so it cannot lift a server-side send halt.
+#[derive(Debug)]
+struct HarnessDied(String);
+
+impl std::fmt::Display for HarnessDied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for HarnessDied {}
+
 struct UnidbgInner {
     child: Option<Child>,
     rx: Option<Receiver<LineEvent>>,
     broken: Option<String>,
     closed: bool,
+    /// How many times a dead harness has been restarted in this
+    /// signer (bounded by `MAX_HARNESS_RESTARTS`).
+    restarts_used: u32,
     /// Wall time the most recent harness start took (ready line
     /// received), for the phase breakdown in issue #2.
     startup_duration: Option<Duration>,
@@ -450,6 +476,11 @@ fn describe_exit(status: &std::process::ExitStatus) -> String {
     }
 }
 
+/// How many times one signer restarts a harness that *died*
+/// (process exit) before giving up and latching the death as its
+/// error. Deterministic failures never consume restarts.
+const MAX_HARNESS_RESTARTS: u32 = 3;
+
 pub struct UnidbgSigner {
     pub command: Vec<String>,
     pub timeout: Duration,
@@ -506,6 +537,7 @@ impl UnidbgSigner {
                 rx: None,
                 broken: None,
                 closed: false,
+                restarts_used: 0,
                 startup_duration: None,
                 spawner_release: None,
             }),
@@ -552,9 +584,13 @@ impl UnidbgSigner {
                 let detail = Self::reap_status(inner)
                     .map(|s| format!(" ({s})"))
                     .unwrap_or_default();
-                Err(anyhow!(
+                // The process is gone: a death, not a verdict.
+                // Typed so `sign` can restart the harness instead
+                // of latching (see HarnessDied).
+                Err(HarnessDied(format!(
                     "unidbg signing harness closed its output during {phase}{detail}: exit"
                 ))
+                .into())
             }
             Err(_) => Err(anyhow!(
                 "unidbg signing harness timed out during {phase} after {}s: timeout",
@@ -664,10 +700,15 @@ impl UnidbgSigner {
     }
 
     /// Start the harness now, without signing anything (pre-warm).
-    /// A no-op when already started. Failures are latched exactly
-    /// like a failed first sign: the signer is marked broken and
-    /// the harness is shut down, so a later sign surfaces the same
-    /// error instead of silently retrying the start.
+    /// A no-op when already started. A deterministic failure (bad
+    /// ready line, SG init rejection, startup timeout) is latched
+    /// exactly like a failed first sign: the signer is marked
+    /// broken and the harness is shut down, so a later sign
+    /// surfaces the same error instead of silently retrying the
+    /// start. A start that ended in the harness's *death* is not
+    /// latched: the error is returned, and a later sign restarts
+    /// the harness (bounded by MAX_HARNESS_RESTARTS across the
+    /// signer's lifetime).
     pub fn ensure_started(&self) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
         if inner.closed {
@@ -678,9 +719,14 @@ impl UnidbgSigner {
         }
         if inner.child.is_none() {
             if let Err(e) = self.start(&mut inner) {
+                let died = e.downcast_ref::<HarnessDied>().is_some();
                 let msg = e.to_string();
-                inner.broken = Some(msg.clone());
                 Self::shutdown(&mut inner);
+                if died && inner.restarts_used < MAX_HARNESS_RESTARTS {
+                    inner.restarts_used += 1;
+                    return Err(anyhow!("{msg}"));
+                }
+                inner.broken = Some(msg.clone());
                 return Err(anyhow!("{msg}"));
             }
         }
@@ -756,9 +802,10 @@ impl UnidbgSigner {
             let child = inner.child.as_mut().expect("child after start");
             if let Ok(Some(status)) = child.try_wait() {
                 let detail = describe_exit(&status);
-                return Err(anyhow!(
+                return Err(HarnessDied(format!(
                     "unidbg signing harness is no longer running ({detail}): exit"
-                ));
+                ))
+                .into());
             }
         }
         let input_str = build_sign_input(request, Some(self.include_ext_data));
@@ -774,10 +821,11 @@ impl UnidbgSigner {
                 .write_all(format!("{payload}\n").as_bytes())
                 .and_then(|_| stdin.flush())
                 .map_err(|e| {
-                    anyhow!(
+                    // A broken pipe here means the harness is gone.
+                    HarnessDied(format!(
                         "could not write to the unidbg signing harness ({}): exit",
                         class_name(&e)
-                    )
+                    ))
                 })?;
         }
         let line = Self::read_line(inner, self.timeout, "sign")?;
@@ -822,16 +870,31 @@ impl Signer for UnidbgSigner {
             return Err(anyhow!("unidbg signer is closed"));
         }
         if let Some(broken) = &inner.broken {
-            // No retry: a failed harness is never restarted silently.
             return Err(anyhow!("{broken}"));
         }
-        match self.sign_locked(&mut inner, request) {
-            Ok(r) => Ok(r),
-            Err(e) => {
-                let msg = e.to_string();
-                inner.broken = Some(msg.clone());
-                Self::shutdown(&mut inner);
-                Err(anyhow!("{msg}"))
+        loop {
+            match self.sign_locked(&mut inner, request) {
+                Ok(r) => return Ok(r),
+                Err(e) => {
+                    // A harness that *died* (process exit — see
+                    // HarnessDied) is restarted in place, bounded
+                    // by MAX_HARNESS_RESTARTS: a fresh instance is
+                    // a new local subprocess, not a new network
+                    // identity, and sign() performs no MTOP send,
+                    // so this cannot lift a server-side send halt.
+                    // Every other failure is deterministic — the
+                    // same start or request would fail the same
+                    // way — and latches exactly as before.
+                    let died = e.downcast_ref::<HarnessDied>().is_some();
+                    let msg = e.to_string();
+                    Self::shutdown(&mut inner);
+                    if died && inner.restarts_used < MAX_HARNESS_RESTARTS {
+                        inner.restarts_used += 1;
+                        continue;
+                    }
+                    inner.broken = Some(msg.clone());
+                    return Err(anyhow!("{msg}"));
+                }
             }
         }
     }
@@ -1283,5 +1346,94 @@ sys.stdout.write("\n")
             !process_alive(grandchild),
             "grandchild {grandchild} survived signer drop"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unidbg_signer_restarts_dead_harness() {
+        // The first harness instance answers one sign and then
+        // dies mid-stream (its output closes). The signer must
+        // restart it in place and serve the next sign from the new
+        // instance — a dead local subprocess is transient, unlike
+        // a deterministic failure.
+        let name = "restart";
+        let dir =
+            std::env::temp_dir().join(format!("gf_unidbg_test_{}_{}", std::process::id(), name));
+        let counter = dir.join("instances");
+        let body = format!(
+            "#!/bin/sh\nn=0\n[ -f '{c}' ] && n=$(cat '{c}')\nn=$((n+1))\necho $n > '{c}'\necho '{{\"ready\": true, \"initRc\": 0, \"appKey\": \"21407387\"}}'\nif [ \"$n\" -eq 1 ]; then\n  IFS= read -r line; echo '{{\"sign\": \"FIRST\"}}'\n  IFS= read -r line; exit 1\nfi\nwhile IFS= read -r line; do echo '{{\"sign\": \"SECOND\"}}'; done\n",
+            c = counter.display()
+        );
+        let signer = UnidbgSigner::with_options(
+            write_shell_script(&body, name),
+            Duration::from_secs(10),
+            false,
+        )
+        .unwrap();
+        let first = signer.sign(&req()).unwrap();
+        assert_eq!(first.sign, "FIRST");
+        let second = signer.sign(&req()).unwrap();
+        assert_eq!(second.sign, "SECOND");
+        let third = signer.sign(&req()).unwrap();
+        assert_eq!(third.sign, "SECOND");
+        let instances: i32 = std::fs::read_to_string(&counter)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(instances, 2, "exactly one restart should have happened");
+        signer.close();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unidbg_signer_restart_cap_latches() {
+        // A harness that dies right after ready on every start:
+        // restarts are bounded (1 initial + MAX_HARNESS_RESTARTS),
+        // then the death latches and later signs fail immediately
+        // without spawning further instances.
+        let name = "crashloop";
+        let dir =
+            std::env::temp_dir().join(format!("gf_unidbg_test_{}_{}", std::process::id(), name));
+        let counter = dir.join("instances");
+        let body = format!(
+            "#!/bin/sh\nn=0\n[ -f '{c}' ] && n=$(cat '{c}')\nn=$((n+1))\necho $n > '{c}'\necho '{{\"ready\": true, \"initRc\": 0, \"appKey\": \"21407387\"}}'\nexit 1\n",
+            c = counter.display()
+        );
+        let signer = UnidbgSigner::with_options(
+            write_shell_script(&body, name),
+            Duration::from_secs(10),
+            false,
+        )
+        .unwrap();
+        let err = signer.sign(&req()).unwrap_err().to_string();
+        // Which death flavour is reported depends on timing: the
+        // already-exited check usually wins over the output EOF, and
+        // on a fast exit the stdin write can fail first. All three
+        // are HarnessDied flavours and are restarted the same way.
+        assert!(
+            err.contains("no longer running")
+                || err.contains("closed its output")
+                || err.contains("could not write"),
+            "{err}"
+        );
+        let instances: i32 = std::fs::read_to_string(&counter)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            instances,
+            1 + MAX_HARNESS_RESTARTS as i32,
+            "restarts must be bounded"
+        );
+        let err2 = signer.sign(&req()).unwrap_err().to_string();
+        assert_eq!(err, err2);
+        let instances2: i32 = std::fs::read_to_string(&counter)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(instances2, instances, "latched death must not respawn");
     }
 }

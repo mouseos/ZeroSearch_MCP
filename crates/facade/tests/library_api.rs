@@ -156,3 +156,39 @@ fn client_constructs_without_configuration() {
     let _ = zero_search::providers::naver_search::PROVIDER;
     let _ = zero_search::providers::yahoo_search::PROVIDER;
 }
+
+#[test]
+fn media_next_token_reads_each_providers_field() {
+    use serde_json::json;
+    // YouTube: `next_continuation`, null/absent at the end.
+    let yt = json!({ "next_continuation": "tok123" });
+    assert_eq!(
+        zero_search::media_next_token(MediaProvider::YouTube, &yt).as_deref(),
+        Some("tok123")
+    );
+    let yt_end = json!({ "next_continuation": null });
+    assert_eq!(
+        zero_search::media_next_token(MediaProvider::YouTube, &yt_end),
+        None
+    );
+    // Bilibili: `next`, empty string at the end.
+    let bili = json!({ "next": "n2" });
+    assert_eq!(
+        zero_search::media_next_token(MediaProvider::Bilibili, &bili).as_deref(),
+        Some("n2")
+    );
+    let bili_end = json!({ "next": "" });
+    assert_eq!(
+        zero_search::media_next_token(MediaProvider::Bilibili, &bili_end),
+        None
+    );
+    // Each provider reads only its own field.
+    assert_eq!(
+        zero_search::media_next_token(MediaProvider::YouTube, &bili),
+        None
+    );
+    assert_eq!(
+        zero_search::media_next_token(MediaProvider::Bilibili, &yt),
+        None
+    );
+}

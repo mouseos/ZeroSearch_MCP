@@ -43,6 +43,15 @@ jobs:
         # so this job stays green regardless of network conditions.
         run: cargo test --workspace -- --skip e2e_
 
+      # manifest.json's tool list is generated from the server's
+      # tools/list (scripts/generate-manifest.py); fail if the
+      # committed copy has drifted from the server again.
+      - name: Manifest freshness
+        if: runner.os == 'Linux'
+        run: |
+          cargo build -p zero-search-mcp-server
+          python3 scripts/generate-manifest.py --check
+
       # The Yahoo US image helper is a standalone crate outside the
       # workspace (its BoringSSL must stay out of the workspace build
       # graph), so it is formatted, linted and tested separately.
