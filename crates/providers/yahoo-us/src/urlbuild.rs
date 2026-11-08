@@ -161,11 +161,7 @@ impl ImageFilters {
 }
 
 /// Build an image-search URL with filters applied (audit W-28).
-pub fn build_image_search_url(
-    query: &str,
-    page: i64,
-    filters: &ImageFilters,
-) -> Result<String> {
+pub fn build_image_search_url(query: &str, page: i64, filters: &ImageFilters) -> Result<String> {
     filters.validate()?;
     let base = build_search_url(query, "image", page)?;
     Ok(format!("{base}{}", filters.query_suffix()))

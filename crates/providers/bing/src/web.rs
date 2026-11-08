@@ -150,9 +150,7 @@ pub fn parse_web_results(value: &Value, limit: usize) -> Result<WebResults> {
                 deep_links,
                 date_last_crawled: raw_str("dateLastCrawled"),
                 language: raw_str("language"),
-                is_family_friendly: entry
-                    .get("isFamilyFriendly")
-                    .and_then(|v| v.as_bool()),
+                is_family_friendly: entry.get("isFamilyFriendly").and_then(|v| v.as_bool()),
                 is_navigational: entry.get("isNavigational").and_then(|v| v.as_bool()),
                 thumbnail_url: raw_str("thumbnailUrl"),
             });

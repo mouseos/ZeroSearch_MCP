@@ -337,7 +337,7 @@ pub fn build_reviews_params(seller_id: &str, page: i32, limit: i32) -> Vec<(Stri
 }
 
 /// Normalize a `reviews/history` response body. Pure, for fixture tests.
-pub fn normalize_reviews_response(body: &Value, seller_id: &str, page: i32, limit: i32) -> Value {
+pub fn normalize_reviews_response(body: &Value, seller_id: &str, page: i32, _limit: i32) -> Value {
     let meta = &body["meta"];
     let reviews: Vec<Value> = body["data"]
         .as_array()

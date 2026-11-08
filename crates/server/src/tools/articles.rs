@@ -50,14 +50,18 @@ pub fn tool_definitions() -> Vec<Value> {
     vec![
         tool_def(
             "csdn_search_articles",
-            "Search CSDN articles through the CSDN app's own gateway API (the same assembled search the Android app uses). Returns article titles, authors, digests, URLs and view counts. Works without login.",
+            "Search CSDN through the CSDN app's own gateway API (the same assembled search the Android app uses, with its search categories). Returns titles, authors, digests, URLs and view counts. Works without login. There is no forum category: the app has no forum search (verified in the current app), so forum/bbs is rejected. The ebook category exists in the app but the server currently returns it empty. search_user_name switches to the app's personal-home search (only for categories all/blog/ask/download/vip, as in the app).",
             json!({
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search keywords. Chinese works best; CSDN is a Chinese developer platform."},
                     "page": {"type": "integer", "minimum": 1, "description": "1-based page (default 1)"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Results per page (default 20)"},
-                    "sort": {"type": "string", "description": "Optional sort key passed to the app's second_rank_name_sort field"}
+                    "category": {"type": "string", "enum": ["all", "blog", "ask", "download", "course", "mall", "ebook", "user", "vip", "special_column"], "description": "Search category (the app's search tabs; default all). all sends the current app's all_v2 form."},
+                    "sort": {"type": "string", "description": "Sort: relevance (default) | latest | popular, or the app's raw second_rank_name_sort values (times_rank, hot_rank)"},
+                    "filter": {"type": "string", "description": "The app's one-button filter: vip_content (blog/course/mall) | accepted (ask)"},
+                    "subfilter": {"type": "string", "description": "Raw subfilter expression; takes precedence over filter"},
+                    "search_user_name": {"type": "string", "description": "Restrict to one author's personal-home search (app channel switch)"}
                 },
                 "required": ["query"]
             }),
@@ -84,8 +88,29 @@ pub async fn dispatch(name: &str, args: &Value, p: &Providers) -> Result<Value> 
             let query = query_param(args)?;
             let page = int_param(args, "page", 1).max(1) as u32;
             let limit = int_param(args, "limit", 20).clamp(1, 50) as u32;
+            let category_name = str_param(args, "category");
+            let category = if category_name.is_empty() {
+                csdn_search::SearchCategory::All
+            } else {
+                csdn_search::SearchCategory::parse(&category_name).ok_or_else(|| {
+                    anyhow!(
+                        "unknown category: {category_name} (valid: all, blog, ask, download, course, mall, ebook, user, vip, special_column; the app has no forum search)"
+                    )
+                })?
+            };
             let sort = args.get("sort").and_then(Value::as_str);
-            Ok(csdn_search::search_articles(&p.csdn, &query, page, limit, sort).await)
+            let filter = args.get("filter").and_then(Value::as_str);
+            let subfilter = args.get("subfilter").and_then(Value::as_str);
+            let search_user_name = args.get("search_user_name").and_then(Value::as_str);
+            let mut options = csdn_search::SearchOptions::new(&query);
+            options.page = page;
+            options.limit = limit;
+            options.category = category;
+            options.sort = sort;
+            options.filter = filter;
+            options.subfilter = subfilter;
+            options.search_user_name = search_user_name;
+            Ok(csdn_search::search_with_options(&p.csdn, &options).await)
         }
         "csdn_get_article" => {
             let article_id = str_param(args, "article_id");

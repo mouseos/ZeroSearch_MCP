@@ -71,7 +71,11 @@ pub fn knowledge_request_json(skills: &[&str]) -> String {
 /// Build the visual-search URL. Empty market/language fall back
 /// to Japan / Japanese, like the rest of the provider.
 pub fn visual_search_url(mkt: &str, setlang: &str) -> String {
-    let mkt = if mkt.trim().is_empty() { "ja-JP" } else { mkt.trim() };
+    let mkt = if mkt.trim().is_empty() {
+        "ja-JP"
+    } else {
+        mkt.trim()
+    };
     let cc = match mkt.rsplit('-').next() {
         Some(cc) if cc.len() == 2 => cc.to_uppercase(),
         _ => "JP".to_string(),
@@ -81,7 +85,10 @@ pub fn visual_search_url(mkt: &str, setlang: &str) -> String {
     } else {
         setlang.trim()
     };
-    format!("{VISUAL_BASE}?appid={VISUAL_APPID}&cc={cc}&setlang={}", urlencode(lang))
+    format!(
+        "{VISUAL_BASE}?appid={VISUAL_APPID}&cc={cc}&setlang={}",
+        urlencode(lang)
+    )
 }
 
 /// Summary of one action inside a result tag.
@@ -227,10 +234,7 @@ mod tests {
             "Bing.App.LiveCamera.Capture"
         );
         assert_eq!(v["knowledgeRequest"]["index"], 1);
-        assert_eq!(
-            v["knowledgeRequest"]["invokedSkills"][0],
-            "ObjectDetection"
-        );
+        assert_eq!(v["knowledgeRequest"]["invokedSkills"][0], "ObjectDetection");
         assert!(visual_search_url("", "").contains("&cc=JP&setlang=ja"));
     }
 

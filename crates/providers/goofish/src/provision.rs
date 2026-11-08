@@ -47,8 +47,7 @@ const MARKER_FILE_NAME: &str = "provision.json";
 const DEFAULT_APK_VERSION: &str = "7.28.70";
 const DEFAULT_APK_URL: &str =
     "https://imtt.dd.qq.com/16891/apk/361C15B2C9BC291581DBE4FF8194A899.apk";
-const DEFAULT_APK_SHA256: &str =
-    "905718aff71859527c53b80c88a971fc47c7aa5e8c1a6d3d661b9e073b837530";
+const DEFAULT_APK_SHA256: &str = "905718aff71859527c53b80c88a971fc47c7aa5e8c1a6d3d661b9e073b837530";
 const DEFAULT_APK_SIZE: u64 = 268_743_306;
 const DEFAULT_MAIN_SO: &str = "libsgmainso-6.7.260202.so";
 /// APK entries extracted into the runtime's `libs/`: the
@@ -393,11 +392,7 @@ fn zip_entries(file: &mut std::fs::File) -> Result<Vec<ZipEntry>, String> {
     Ok(entries)
 }
 
-fn zip_extract_one(
-    file: &mut std::fs::File,
-    entry: &ZipEntry,
-    dest: &Path,
-) -> Result<(), String> {
+fn zip_extract_one(file: &mut std::fs::File, entry: &ZipEntry, dest: &Path) -> Result<(), String> {
     let mut lh = [0u8; 30];
     file.seek(SeekFrom::Start(entry.local_offset))
         .and_then(|_| file.read_exact(&mut lh))
@@ -424,7 +419,12 @@ fn zip_extract_one(
             std::io::copy(&mut decoder, &mut out)
                 .map_err(|e| format!("cannot extract {}: {e}", entry.name))?;
         }
-        other => return Err(format!("{} uses unsupported ZIP method {other}", entry.name)),
+        other => {
+            return Err(format!(
+                "{} uses unsupported ZIP method {other}",
+                entry.name
+            ))
+        }
     }
     Ok(())
 }
@@ -534,8 +534,7 @@ fn write_serve_script(rt: &Path, payload: &PayloadInfo) -> Result<(), String> {
     } else {
         serve_script_unix(rt, payload)
     };
-    std::fs::write(&path, body)
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    std::fs::write(&path, body).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

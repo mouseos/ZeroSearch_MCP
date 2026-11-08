@@ -188,7 +188,16 @@ mod tests {
         // from the page-issued more-API chain (module `more`), and the
         // integrated view has no deeper pages at all. The web view is
         // the exception: it pages through its own bar hrefs (below).
-        for v in ["image", "news", "video", "blog", "integrated", "cafe", "kin", "ai"] {
+        for v in [
+            "image",
+            "news",
+            "video",
+            "blog",
+            "integrated",
+            "cafe",
+            "kin",
+            "ai",
+        ] {
             let err = build_page_url("x", v, 2).unwrap_err();
             assert!(
                 err.to_string().starts_with("unsupported_page:"),
@@ -209,7 +218,10 @@ mod tests {
         assert!(url.contains("start=21"), "{url}");
         assert!(url.contains("sm=mtb_pge"), "{url}");
         let url3 = build_page_url("테스트", "web", 3).unwrap();
-        assert!(url3.contains("page=4") && url3.contains("start=41"), "{url3}");
+        assert!(
+            url3.contains("page=4") && url3.contains("start=41"),
+            "{url3}"
+        );
     }
 
     #[test]

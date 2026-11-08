@@ -69,8 +69,7 @@ pub fn parse_video_page(
 
     let has_next = items.len() as i64 >= PER_PAGE;
 
-    Ok(SearchResult::new("video", query, page, items)
-        .with_next_page(has_next.then_some(page + 1)))
+    Ok(SearchResult::new("video", query, page, items).with_next_page(has_next.then_some(page + 1)))
 }
 
 fn parse_video(algo: &Value) -> Option<VideoItem> {

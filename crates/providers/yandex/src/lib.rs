@@ -131,7 +131,9 @@ pub use video::VideoItem;
 pub use web::WebItem;
 /// Web page parser for saved pages (offline), and the approximate-total
 /// display string Yandex prints on the page.
-pub use web::{approx_total_text, parse_special_cards, parse_web_results, SpecialCard, WebSearchPage};
+pub use web::{
+    approx_total_text, parse_special_cards, parse_web_results, SpecialCard, WebSearchPage,
+};
 
 /// Provider identifier used in every result envelope (`"yandex"`).
 pub const PROVIDER: &str = "yandex";

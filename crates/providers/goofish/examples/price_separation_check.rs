@@ -6,11 +6,14 @@
 //! was never sent without sort, so its effect was never separated.
 //!
 //! This example sends, in ONE client session and in order:
-//!   1. a plain search (no sort, no price) — the baseline;
-//!   2. a price-only search (startPrice/endPrice, NO sort).
+//!
+//! 1. a plain search (no sort, no price) — the baseline;
+//! 2. a price-only search (startPrice/endPrice, NO sort).
+//!
 //! It never sends a sorted search. Run manually with the signing
 //! runtime configured (GOOFISH_SG_SERVE), never in CI:
-//!   cargo run -p shopping-mcp-goofish --example price_separation_check
+//!
+//! `cargo run -p shopping-mcp-goofish --example price_separation_check`
 
 use shopping_mcp_goofish::GoofishClient;
 

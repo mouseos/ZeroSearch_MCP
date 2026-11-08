@@ -355,14 +355,9 @@ impl<F: Fetcher> BaiduClient<F> {
         query: &str,
         page: i64,
     ) -> Result<SinglePageResult, BaiduError> {
-        let url = crate::urlbuild::build_search_url_for_page(
-            query,
-            page,
-            crate::search_url::now_ms(),
-        )
-        .ok_or_else(|| {
-            BaiduError::new(KIND_BAIDU_SEARCH_ERROR, "page must be >= 1")
-        })?;
+        let url =
+            crate::urlbuild::build_search_url_for_page(query, page, crate::search_url::now_ms())
+                .ok_or_else(|| BaiduError::new(KIND_BAIDU_SEARCH_ERROR, "page must be >= 1"))?;
         self.search_page(query, Some(&url)).await
     }
 
@@ -386,13 +381,12 @@ impl<F: Fetcher> BaiduClient<F> {
         vertical: &str,
         query: &str,
     ) -> Result<SinglePageResult, BaiduError> {
-        let url = crate::urlbuild::build_vertical_search_url(vertical, query)
-            .ok_or_else(|| {
-                BaiduError::new(
-                    KIND_BAIDU_SEARCH_ERROR,
-                    format!("unknown vertical '{}'", vertical),
-                )
-            })?;
+        let url = crate::urlbuild::build_vertical_search_url(vertical, query).ok_or_else(|| {
+            BaiduError::new(
+                KIND_BAIDU_SEARCH_ERROR,
+                format!("unknown vertical '{}'", vertical),
+            )
+        })?;
         let response = self.fetcher.fetch(&url).await?;
         let text = String::from_utf8_lossy(&response.body).into_owned();
         if VERIFICATION_MARKERS

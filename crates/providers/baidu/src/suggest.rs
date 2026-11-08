@@ -30,8 +30,8 @@ use crate::errors::*;
 use crate::urlbuild;
 use serde::Serialize;
 use std::time::Duration;
-use tokio::sync::Mutex;
 use std::time::Instant;
+use tokio::sync::Mutex;
 
 pub const SUG_HOST: &str = "https://m.baidu.com";
 pub const INPUTBOX_URL: &str = "https://aigc.baidu.com/publisher/v1/ai/chat/inputbox";
@@ -92,7 +92,10 @@ pub fn parse_sug_response(body: &str) -> Vec<SugEntry> {
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string()),
-            sa: item.get("sa").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            sa: item
+                .get("sa")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
             item_type: item.get("type").and_then(|v| v.as_i64()),
             data: item
                 .get("data")
@@ -185,7 +188,10 @@ pub fn parse_sugrec_response(body: &str) -> Vec<SugRecEntry> {
             if let Some(term) = item.get("term").and_then(|v| v.as_str()) {
                 out.push(SugRecEntry {
                     text: term.to_string(),
-                    sa: item.get("sa").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    sa: item
+                        .get("sa")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                     source: "rs".to_string(),
                 });
             }
@@ -201,7 +207,10 @@ pub fn parse_sugrec_response(body: &str) -> Vec<SugRecEntry> {
             if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
                 out.push(SugRecEntry {
                     text: text.to_string(),
-                    sa: item.get("sa").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    sa: item
+                        .get("sa")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                     source: "rec".to_string(),
                 });
             }
@@ -257,7 +266,10 @@ pub struct InputBoxSug {
 /// business error, never as success).
 pub fn parse_inputbox_response(body: &str) -> Result<InputBoxSug, BaiduError> {
     let value: serde_json::Value = serde_json::from_str(body).map_err(|e| {
-        BaiduError::new(KIND_PARSE_ERROR, format!("inputbox response is not JSON: {}", e))
+        BaiduError::new(
+            KIND_PARSE_ERROR,
+            format!("inputbox response is not JSON: {}", e),
+        )
     })?;
     let errno = value.get("errno").and_then(|v| v.as_i64()).unwrap_or(-1);
     if errno != 0 {
@@ -271,7 +283,10 @@ pub fn parse_inputbox_response(body: &str) -> Result<InputBoxSug, BaiduError> {
             format!("inputbox business error errno={} {}", errno, msg),
         ));
     }
-    let data = value.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    let data = value
+        .get("data")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let chat_sug = data
         .get("chatSug")
         .and_then(|v| v.as_array())
@@ -457,7 +472,10 @@ mod tests {
             url,
             "https://m.baidu.com/suggest?ctl=sug_prefetch&query=%E5%A4%A9%E6%B0%94&v=3&voi=0&wise_csor=2&device_time=1700000000000&span_upgrade=1&event_type=0"
         );
-        assert_eq!(sug_form_body(), vec![("data".to_string(), "{}".to_string())]);
+        assert_eq!(
+            sug_form_body(),
+            vec![("data".to_string(), "{}".to_string())]
+        );
     }
 
     #[test]

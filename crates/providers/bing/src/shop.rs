@@ -67,10 +67,7 @@ fn element_text(el: scraper::ElementRef) -> String {
 }
 
 fn parse_price_value(price_text: &str) -> Option<i64> {
-    let digits: String = price_text
-        .chars()
-        .filter(|c| c.is_ascii_digit())
-        .collect();
+    let digits: String = price_text.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.is_empty() {
         None
     } else {

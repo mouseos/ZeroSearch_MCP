@@ -442,7 +442,10 @@ fn parse_search_item(it: &Value) -> Item {
         review_score: it.pointer("/review/score").and_then(Value::as_f64),
         review_count: it.pointer("/review/numReviews").and_then(Value::as_i64),
         shipping_price: it.pointer("/shipping/price").and_then(Value::as_i64),
-        subtitle: it["subtitle"].as_str().filter(|s| !s.is_empty()).map(str::to_string),
+        subtitle: it["subtitle"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
         genres: parse_genres(it.get("genres")),
         point: it.get("point").filter(|p| p.is_object()).cloned(),
         coupons: it
@@ -598,7 +601,10 @@ pub fn build_product_search_body(params: &ProductSearchParams) -> Value {
         p.insert("productId".into(), json!(v));
     }
     if params.keyword_search_type != 0 {
-        p.insert("keywordSearchType".into(), json!(params.keyword_search_type));
+        p.insert(
+            "keywordSearchType".into(),
+            json!(params.keyword_search_type),
+        );
     }
     if params.genre_information_flag != 0 {
         p.insert(
@@ -1031,10 +1037,7 @@ pub fn build_variant_details_body(params: &VariantDetailsParams) -> Value {
         // ("individualShipping should be boolean!", measured
         // live 2026-11-08); coerce on the way in so values
         // carried over from `get_product` work as-is.
-        if let Some(n) = variant
-            .get("individualShipping")
-            .and_then(Value::as_i64)
-        {
+        if let Some(n) = variant.get("individualShipping").and_then(Value::as_i64) {
             variant["individualShipping"] = json!(n != 0);
         }
         // Each entry must carry variantId and price
@@ -1495,7 +1498,9 @@ impl RakutenClient {
         let body = build_variant_details_body(&params);
         let resp = self.post_bff("variantdetails/get/v5", &body).await?;
         Ok(parse_variant_details_response(
-            &resp, params.shop_id, params.item_id,
+            &resp,
+            params.shop_id,
+            params.item_id,
         ))
     }
 
@@ -1655,9 +1660,14 @@ mod tests {
 
         let (items, _) = parse_search_response(&body);
         let first = &items[0];
-        assert_eq!(first.subtitle.as_deref(), Some("【お買い物マラソン限定P2倍+α】"));
+        assert_eq!(
+            first.subtitle.as_deref(),
+            Some("【お買い物マラソン限定P2倍+α】")
+        );
         let genres = first.genres.as_ref().expect("genres must be extracted");
-        assert!(genres.iter().any(|g| g.name == "ダイエット・健康" && g.id == 100938));
+        assert!(genres
+            .iter()
+            .any(|g| g.name == "ダイエット・健康" && g.id == 100938));
         assert!(genres.iter().all(|g| !g.name.is_empty()));
         let point = first.point.as_ref().expect("point must be extracted");
         assert_eq!(point["shopMultiplier"], json!(2));
@@ -1877,7 +1887,10 @@ mod tests {
         let f = &body["features"];
         assert_eq!(f["shippingInfo"]["params"]["postalCode"], json!("1000001"));
         assert_eq!(f["shippingInfo"]["params"]["shopId"], json!(355510));
-        assert_eq!(f["shippingInfo"]["params"]["variantId"], json!("zk-uzfv-8xax"));
+        assert_eq!(
+            f["shippingInfo"]["params"]["variantId"],
+            json!("zk-uzfv-8xax")
+        );
         assert_eq!(
             f["deliveryCaptionsInfo"]["params"]["prefectureId"],
             json!(0)
@@ -2067,7 +2080,10 @@ mod tests {
         assert_eq!(out["ok"], json!(true), "{out}");
         assert!(out["count"].as_u64().unwrap() > 0);
         for r in out["reviews"].as_array().unwrap() {
-            let rating: i64 = r["rating"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0);
+            let rating: i64 = r["rating"]
+                .as_str()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
             assert!(rating >= 4, "filter min_evaluation violated: {r}");
         }
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;

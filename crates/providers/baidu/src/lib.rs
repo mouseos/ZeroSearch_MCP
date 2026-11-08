@@ -122,12 +122,6 @@ pub mod urlbuild;
 pub mod urls;
 
 pub use client::{BaiduClient, Fetcher, ReqwestFetcher, TransportResponse};
-pub use suggest::{
-    build_sug_url, build_sugrec_rec_payload, build_sugrec_rs_payload, parse_inputbox_response,
-    parse_sug_response, parse_sugrec_response, InputBoxSug, InputBoxSugInfo, SugEntry,
-    SugRecEntry, SuggestClient,
-};
-pub use urlbuild::{build_search_url_for_page, build_vertical_search_url};
 pub use errors::BaiduError;
 pub use models::{
     AggregatedSearch, CardEntry, CardItem, PageInfo, PageRecord, RelatedSearch, ResultEntry,
@@ -135,3 +129,9 @@ pub use models::{
 };
 pub use parser::{parse_search_results, parse_search_results_bytes};
 pub use search_url::build_initial_search_url;
+pub use suggest::{
+    build_sug_url, build_sugrec_rec_payload, build_sugrec_rs_payload, parse_inputbox_response,
+    parse_sug_response, parse_sugrec_response, InputBoxSug, InputBoxSugInfo, SugEntry, SugRecEntry,
+    SuggestClient,
+};
+pub use urlbuild::{build_search_url_for_page, build_vertical_search_url};

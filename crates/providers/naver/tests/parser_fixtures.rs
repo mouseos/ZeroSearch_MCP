@@ -4,10 +4,9 @@
 //! or breaks extraction, the counts and representative fields below move.
 
 use naver_search::{
-    extract_more_url, map_image_items, parse_blog_results, parse_cafe_results,
-    parse_image_results, parse_integrated_results, parse_kin_results, parse_more_response,
-    parse_news_results, parse_suggest_json, parse_video_results, parse_web_results,
-    MorePayload,
+    extract_more_url, map_image_items, parse_blog_results, parse_cafe_results, parse_image_results,
+    parse_integrated_results, parse_kin_results, parse_more_response, parse_news_results,
+    parse_suggest_json, parse_video_results, parse_web_results, MorePayload,
 };
 
 fn fixture(name: &str) -> String {

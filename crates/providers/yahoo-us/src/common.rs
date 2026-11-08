@@ -243,7 +243,8 @@ mod tests {
 
     #[test]
     fn related_queries_come_from_the_first_relitems_group() {
-        let html = r#"{"relItems":[["apple music","apple store"],["apple music","apple store"]],"x":1}"#;
+        let html =
+            r#"{"relItems":[["apple music","apple store"],["apple music","apple store"]],"x":1}"#;
         assert_eq!(parse_related_queries(html), ["apple music", "apple store"]);
         assert!(parse_related_queries("<html></html>").is_empty());
     }

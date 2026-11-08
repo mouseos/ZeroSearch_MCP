@@ -772,11 +772,44 @@ fn build_reviews_result(
     } else {
         item_review["nextOffset"].as_i64()
     };
+    // Aspect (sub-review) summaries from the same itemReview
+    // object (`itemReview.subReviewSummaries`, NOT under
+    // reviewSummary): the ids a caller passes back as
+    // sub_review_id, with their names and per-value counts.
+    let sub_review_summaries: Vec<Value> = item_review["subReviewSummaries"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|s| {
+                    let values: Vec<Value> = s["valueSummaries"]
+                        .as_array()
+                        .map(|vs| {
+                            vs.iter()
+                                .map(|v| {
+                                    json!({
+                                        "id": v["id"],
+                                        "name": v["name"],
+                                        "count": v["count"],
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    json!({
+                        "id": s["id"],
+                        "name": s["name"],
+                        "values": values,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     json!({
         "provider": "yahoo_shopping",
         "ok": true,
         "item_id": item_id,
         "url": url,
+        "subReviewSummaries": sub_review_summaries,
         "total": summary["count"].as_i64(),
         "average_rating": summary["average"].as_f64(),
         "rating_counts": {
@@ -791,6 +824,85 @@ fn build_reviews_result(
         "offset": offset,
         "filtered_count": filtered_count,
         "next_offset": next_offset,
+    })
+}
+
+/// Build the suggest query parameters (round 7 of the analysis:
+/// `Api.GET_SUGGEST`, statically determined and live-verified).
+/// `detailed` is the app's shouldReturnCategoryAndStoreSuggest
+/// flag and drives both `cate` and `da`. `src` is the search
+/// screen's fixed `shp` (the `pmall_zozo` dictionary context is
+/// out of scope). appid / android_version are added by the caller
+/// the same way as the other endpoints.
+pub fn build_suggest_query(keyword: &str, limit: i32, detailed: bool) -> Vec<(String, String)> {
+    let flag = if detailed { "1" } else { "0" };
+    vec![
+        ("p".to_string(), keyword.to_string()),
+        ("src".to_string(), "shp".to_string()),
+        ("cate".to_string(), flag.to_string()),
+        ("da".to_string(), flag.to_string()),
+        ("format".to_string(), "json".to_string()),
+        ("n".to_string(), limit.clamp(1, 20).to_string()),
+    ]
+}
+
+/// Parse a suggest response (`{Result: {keyword, category,
+/// direct, ...}}`) the way the app's SuggestInfoMapper does:
+/// keywords as strings, categories with their ids, directs with
+/// the store id taken from the URL's last path segment. Pure;
+/// unit-tested against the live-captured shape.
+pub fn parse_suggest_response(body: &Value, keyword: &str) -> Value {
+    let result = &body["Result"];
+    let keywords: Vec<Value> = result["keyword"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|k| k.as_str().map(|s| json!(s)))
+                .collect()
+        })
+        .unwrap_or_default();
+    let categories: Vec<Value> = result["category"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|c| {
+                    json!({
+                        "keyword": c["suggest"],
+                        "category_id": c["cid"],
+                        "category": c["cat"],
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let directs: Vec<Value> = result["direct"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|d| {
+                    let url = d["url"].as_str().unwrap_or_default();
+                    let store_id = url
+                        .trim_end_matches('/')
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or_default();
+                    json!({
+                        "title": d["title"],
+                        "url": d["url"],
+                        "image": d["image"],
+                        "store_id": store_id,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    json!({
+        "provider": "yahoo_shopping",
+        "ok": true,
+        "query": keyword,
+        "keywords": keywords,
+        "categories": categories,
+        "directs": directs,
     })
 }
 
@@ -883,6 +995,36 @@ impl YahooShoppingClient {
             items,
             total_available: None,
         })
+    }
+
+    /// Keyword suggestions (`GET_SUGGEST` on the suggest host;
+    /// statically determined and live-verified, analysis round 7).
+    /// Anonymous: the app attaches `Authorization: Bearer ` with an
+    /// empty token for guests, and so does this client.
+    pub async fn suggest_keywords(
+        &self,
+        keyword: &str,
+        limit: i32,
+        detailed: bool,
+    ) -> Result<Value> {
+        let mut query = vec![
+            ("appid".to_string(), APPID.to_string()),
+            ("android_version".to_string(), APP_VERSION.to_string()),
+        ];
+        query.extend(build_suggest_query(keyword, limit, detailed));
+        let resp = self
+            .client
+            .get("https://suggest-shop.yahooapis.jp/Shopping/Suggest/V3/suggester")
+            .query(&query)
+            .header("Authorization", "Bearer ")
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(anyhow!("yahoo shopping suggest returned HTTP {status}"));
+        }
+        let parsed: Value = resp.json().await?;
+        Ok(parse_suggest_response(&parsed, keyword))
     }
 
     pub async fn get_product(&self, params: DetailParams) -> Result<ItemResult> {
@@ -1240,6 +1382,13 @@ mod tests {
         assert_eq!(out["rating_counts"]["1"], json!(58));
         assert_eq!(out["next_offset"], json!(20));
         assert_eq!(out["count"], json!(20));
+        // subReviewSummaries ride along (ids are the sub_review_id
+        // filter values): 29=香り, 137=苦味, 138=酸味 on this item.
+        let subs = out["subReviewSummaries"].as_array().unwrap();
+        assert_eq!(subs.len(), 3);
+        assert_eq!(subs[0]["id"], json!(29));
+        assert_eq!(subs[0]["name"], json!("香り"));
+        assert_eq!(subs[0]["values"][3]["count"], json!(2673));
         let reviews = out["reviews"].as_array().unwrap();
         let first = &reviews[0];
         assert_eq!(first["author"], json!("meg********"));
@@ -1354,6 +1503,55 @@ mod tests {
         assert!(!first["author"].as_str().unwrap().is_empty());
         assert!(!first["body"].as_str().unwrap().is_empty());
         assert!(first["rating"].as_i64().unwrap() >= 1);
+    }
+
+    #[test]
+    fn suggest_query_and_parse() {
+        // Round-7 form: cate/da follow the detailed flag together,
+        // n is the limit, src is the search screen's fixed shp.
+        let q = build_suggest_query("コーヒー", 20, true);
+        let map: std::collections::HashMap<_, _> = q.iter().cloned().collect();
+        assert_eq!(map["p"], "コーヒー");
+        assert_eq!(map["src"], "shp");
+        assert_eq!(map["cate"], "1");
+        assert_eq!(map["da"], "1");
+        assert_eq!(map["format"], "json");
+        assert_eq!(map["n"], "20");
+        let q2 = build_suggest_query("x", 5, false);
+        let map2: std::collections::HashMap<_, _> = q2.iter().cloned().collect();
+        assert_eq!(map2["cate"], "0");
+        assert_eq!(map2["da"], "0");
+
+        // Live-captured shape (2026-11-08, keyword ニトリ): the
+        // direct entry's store id is the URL's last segment.
+        let body = json!({
+            "Result": {
+                "query": "",
+                "keyword": ["ニトリ カラーボックス", "ニトリ 収納"],
+                "category": [
+                    {"suggest": "ニトリ", "cid": 1234, "cat": "家具", "score": null}
+                ],
+                "direct": [{
+                    "url": "https://store.shopping.yahoo.co.jp/nitori-net/",
+                    "type": "store",
+                    "title": "ニトリ Yahoo!店",
+                    "image": "https://shopping.c.yimg.jp/lib/nitori-net/nitori-net_1",
+                    "icon": "",
+                    "start": "20221024",
+                    "end": "20301231"
+                }],
+                "ranking": []
+            }
+        });
+        let out = parse_suggest_response(&body, "ニトリ");
+        assert_eq!(
+            out["keywords"],
+            json!(["ニトリ カラーボックス", "ニトリ 収納"])
+        );
+        assert_eq!(out["categories"][0]["category_id"], json!(1234));
+        assert_eq!(out["categories"][0]["keyword"], json!("ニトリ"));
+        assert_eq!(out["directs"][0]["store_id"], json!("nitori-net"));
+        assert_eq!(out["directs"][0]["title"], json!("ニトリ Yahoo!店"));
     }
 
     #[test]

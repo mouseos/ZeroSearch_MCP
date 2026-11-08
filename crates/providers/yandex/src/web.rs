@@ -161,9 +161,7 @@ pub fn parse_special_cards(html: &str) -> Vec<SpecialCard> {
             continue;
         }
         let kind = fast_name.unwrap_or_else(|| "ad".to_string());
-        let subtype = FAST_SUBTYPE_RE
-            .captures(opening)
-            .map(|c| c[1].to_string());
+        let subtype = FAST_SUBTYPE_RE.captures(opening).map(|c| c[1].to_string());
         let title = TITLE_TEXT_RE
             .captures(block)
             .map(|c| clean_text(&c[1]))

@@ -512,9 +512,8 @@ pub fn build_reviews_url(asin: &str, page: i32) -> String {
 
 static REVIEW_BLOCK_ID_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"id="customer_review-([A-Z0-9]+)""#).unwrap());
-static REVIEW_TITLE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?s)data-hook="review-title".*?<span>([^<]+)</span>"#).unwrap()
-});
+static REVIEW_TITLE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?s)data-hook="review-title".*?<span>([^<]+)</span>"#).unwrap());
 static REVIEW_DATE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"data-hook="review-date"[^>]*>([^<]+)"#).unwrap());
 static REVIEW_BODY_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -1028,7 +1027,10 @@ mod tests {
         let out = parse_suggest_response(text, "イヤホン");
         assert_eq!(out["ok"], serde_json::json!(true));
         assert_eq!(out["count"], serde_json::json!(10));
-        assert_eq!(out["suggestions"][0]["value"], serde_json::json!("イヤホン"));
+        assert_eq!(
+            out["suggestions"][0]["value"],
+            serde_json::json!("イヤホン")
+        );
         assert_eq!(
             out["suggestions"][1]["value"],
             serde_json::json!("イヤホン bluetooth")
@@ -1192,7 +1194,11 @@ mod tests {
         assert!(
             result.items.iter().any(|i| i.product_id == "B0FNRS5WB2"),
             "ASIN not in results: {:?}",
-            result.items.iter().map(|i| &i.product_id).collect::<Vec<_>>()
+            result
+                .items
+                .iter()
+                .map(|i| &i.product_id)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1208,6 +1214,8 @@ mod tests {
         let r = client.get_reviews("B0FNRS5WB2", 1).await.unwrap();
         assert_eq!(r["ok"], serde_json::json!(true), "{r}");
         assert!(r["count"].as_u64().unwrap() > 0, "{r}");
-        assert!(r["reviews"][0]["body"].as_str().is_some_and(|b| !b.is_empty()));
+        assert!(r["reviews"][0]["body"]
+            .as_str()
+            .is_some_and(|b| !b.is_empty()));
     }
 }

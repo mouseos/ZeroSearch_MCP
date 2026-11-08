@@ -76,13 +76,21 @@ pub fn tool_definitions() -> Vec<Value> {
         ),
         tool_def(
             "yahoo_us_image_search",
-            "Search Yahoo (US) images. Returns title, the page the image appears on, the original image URL, a thumbnail, dimensions and the source site. 60 results per page. Pages are fetched by the bundled helper process with a browser-grade client because Yahoo's image host refuses plain HTTP requests.",
+            "Search Yahoo (US) images. Returns title, the page the image appears on, the original image URL, a thumbnail, dimensions and the source site. 60 results per page. Pages are fetched by the bundled helper process with a browser-grade client because Yahoo's image host refuses plain HTTP requests. The optional filters are the image SERP's own filter parameters; related queries found on the page are returned as related_queries.",
             json!({
                 "type": "object",
                 "properties": {
                     "query": query_prop(),
                     "page": {"type": "integer", "description": "1-based page number.", "default": 1},
-                    "limit": {"type": "integer", "description": "Max results to return (1-60).", "default": 20}
+                    "limit": {"type": "integer", "description": "Max results to return (1-60).", "default": 20},
+                    "size": {"type": "string", "enum": ["small", "medium", "large", "wallpaper"], "description": "Image size filter."},
+                    "color": {"type": "string", "enum": ["black", "blue", "brown", "bw", "color", "gray", "green", "orange", "pink", "purple", "red", "teal", "white", "yellow"], "description": "Dominant-colour filter (bw = black & white, color = full colour)."},
+                    "image_type": {"type": "string", "enum": ["clipart", "gif", "linedrawing", "photo", "transparent"], "description": "Image type filter."},
+                    "layout": {"type": "string", "enum": ["square", "tall", "wide"], "description": "Aspect/layout filter."},
+                    "feature": {"type": "string", "enum": ["face", "portrait", "nonprofit"], "description": "Content feature filter."},
+                    "license": {"type": "string", "enum": ["cc", "fmsu", "fmsuc", "fsu", "fsuc", "pd"], "description": "Licence filter (Yahoo's licence codes)."},
+                    "time": {"type": "string", "enum": ["day", "week", "month", "year"], "description": "Recency filter."},
+                    "safesearch": {"type": "string", "enum": ["r", "p"], "description": "SafeSearch setting (the vm parameter): \"r\" = on, \"p\" = off. Omitted leaves the server default in force."}
                 },
                 "required": ["query"]
             }),
@@ -219,17 +227,48 @@ pub async fn dispatch(name: &str, args: &Value, client: &YahooUsSearchClient) ->
             Ok(result) => Ok(serde_json::to_value(result)?),
             Err(e) => Ok(error_result("video", e)),
         },
-        "yahoo_us_image_search" => match client
-            .image_search(
-                &query_param(args)?,
-                int_param(args, "page", 1),
-                int_param(args, "limit", 20),
-            )
-            .await
-        {
-            Ok(result) => Ok(serde_json::to_value(result)?),
-            Err(e) => Ok(error_result("image", e)),
-        },
+        "yahoo_us_image_search" => {
+            let query = query_param(args)?;
+            let page = int_param(args, "page", 1);
+            let limit = int_param(args, "limit", 20);
+            let opt = |key: &str| {
+                let v = str_param(args, key);
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v)
+                }
+            };
+            let filters = yahoo_us_search::ImageFilters {
+                size: opt("size"),
+                color: opt("color"),
+                type_: opt("image_type"),
+                layout: opt("layout"),
+                feature: opt("feature"),
+                license: opt("license"),
+                time: opt("time"),
+                safesearch: opt("safesearch"),
+            };
+            let has_filters = filters.size.is_some()
+                || filters.color.is_some()
+                || filters.type_.is_some()
+                || filters.layout.is_some()
+                || filters.feature.is_some()
+                || filters.license.is_some()
+                || filters.time.is_some()
+                || filters.safesearch.is_some();
+            let result = if has_filters {
+                client
+                    .image_search_filtered(&query, page, limit, &filters)
+                    .await
+            } else {
+                client.image_search(&query, page, limit).await
+            };
+            match result {
+                Ok(result) => Ok(serde_json::to_value(result)?),
+                Err(e) => Ok(error_result("image", e)),
+            }
+        }
         "yahoo_us_news_search" => match client
             .news_search(
                 &query_param(args)?,

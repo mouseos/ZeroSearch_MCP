@@ -9,6 +9,9 @@
 //! the standalone servers this code was merged from.
 
 #![windows_subsystem = "windows"]
+// The tool-definition tables are large `json!` literals (the
+// Yahoo Auctions search schema alone has ~50 properties).
+#![recursion_limit = "256"]
 
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
@@ -19,6 +22,7 @@ mod tools;
 /// what the ported tool modules expect (`crate::Providers`).
 pub struct Providers {
     pub baidu: baidu_search::BaiduClient<baidu_search::ReqwestFetcher>,
+    pub baidu_suggest: baidu_search::SuggestClient,
     pub yahoo: yahoo_search::YahooSearchClient,
     pub bing: bing_search::BingSearchClient,
     pub naver: naver_search::NaverSearchClient,
@@ -72,6 +76,7 @@ impl Providers {
     fn new() -> anyhow::Result<Self> {
         Ok(Self {
             baidu: baidu_search::BaiduClient::new_live(),
+            baidu_suggest: baidu_search::SuggestClient::new(1.0),
             yahoo: yahoo_search::YahooSearchClient::new(),
             bing: bing_search::BingSearchClient::new()?,
             naver: naver_search::NaverSearchClient::new(),
@@ -403,50 +408,79 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_exposes_all_90_tools() {
+    fn tools_list_exposes_all_129_tools() {
         let defs = tools::tool_definitions();
         let names: Vec<&str> = defs.iter().filter_map(|d| d["name"].as_str()).collect();
-        assert_eq!(names.len(), 90, "tools: {names:?}");
+        assert_eq!(names.len(), 129, "tools: {names:?}");
         for expected in [
-            // web: baidu 5, yahoo 8, bing 7, naver 9, yahoo_us 7, yandex 6
+            // web: baidu 6, yahoo 8, bing 10, naver 11, yahoo_us 7, yandex 7
             "baidu_search",
+            "baidu_suggest",
             "baidu_list_sources",
             "yahoo_web_search",
             "yahoo_list_verticals",
             "bing_web_search",
+            "bing_shopping_search",
+            "bing_trending_topics",
+            "bing_visual_search",
             "bing_list_verticals",
             "naver_search",
+            "naver_cafe_search",
+            "naver_kin_search",
             "naver_list_verticals",
             "yahoo_us_web_search",
             "yahoo_us_image_search",
             "yahoo_us_list_verticals",
             "yandex_web_search",
+            "yandex_suggest_endings",
             "yandex_list_verticals",
-            // shopping: 40
+            // shopping: 69
             "aliexpress_search_products",
+            "aliexpress_query_sku",
+            "aliexpress_adjust_sku",
+            "aliexpress_adjust_pdp",
+            "aliexpress_get_store_groups",
+            "aliexpress_get_store_module",
             "goofish_search_products",
+            "goofish_get_similar_items",
+            "goofish_get_category_guide",
+            "goofish_get_fun_comments",
             "mercari_search_products",
             "yauction_search_products",
+            "yauction_get_statistics",
+            "yauction_get_statistics_closed",
+            "yauction_get_seller_profile",
+            "yauction_get_store_profile",
             "yflea_search_products",
             "rakuma_search_products",
             "rakuten_search_products",
             "rakuten_get_product",
             "rakuten_get_reviews",
+            "rakuten_suggest_keywords",
+            "rakuten_search_products_aggregated",
+            "rakuten_get_genre_tree",
+            "rakuten_get_variant_details",
             "qoo10_search_products",
             "qoo10_get_product",
+            "qoo10_get_search_filters",
             "qoo10_suggest_keywords",
             "yshopping_search_products",
             "yshopping_get_product",
             "yshopping_get_reviews",
+            "yshopping_suggest_keywords",
             "amazon_search_products",
             "amazon_get_product",
+            "amazon_suggest_keywords",
             "shopping_list_sources",
-            // media: youtube 4, bilibili 1
+            // media: youtube 5, bilibili 3
             "youtube_search_videos",
             "youtube_get_video",
             "youtube_get_related",
+            "youtube_get_captions",
             "youtube_get_comments",
             "bilibili_search_videos",
+            "bilibili_get_video",
+            "bilibili_get_related",
             // articles: csdn 2
             "csdn_search_articles",
             "csdn_get_article",
@@ -482,7 +516,7 @@ mod tests {
         assert!(resp["result"]["isError"].is_null());
         let parsed = result_json(&resp);
         assert_eq!(parsed["server"], json!("ZeroSearch_MCP"));
-        assert_eq!(parsed["tool_count"], json!(90));
+        assert_eq!(parsed["tool_count"], json!(129));
         let cats = parsed["categories"].as_array().unwrap();
         assert_eq!(cats.len(), 4);
         assert_eq!(cats[0]["id"], json!("web"));
@@ -495,29 +529,29 @@ mod tests {
         assert_eq!(cats[3]["id"], json!("articles"));
         assert_eq!(cats[3]["engines"].as_array().unwrap().len(), 1);
         assert_eq!(cats[3]["engines"][0]["id"], json!("csdn"));
-        // Per-engine tool counts: web 5+8+7+9+7+6 = 42, shopping 5+6+7+4+3+3+3+3+3+2 = 39 (+1 shared),
-        // media 4+1 = 5, articles 2.
+        // Per-engine tool counts: web 6+8+10+11+7+7 = 49, shopping 10+19+7+8+3+3+7+4+4+3 = 68 (+1 shared),
+        // media 5+3 = 8, articles 2.
         let web_tools: usize = cats[0]["engines"]
             .as_array()
             .unwrap()
             .iter()
             .map(|e| e["tools"].as_array().unwrap().len())
             .sum();
-        assert_eq!(web_tools, 42);
+        assert_eq!(web_tools, 49);
         let shop_tools: usize = cats[1]["engines"]
             .as_array()
             .unwrap()
             .iter()
             .map(|e| e["tools"].as_array().unwrap().len())
             .sum();
-        assert_eq!(shop_tools, 39);
+        assert_eq!(shop_tools, 68);
         let media_tools: usize = cats[2]["engines"]
             .as_array()
             .unwrap()
             .iter()
             .map(|e| e["tools"].as_array().unwrap().len())
             .sum();
-        assert_eq!(media_tools, 5);
+        assert_eq!(media_tools, 8);
         let article_tools: usize = cats[3]["engines"]
             .as_array()
             .unwrap()
@@ -648,6 +682,51 @@ mod tests {
         let parsed = result_json(&resp);
         assert_eq!(parsed["ok"], json!(true), "{parsed}");
         assert!(!parsed["items"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test"]
+    async fn e2e_baidu_suggest() {
+        let p = providers();
+        let resp = call_tool(&p, "baidu_suggest", json!({ "query": "天气" })).await;
+        assert!(resp["result"]["isError"].is_null(), "{resp}");
+        let parsed = result_json(&resp);
+        assert_eq!(parsed["ok"], json!(true), "{parsed}");
+        assert!(
+            !parsed["suggestions"].as_array().unwrap().is_empty(),
+            "no suggestions: {parsed}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test"]
+    async fn e2e_naver_cafe_and_kin_search() {
+        let p = providers();
+        for tool in ["naver_cafe_search", "naver_kin_search"] {
+            let resp = call_tool(&p, tool, json!({ "query": "맛집", "limit": 3 })).await;
+            assert!(resp["result"]["isError"].is_null(), "{tool}: {resp}");
+            let parsed = result_json(&resp);
+            assert_eq!(parsed["ok"], json!(true), "{tool}: {parsed}");
+            assert!(
+                !parsed["items"].as_array().unwrap().is_empty(),
+                "{tool} returned no items: {parsed}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test; Yandex may answer with a captcha, which stops further sends"]
+    async fn e2e_yandex_suggest_endings() {
+        let p = providers();
+        let resp = call_tool(
+            &p,
+            "yandex_suggest_endings",
+            json!({ "query": "пого", "limit": 3 }),
+        )
+        .await;
+        assert!(resp["result"]["isError"].is_null(), "{resp}");
+        let parsed = result_json(&resp);
+        assert_eq!(parsed["ok"], json!(true), "{parsed}");
     }
 
     // ── Live e2e for the shopping / media / articles tools ──

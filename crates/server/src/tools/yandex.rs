@@ -50,13 +50,14 @@ pub fn tool_definitions() -> Vec<Value> {
     vec![
         tool_def(
             "yandex_web_search",
-            "Search the Yandex web index. Best general-purpose tool for finding Russian-language web pages, shops, official sites and documentation. Returns title, destination URL, displayed path and snippet. About 10 organic results per page; page is 1-based.",
+            "Search the Yandex web index. Best general-purpose tool for finding Russian-language web pages, shops, official sites and documentation. Returns title, destination URL, displayed path and snippet. About 10 organic results per page; page is 1-based (the session flow is verified live for the first two pages). With include_special_cards the result also carries the page's non-organic cards (AI answer, ad blocks, related searches) under special_cards.",
             json!({
                 "type": "object",
                 "properties": {
                     "query": query_prop(),
                     "page": {"type": "integer", "description": "1-based page number.", "default": 1},
-                    "limit": {"type": "integer", "description": "Max results to return (1-10).", "default": 10}
+                    "limit": {"type": "integer", "description": "Max results to return (1-10).", "default": 10},
+                    "include_special_cards": {"type": "boolean", "description": "Also return the page's special cards (AI answer, ads, related searches).", "default": false}
                 },
                 "required": ["query"]
             }),
@@ -90,6 +91,18 @@ pub fn tool_definitions() -> Vec<Value> {
         tool_def(
             "yandex_suggest",
             "Get Yandex autocomplete suggestions for a partial query. Useful for discovering how Russian users actually phrase a topic before running a full search.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Partial query to complete."},
+                    "limit": {"type": "integer", "description": "Max suggestions to return (1-20).", "default": 10}
+                },
+                "required": ["query"]
+            }),
+        ),
+        tool_def(
+            "yandex_suggest_endings",
+            "Get Yandex query-ending suggestions: the completions the search box offers for how a query could end (the suggest service's endings mode), as opposed to yandex_suggest's whole-query completions.",
             json!({
                 "type": "object",
                 "properties": {
@@ -179,17 +192,26 @@ fn error_result(vertical: &str, e: anyhow::Error) -> Value {
 
 pub async fn dispatch(name: &str, args: &Value, client: &YandexSearchClient) -> Result<Value> {
     match name {
-        "yandex_web_search" => match client
-            .web_search(
-                &query_param(args)?,
-                int_param(args, "page", 1),
-                int_param(args, "limit", 10),
-            )
-            .await
-        {
-            Ok(result) => Ok(serde_json::to_value(result)?),
-            Err(e) => Ok(error_result("web", e)),
-        },
+        "yandex_web_search" => {
+            let query = query_param(args)?;
+            let page = int_param(args, "page", 1);
+            let limit = int_param(args, "limit", 10);
+            let special = args
+                .get("include_special_cards")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if special {
+                match client.web_search_detailed(&query, page, limit).await {
+                    Ok(result) => Ok(serde_json::to_value(result)?),
+                    Err(e) => Ok(error_result("web", e)),
+                }
+            } else {
+                match client.web_search(&query, page, limit).await {
+                    Ok(result) => Ok(serde_json::to_value(result)?),
+                    Err(e) => Ok(error_result("web", e)),
+                }
+            }
+        }
         "yandex_image_search" => match client
             .image_search(
                 &query_param(args)?,
@@ -218,6 +240,13 @@ pub async fn dispatch(name: &str, args: &Value, client: &YandexSearchClient) -> 
         {
             Ok(result) => Ok(serde_json::to_value(result)?),
             Err(e) => Ok(error_result("suggest", e)),
+        },
+        "yandex_suggest_endings" => match client
+            .suggest_endings(&query_param(args)?, int_param(args, "limit", 10))
+            .await
+        {
+            Ok(result) => Ok(serde_json::to_value(result)?),
+            Err(e) => Ok(error_result("suggest_endings", e)),
         },
         "yandex_build_search_url" => {
             let query = query_param(args)?;

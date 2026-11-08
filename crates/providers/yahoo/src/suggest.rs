@@ -20,8 +20,7 @@ use crate::YahooSearchClient;
 /// `gen` / `yob` are only sent for signed-in users (they carry
 /// profile data), so the anonymous reproduction omits them, as the
 /// native-protocol audit prescribes.
-const ENDPOINT: &str =
-    "https://assist-search.yahooapis.jp/SuggestSearchService/V5/webassistSearch";
+const ENDPOINT: &str = "https://assist-search.yahooapis.jp/SuggestSearchService/V5/webassistSearch";
 const REFERER: &str = "https://search.yahoo.co.jp/";
 
 /// Build the suggest request URL in the app's parameter form.

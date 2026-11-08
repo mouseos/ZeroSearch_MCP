@@ -640,6 +640,7 @@ impl Client {
                     color_ids: String::new(),
                     item_types: String::new(),
                     exclude_auction: false,
+                    ..Default::default()
                 };
                 Ok(self.mercari.search_products(params).await?)
             }
@@ -659,6 +660,7 @@ impl Client {
                     buynow_only: false,
                     free_shipping: false,
                     condition: String::new(),
+                    ..Default::default()
                 };
                 let result = self.yauction.search(params).await?;
                 Ok(serde_json::to_value(result)?)

@@ -122,7 +122,9 @@ pub use kin::{parse_kin_results, KinItem};
 pub use more::{extract_more_url, parse_more_response, MorePayload, MAX_PAGE};
 pub use news::{parse_news_results, NewsItem};
 pub use search::{parse_integrated_results, IntegratedItem, IntegratedResult, IntegratedSection};
-pub use suggest::{parse_suggest_json, parse_suggest_response, ParsedSuggest, SuggestResult, Suggestion};
+pub use suggest::{
+    parse_suggest_json, parse_suggest_response, ParsedSuggest, SuggestResult, Suggestion,
+};
 pub use urlbuild::{build_page_url, build_search_url, suggest_url};
 pub use video::{parse_video_results, VideoItem};
 pub use web::{parse_web_results, WebItem};
@@ -250,9 +252,9 @@ impl NaverSearchClient {
 /// Static description of the searchable verticals as a JSON value —
 /// powers the `naver_list_verticals` MCP tool so an agent can pick the
 /// right one, and doubles as machine-readable documentation for library
-/// users. The cafe (카페) and Q&A (지식iN) tabs exist in the app but were
-/// not verified over plain HTTP, so they are listed as unsupported
-/// rather than advertised.
+/// users. The cafe (카페) and Q&A (지식iN) tabs are implemented for
+/// their first page (their continuations are not page-issued URLs),
+/// and are listed with `paginated: false`.
 pub fn verticals() -> Value {
     serde_json::json!({
         "provider": PROVIDER,

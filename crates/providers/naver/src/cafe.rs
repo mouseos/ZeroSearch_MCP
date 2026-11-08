@@ -26,13 +26,11 @@ use crate::{NaverSearchClient, SearchResult};
 
 static ITEM_SEL: LazyLock<Selector> =
     LazyLock::new(|| Selector::parse("section.sp_ncafe li.bx").unwrap());
-static TITLE_SEL: LazyLock<Selector> =
-    LazyLock::new(|| Selector::parse(".title_area a").unwrap());
+static TITLE_SEL: LazyLock<Selector> = LazyLock::new(|| Selector::parse(".title_area a").unwrap());
 static DSC_SEL: LazyLock<Selector> = LazyLock::new(|| Selector::parse(".dsc_area a").unwrap());
 static NAME_SEL: LazyLock<Selector> =
     LazyLock::new(|| Selector::parse(".user_info a.name").unwrap());
-static USERINFO_SEL: LazyLock<Selector> =
-    LazyLock::new(|| Selector::parse(".user_info").unwrap());
+static USERINFO_SEL: LazyLock<Selector> = LazyLock::new(|| Selector::parse(".user_info").unwrap());
 static THUMB_SEL: LazyLock<Selector> =
     LazyLock::new(|| Selector::parse(".mod_ugc_thumb_area img").unwrap());
 

@@ -6135,7 +6135,7 @@ dependencies = [
 
 [[package]]
 name = "zero-search"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "baidu-mcp-provider",
@@ -6174,10 +6174,11 @@ dependencies = [
 
 [[package]]
 name = "zero-search-mcp-server"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "baidu-mcp-provider",
+ "base64 0.22.1",
  "bilibili-provider",
  "bing-mcp-provider",
  "csdn-provider",

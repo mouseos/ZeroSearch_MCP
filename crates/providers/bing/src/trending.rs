@@ -51,7 +51,11 @@ pub struct TrendingTopic {
 /// Build the trending-topics URL. Empty market/language fall back
 /// to Japan / Japanese, like the rest of the provider.
 pub fn trending_url(mkt: &str, setlang: &str) -> String {
-    let mkt = if mkt.trim().is_empty() { "ja-JP" } else { mkt.trim() };
+    let mkt = if mkt.trim().is_empty() {
+        "ja-JP"
+    } else {
+        mkt.trim()
+    };
     let cc = match mkt.rsplit('-').next() {
         Some(cc) if cc.len() == 2 => cc.to_uppercase(),
         _ => "JP".to_string(),

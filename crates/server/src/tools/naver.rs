@@ -130,6 +130,32 @@ pub fn tool_definitions() -> Vec<Value> {
             }),
         ),
         tool_def(
+            "naver_cafe_search",
+            "Search the Naver Cafe tab (community posts). Returns title, post URL, cafe name, relative publish time and snippet. Only the first page exists as a server-rendered page (the app's continuation is a native API this build does not reproduce), so page > 1 is an explicit error.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": query_prop(),
+                    "page": page_prop(),
+                    "limit": {"type": "integer", "description": "Max posts to return (1-30).", "default": 10}
+                },
+                "required": ["query"]
+            }),
+        ),
+        tool_def(
+            "naver_kin_search",
+            "Search the Naver 지식iN (knowledge Q&A) tab. Returns question title, URL, relative publish time, snippet, answer count, category and the status badge (e.g. 답변완료). Only the first page exists as a server-rendered page, so page > 1 is an explicit error.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": query_prop(),
+                    "page": page_prop(),
+                    "limit": {"type": "integer", "description": "Max questions to return (1-30).", "default": 10}
+                },
+                "required": ["query"]
+            }),
+        ),
+        tool_def(
             "naver_suggest",
             "Get Naver autocomplete suggestions for a partial query. Useful for discovering how Korean users actually phrase a topic before running a full search.",
             json!({
@@ -300,6 +326,28 @@ pub async fn dispatch(name: &str, args: &Value, client: &NaverSearchClient) -> R
             Ok(result) => Ok(serde_json::to_value(result)?),
             Err(e) => Ok(error_result("blog", e)),
         },
+        "naver_cafe_search" => match client
+            .cafe_search(
+                &query_param(args)?,
+                int_param(args, "page", 1),
+                int_param(args, "limit", 10),
+            )
+            .await
+        {
+            Ok(result) => Ok(serde_json::to_value(result)?),
+            Err(e) => Ok(error_result("cafe", e)),
+        },
+        "naver_kin_search" => match client
+            .kin_search(
+                &query_param(args)?,
+                int_param(args, "page", 1),
+                int_param(args, "limit", 10),
+            )
+            .await
+        {
+            Ok(result) => Ok(serde_json::to_value(result)?),
+            Err(e) => Ok(error_result("kin", e)),
+        },
         "naver_suggest" => match client.suggest(&query_param(args)?).await {
             Ok(result) => Ok(serde_json::to_value(result)?),
             Err(e) => Ok(error_result("suggest", e)),
@@ -383,6 +431,6 @@ mod tests {
             assert!(tool["description"].as_str().unwrap().len() > 40);
             assert_eq!(tool["inputSchema"]["type"], "object");
         }
-        assert_eq!(tool_definitions().len(), 9);
+        assert_eq!(tool_definitions().len(), 11);
     }
 }

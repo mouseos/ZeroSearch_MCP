@@ -291,6 +291,97 @@ fn parse_goods(g: &Value) -> Item {
 
 /// Parse a `GetMoveSearchData` response. Pure; unit-tested
 /// against the captured live responses.
+/// Normalize a `GetMoveSearchFilterInfo` response (`{d:
+/// MoveFilterData}`) into the filter-code listing the tool returns.
+/// Shapes follow the live capture of 2026-11-08 (analysis round 2):
+/// brand/price/color/shippingFrom/review carry `items` arrays,
+/// category is the lc/mc/sc tree, attributeDetail carries the
+/// attribute groups, and coupon/freeShipping are `{id, title}`
+/// toggles whose ids are the search field names.
+pub fn parse_search_filters_response(body: &Value, keyword: &str) -> Value {
+    let d = &body["d"];
+    let items_of = |v: &Value| -> Vec<Value> { v["items"].as_array().cloned().unwrap_or_default() };
+    let brand_items = {
+        let b = items_of(&d["brand"]);
+        if b.is_empty() {
+            items_of(&d["itemBrandFilter"])
+        } else {
+            b
+        }
+    };
+    let brands: Vec<Value> = brand_items
+        .iter()
+        .map(|b| json!({"name": b["name"], "code": b["code"]}))
+        .collect();
+    let price_ranges: Vec<Value> = items_of(&d["price"])
+        .iter()
+        .map(|p| {
+            json!({
+                "label": p["name"],
+                "min_price": p["minPrice"],
+                "max_price": p["maxPrice"],
+            })
+        })
+        .collect();
+    let colors: Vec<Value> = items_of(&d["color"])
+        .iter()
+        .map(|c| json!({"code": c["code"], "hex": c["hexColor"]}))
+        .collect();
+    let shipping_from: Vec<Value> = items_of(&d["shippingFrom"])
+        .iter()
+        .map(|s| json!({"name": s["name"], "code": s["code"]}))
+        .collect();
+    let review_scores: Vec<Value> = items_of(&d["review"])
+        .iter()
+        .map(|r| json!({"label": r["name"], "value": r["value"]}))
+        .collect();
+    let attributes: Vec<Value> = items_of(&d["attributeDetail"])
+        .iter()
+        .map(|group| {
+            let options: Vec<Value> = group["attributes"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .map(|a| {
+                    let details: Vec<Value> = a["details"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|det| json!({"name": det["name"], "value": det["value"]}))
+                        .collect();
+                    json!({"name": a["name"], "value": a["value"], "details": details})
+                })
+                .collect();
+            json!({"name": group["name"], "attributes": options})
+        })
+        .collect();
+    let mut toggles: Vec<String> = Vec::new();
+    for key in ["coupon", "freeShipping"] {
+        if let Some(id) = d[key]["id"].as_str() {
+            toggles.push(id.to_string());
+        }
+    }
+    json!({
+        "provider": "qoo10",
+        "ok": true,
+        "query": keyword,
+        "brands": brands,
+        "price_ranges": price_ranges,
+        "colors": colors,
+        "categories": {
+            "lc": d["category"]["lc"],
+            "mc": d["category"]["mc"],
+            "sc": d["category"]["sc"],
+        },
+        "shipping_from": shipping_from,
+        "review_scores": review_scores,
+        "attributes": attributes,
+        "toggles": toggles,
+    })
+}
+
 pub fn parse_search_response(body: &Value) -> (Vec<Item>, Option<i64>, Option<i64>, bool) {
     let d = &body["d"];
     let total = d["totalCount"].as_i64();
@@ -499,6 +590,54 @@ impl Qoo10Client {
         }))
     }
 
+    /// Search filter information (`GetMoveSearchFilterInfo`, the
+    /// app's filter-popup data source; request form statically
+    /// determined and live-verified in round 2 of the analysis):
+    /// the brand / colour / price-band / category / shipping-from /
+    /// review-score / attribute codes that `search_products`
+    /// accepts as filter values for this keyword context. The body
+    /// is the search body form with page_no 1 / page_size 30 /
+    /// sort 0, as the app's filter flow builds it.
+    pub async fn get_search_filters(
+        &self,
+        keyword: &str,
+        category: &str,
+        brand: &[String],
+    ) -> Result<Value> {
+        let mut params = SearchParams {
+            query: keyword.to_string(),
+            page: 1,
+            limit: 30,
+            sort: 0,
+            search_sub_keyword: String::new(),
+            brand: brand.to_vec(),
+            category: category.to_string(),
+            free_shipping: String::new(),
+            min_price: String::new(),
+            max_price: String::new(),
+            official_shop: String::new(),
+            promotion_yn: String::new(),
+            shipping_from: Vec::new(),
+            review_score: String::new(),
+            color: Vec::new(),
+            attribute: Vec::new(),
+            coupon_label: String::new(),
+            keyword_type: String::new(),
+            sell_cust_no: String::new(),
+            nosearch_yn: "N".to_string(),
+            page_type: String::new(),
+            filter_type: String::new(),
+            seller_promotion_no: String::new(),
+            only_total_count: String::new(),
+            last_section: String::new(),
+            related_bg_color: String::new(),
+        };
+        params.page = 1;
+        let body = build_search_body(&params);
+        let resp = self.post_qapi("GetMoveSearchFilterInfo", &body).await?;
+        Ok(parse_search_filters_response(&resp, keyword))
+    }
+
     pub async fn get_product(&self, product: &str) -> Result<ItemResult> {
         let gd_no = extract_gd_no(product);
         let url = if product.contains("goodscode=") {
@@ -675,6 +814,46 @@ mod tests {
     fn detail_error_page_is_not_a_product() {
         let html = "<html><head><title>523 Error</title></head><body>523 Error</body></html>";
         assert!(parse_detail_html(html, "1", "https://m.qoo10.jp/x").is_none());
+    }
+
+    #[test]
+    fn test_parse_search_filters_response() {
+        // Shape follows the live capture described in analysis
+        // round 2 (keyword マスク): every section present, one entry
+        // each, plus the two {id, title} toggles.
+        let body = json!({
+            "d": {
+                "brand": {"items": [{"name": "ブランドA", "nameEn": "Brand A", "code": "B001"}]},
+                "price": {"items": [{"name": "~ 1,110円", "minPrice": 0, "maxPrice": 1110}]},
+                "color": {"items": [{"hexColor": "#000000", "code": "C01"}]},
+                "category": {"lc": [{"CategoryCode": "1"}], "mc": [], "sc": [{"CategoryCode": "11"}]},
+                "shippingFrom": {"items": [{"name": "国内", "code": "JP"}]},
+                "review": {"items": [{"name": "4.5以上", "value": "4.5"}]},
+                "attributeDetail": {"items": [{"name": "サイズ", "attributes": [{"name": "容量", "value": "GATR0001", "details": [{"name": "500ml", "value": "ATR0009"}]}]}]},
+                "coupon": {"id": "coupon_label", "title": "クーポン"},
+                "freeShipping": {"id": "free_shipping", "title": "送料無料"}
+            }
+        });
+        let out = parse_search_filters_response(&body, "マスク");
+        assert_eq!(out["brands"][0]["code"], "B001");
+        assert_eq!(out["price_ranges"][0]["max_price"], 1110);
+        assert_eq!(out["colors"][0]["hex"], "#000000");
+        assert_eq!(out["categories"]["lc"][0]["CategoryCode"], "1");
+        assert_eq!(out["shipping_from"][0]["code"], "JP");
+        assert_eq!(out["review_scores"][0]["value"], "4.5");
+        assert_eq!(
+            out["attributes"][0]["attributes"][0]["details"][0]["value"],
+            "ATR0009"
+        );
+        assert_eq!(out["toggles"], json!(["coupon_label", "free_shipping"]));
+        // Empty/absent sections normalize to empty lists, and the
+        // itemBrandFilter fallback supplies brands.
+        let out2 = parse_search_filters_response(
+            &json!({"d": {"itemBrandFilter": {"items": [{"name": "B", "code": "B9"}]}}}),
+            "x",
+        );
+        assert_eq!(out2["brands"][0]["code"], "B9");
+        assert_eq!(out2["price_ranges"], json!([]));
     }
 
     #[tokio::test]

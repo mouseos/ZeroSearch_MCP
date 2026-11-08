@@ -74,12 +74,25 @@ pub fn tool_definitions() -> Vec<Value> {
         ),
         tool_def(
             "baidu_search_page",
-            "Fetch and parse exactly one Baidu search-result page. With page_url omitted the first-page URL is built from query; otherwise page_url is fetched as-is (server-issued pagination URL). Failures return {provider, ok:false, error:{kind,message,url,status_code}} with the Python client's error kind.",
+            "Fetch and parse exactly one Baidu search-result page. With page_url omitted the first-page URL is built from query; otherwise page_url is fetched as-is (server-issued pagination URL). The optional page (1-based) builds the URL for that page instead (pn offset), taking precedence over page_url. Failures return {provider, ok:false, error:{kind,message,url,status_code}} with the Python client's error kind.",
             json!({
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query (aliases: q, keyword)"},
-                    "page_url": {"type": "string", "description": "Optional server-issued page URL to fetch as-is"}
+                    "page_url": {"type": "string", "description": "Optional server-issued page URL to fetch as-is"},
+                    "page": {"type": "integer", "minimum": 1, "description": "Optional 1-based page number; the page URL is built from the query (page 1 is the initial URL, later pages use the pn offset)"}
+                },
+                "required": ["query"]
+            }),
+        ),
+        tool_def(
+            "baidu_suggest",
+            "Fetch Baidu search suggestions from the app's three suggestion systems: classic (the classic sug endpoint — on current server behaviour this returns an HTTP error, recorded per-system), recommendations (SugRec related/guess words) and inputbox (the AI input box: chat suggestions and content groups). With system omitted all three are queried and per-system failures are recorded in the systems field instead of failing the call.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Partial query text (aliases: q, keyword)"},
+                    "system": {"type": "string", "enum": ["classic", "recommendations", "inputbox"], "description": "Optional: query only this suggestion system instead of all three"}
                 },
                 "required": ["query"]
             }),
@@ -131,6 +144,7 @@ fn tool_def(name: &str, description: &str, input_schema: Value) -> Value {
 pub const TOOL_NAMES: &[&str] = &[
     "baidu_search",
     "baidu_search_page",
+    "baidu_suggest",
     "baidu_parse_search_results",
     "baidu_build_search_url",
     "baidu_list_sources",
@@ -157,6 +171,21 @@ pub async fn dispatch(tool: &str, args: &Value, p: &Providers) -> Result<Value> 
             if query.is_empty() {
                 anyhow::bail!("query is required");
             }
+            if let Some(page) = opt_i64(args, "page") {
+                return match p.baidu.search_page_at(&query, page).await {
+                    Ok(single) => Ok(with_provider(single.to_value(), true)),
+                    Err(e) => Ok(json!({
+                        "provider": "baidu",
+                        "ok": false,
+                        "error": {
+                            "kind": e.kind,
+                            "message": e.message,
+                            "url": e.url,
+                            "status_code": e.status_code,
+                        }
+                    })),
+                };
+            }
             let page_url = opt_str_param(args, "page_url").filter(|s| !s.is_empty());
             match p.baidu.search_page(&query, page_url.as_deref()).await {
                 Ok(single) => Ok(with_provider(single.to_value(), true)),
@@ -171,6 +200,119 @@ pub async fn dispatch(tool: &str, args: &Value, p: &Providers) -> Result<Value> 
                     }
                 })),
             }
+        }
+        "baidu_suggest" => {
+            let query = query_param(args);
+            if query.is_empty() {
+                anyhow::bail!("query is required");
+            }
+            let system = opt_str_param(args, "system").filter(|s| !s.is_empty());
+            let want = |name: &str| system.as_deref().map(|s| s == name).unwrap_or(true);
+            let mut suggestions: Vec<Value> = Vec::new();
+            let mut systems = Map::new();
+            let mut any_ok = false;
+            let mut first_error: Option<Value> = None;
+            let record_err = |systems: &mut Map<String, Value>,
+                              name: &str,
+                              e: baidu_search::BaiduError,
+                              first_error: &mut Option<Value>| {
+                let err = json!({
+                    "kind": e.kind,
+                    "message": e.message,
+                    "url": e.url,
+                    "status_code": e.status_code,
+                });
+                systems.insert(name.to_string(), json!({"ok": false, "error": err.clone()}));
+                if first_error.is_none() {
+                    *first_error = Some(err);
+                }
+            };
+            if want("classic") {
+                match p.baidu_suggest.suggest(&query).await {
+                    Ok(entries) => {
+                        any_ok = true;
+                        systems.insert(
+                            "classic".to_string(),
+                            json!({"ok": true, "count": entries.len()}),
+                        );
+                        for e in &entries {
+                            let mut v = serde_json::to_value(e).unwrap_or(Value::Null);
+                            if let Value::Object(m) = &mut v {
+                                m.insert("system".to_string(), json!("classic"));
+                            }
+                            suggestions.push(v);
+                        }
+                    }
+                    Err(e) => record_err(&mut systems, "classic", e, &mut first_error),
+                }
+            }
+            if want("recommendations") {
+                match p.baidu_suggest.suggest_recommendations(&query).await {
+                    Ok(entries) => {
+                        any_ok = true;
+                        systems.insert(
+                            "recommendations".to_string(),
+                            json!({"ok": true, "count": entries.len()}),
+                        );
+                        for e in &entries {
+                            let mut v = serde_json::to_value(e).unwrap_or(Value::Null);
+                            if let Value::Object(m) = &mut v {
+                                m.insert("system".to_string(), json!("recommendations"));
+                            }
+                            suggestions.push(v);
+                        }
+                    }
+                    Err(e) => record_err(&mut systems, "recommendations", e, &mut first_error),
+                }
+            }
+            if want("inputbox") {
+                match p.baidu_suggest.suggest_inputbox(&query).await {
+                    Ok(ib) => {
+                        any_ok = true;
+                        let count = ib.chat_sug.len()
+                            + ib.content_groups
+                                .iter()
+                                .map(|(_, g)| g.len())
+                                .sum::<usize>();
+                        systems.insert("inputbox".to_string(), json!({"ok": true, "count": count}));
+                        for e in &ib.chat_sug {
+                            let mut v = serde_json::to_value(e).unwrap_or(Value::Null);
+                            if let Value::Object(m) = &mut v {
+                                m.insert("system".to_string(), json!("inputbox"));
+                                m.insert("group".to_string(), json!("chat_sug"));
+                            }
+                            suggestions.push(v);
+                        }
+                        for (group, entries) in &ib.content_groups {
+                            for e in entries {
+                                let mut v = serde_json::to_value(e).unwrap_or(Value::Null);
+                                if let Value::Object(m) = &mut v {
+                                    m.insert("system".to_string(), json!("inputbox"));
+                                    m.insert("group".to_string(), json!(group));
+                                }
+                                suggestions.push(v);
+                            }
+                        }
+                    }
+                    Err(e) => record_err(&mut systems, "inputbox", e, &mut first_error),
+                }
+            }
+            if !any_ok {
+                return Ok(json!({
+                    "provider": "baidu",
+                    "ok": false,
+                    "query": query,
+                    "systems": Value::Object(systems),
+                    "error": first_error.unwrap_or_else(|| json!({"kind": "no_systems", "message": "no suggestion system was queried"})),
+                }));
+            }
+            Ok(json!({
+                "provider": "baidu",
+                "ok": true,
+                "query": query,
+                "suggestions": suggestions,
+                "systems": Value::Object(systems),
+            }))
         }
         "baidu_parse_search_results" => {
             let html = str_param(args, "html");

@@ -101,14 +101,46 @@ pub fn tool_definitions() -> Vec<Value> {
         ),
         tool_def(
             "bing_suggest",
-            "Get Bing autocomplete suggestions for a partial query (the Bing app's own suggestions API). Useful for discovering how people phrase a topic before running a full search. Pass vertical \"images\" or \"videos\" for candidates in those verticals.",
+            "Get Bing autocomplete suggestions for a partial query (the Bing app's own suggestions API). Useful for discovering how people phrase a topic before running a full search. Pass vertical \"images\" or \"videos\" for candidates in those verticals; mkt/setlang select the market the app would request for (the app derives them from the device locale).",
             json!({
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Partial query to complete."},
-                    "vertical": {"type": "string", "description": "\"web\" (default), \"images\" or \"videos\".", "enum": ["web", "images", "videos"], "default": "web"}
+                    "vertical": {"type": "string", "description": "\"web\" (default), \"images\" or \"videos\".", "enum": ["web", "images", "videos"], "default": "web"},
+                    "mkt": {"type": "string", "description": "Bing market, e.g. \"ja-JP\" or \"en-US\". Defaults to \"en-US\" (the form the app requests).", "default": "en-US"},
+                    "setlang": {"type": "string", "description": "UI language code, e.g. \"en\" or \"ja\". Defaults to \"en\".", "default": "en"}
                 },
                 "required": ["query"]
+            }),
+        ),
+        tool_def(
+            "bing_shopping_search",
+            "Search Bing Shopping (the shop vertical the Bing app renders). Returns offer cards with title, price text, seller, rating, image and the product URL.",
+            paged_schema(20, 40, json!({})),
+        ),
+        tool_def(
+            "bing_trending_topics",
+            "Fetch Bing's current trending topics (the same feed the app shows). Takes no query; limit caps the topics returned. Note: on current server behaviour this endpoint answers anonymous requests with HTTP 401, which is reported as a structured error.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Max topics to return (1-50).", "default": 20},
+                    "mkt": {"type": "string", "description": "Bing market. Defaults to \"en-US\".", "default": "en-US"},
+                    "setlang": {"type": "string", "description": "UI language code. Defaults to \"en\".", "default": "en"}
+                }
+            }),
+        ),
+        tool_def(
+            "bing_visual_search",
+            "Run Bing Visual Search over an image, the way the Bing app's camera search does: pass the image bytes base64-encoded. Returns identification tags with the actions (pages including the image, similar images, related searches) the service attaches. Note: on current server behaviour this endpoint answers anonymous requests with HTTP 401, which is reported as a structured error.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "image_base64": {"type": "string", "description": "The image (JPEG/PNG bytes) encoded as base64."},
+                    "mkt": {"type": "string", "description": "Bing market. Defaults to \"en-US\".", "default": "en-US"},
+                    "setlang": {"type": "string", "description": "UI language code. Defaults to \"en\".", "default": "en"}
+                },
+                "required": ["image_base64"]
             }),
         ),
         tool_def(
@@ -270,13 +302,68 @@ pub async fn dispatch(name: &str, args: &Value, client: &BingSearchClient) -> Re
                     } else {
                         &vertical
                     },
-                    "",
-                    "",
+                    &str_param(args, "mkt"),
+                    &str_param(args, "setlang"),
                 )
                 .await
             {
                 Ok(result) => ok_value(result),
                 Err(e) => Ok(error_result("suggest", e)),
+            }
+        }
+        "bing_shopping_search" => match client
+            .shopping_search(
+                &query_param(args)?,
+                int_param(args, "page", 1),
+                int_param(args, "limit", 20),
+                &str_param(args, "mkt"),
+                &str_param(args, "setlang"),
+            )
+            .await
+        {
+            Ok(result) => ok_value(result),
+            Err(e) => Ok(error_result("shopping", e)),
+        },
+        "bing_trending_topics" => match client
+            .trending_topics(
+                int_param(args, "limit", 20),
+                &str_param(args, "mkt"),
+                &str_param(args, "setlang"),
+            )
+            .await
+        {
+            Ok(topics) => Ok(json!({
+                "provider": PROVIDER,
+                "ok": true,
+                "vertical": "trending",
+                "count": topics.len(),
+                "topics": topics,
+            })),
+            Err(e) => Ok(error_result("trending", e)),
+        },
+        "bing_visual_search" => {
+            let b64 = str_param(args, "image_base64");
+            if b64.is_empty() {
+                return Err(anyhow!(
+                    "`image_base64` is required and must be a non-empty string"
+                ));
+            }
+            use base64::Engine;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64.as_bytes())
+                .map_err(|e| anyhow!("`image_base64` is not valid base64: {e}"))?;
+            match client
+                .visual_search(&bytes, &str_param(args, "mkt"), &str_param(args, "setlang"))
+                .await
+            {
+                Ok(tags) => Ok(json!({
+                    "provider": PROVIDER,
+                    "ok": true,
+                    "vertical": "visual",
+                    "count": tags.len(),
+                    "tags": tags,
+                })),
+                Err(e) => Ok(error_result("visual", e)),
             }
         }
         "bing_build_search_url" => {
@@ -361,9 +448,9 @@ mod tests {
     }
 
     #[test]
-    fn there_are_seven_tools_with_schemas() {
+    fn there_are_ten_tools_with_schemas() {
         let defs = tool_definitions();
-        assert_eq!(defs.len(), 7);
+        assert_eq!(defs.len(), 10);
         let names: Vec<&str> = defs.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert_eq!(
             names,
@@ -373,6 +460,9 @@ mod tests {
                 "bing_video_search",
                 "bing_news_search",
                 "bing_suggest",
+                "bing_shopping_search",
+                "bing_trending_topics",
+                "bing_visual_search",
                 "bing_build_search_url",
                 "bing_list_verticals"
             ]

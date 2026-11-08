@@ -1,6 +1,6 @@
 [package]
 name = "zero-search-mcp-server"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 license = "MIT"
 description = "ZeroSearch MCP server — Baidu, Yahoo! JAPAN, Bing, Naver, Yahoo (US), Yandex, AliExpress, Goofish, Mercari, Yahoo Auctions, Yahoo Flea Market, Rakuma, Rakuten, Qoo10, Yahoo Shopping, Amazon, YouTube, Bilibili and CSDN behind one stdio MCP server. No API key, no configuration."
@@ -18,6 +18,8 @@ serde_json = { workspace = true }
 # Used directly in the per-engine tools modules to classify provider
 # errors into the unified `{kind, message}` error form.
 reqwest = { workspace = true }
+# Decodes the base64 image payload of bing_visual_search.
+base64 = { workspace = true }
 
 baidu-mcp-provider = { path = "../providers/baidu" }
 yahoo-search-mcp-provider = { path = "../providers/yahoo" }

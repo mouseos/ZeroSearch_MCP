@@ -91,33 +91,33 @@ use common::{ACCEPT_LANGUAGE, USER_AGENT};
 // types and the offline payload/text helpers are re-exported here so callers
 // never have to reach into a module path.
 
-/// Q&A item returned by [`YahooSearchClient::chiebukuro_search`].
-pub use chiebukuro::ChiebukuroItem;
 /// Offline page parsers (audit W-10): parse a saved search page
 /// into the same envelope the live methods return.
 pub use chiebukuro::parse_chiebukuro_page;
-pub use image::parse_image_page;
-pub use news::parse_news_page;
-pub use realtime::parse_realtime_page;
-pub use video::parse_video_page;
-pub use web::parse_web_page;
+/// Q&A item returned by [`YahooSearchClient::chiebukuro_search`].
+pub use chiebukuro::ChiebukuroItem;
 /// Offline helpers: payload extraction from saved pages and text cleanup.
 pub use common::{
     clean_text, decode_entities, extract_next_data, extract_preloaded_state, extract_window_props,
     urlencode,
 };
+pub use image::parse_image_page;
 /// Image item (and its size variants) returned by
 /// [`YahooSearchClient::image_search`].
 pub use image::{ImageItem, ImageSize};
+pub use news::parse_news_page;
 /// News article item returned by [`YahooSearchClient::news_search`].
 pub use news::NewsItem;
+pub use realtime::parse_realtime_page;
 /// Real-time (X/Twitter) post item returned by
 /// [`YahooSearchClient::realtime_search`].
 pub use realtime::RealtimeItem;
 /// Autocomplete types returned by [`YahooSearchClient::suggest_keywords`].
 pub use suggest::{SuggestResult, Suggestion};
+pub use video::parse_video_page;
 /// Video item returned by [`YahooSearchClient::video_search`].
 pub use video::VideoItem;
+pub use web::parse_web_page;
 /// Web item returned by [`YahooSearchClient::web_search`].
 pub use web::WebItem;
 

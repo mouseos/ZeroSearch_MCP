@@ -741,9 +741,9 @@ impl SearchSession {
                         .iter()
                         .filter(|v| v.get("checked").and_then(|c| c.as_bool()) == Some(true))
                         .filter_map(|v| {
-                            v.get("vid").and_then(|id| match id {
-                                Value::String(s) => Some(s.clone()),
-                                other => Some(other.to_string()),
+                            v.get("vid").map(|id| match id {
+                                Value::String(s) => s.clone(),
+                                other => other.to_string(),
                             })
                         })
                         .collect()
@@ -1182,7 +1182,7 @@ mod tests {
 
     #[test]
     fn session_next_page_carries_paging_state() {
-        let mut session = started_session();
+        let session = started_session();
         let plan = session.next_page_plan().unwrap();
         assert_eq!(plan.data["pageNumber"], json!(2));
         assert_eq!(plan.data["resultListLastIndex"], json!(10));
