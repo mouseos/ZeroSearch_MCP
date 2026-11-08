@@ -53,11 +53,12 @@ async fn main() {
     if aid > 0 {
         match client.get_video_by_aid(aid).await {
             Ok(view) => {
+                let it = &view["item"];
                 println!(
-                "view ok={} bvid={} title={} author={} play={} danmaku={} reply={} like={} dur={}",
-                view["ok"], view["bvid"], view["title"], view["author"], view["play"],
-                view["danmaku"], view["reply"], view["like"], view["duration"]
-            )
+                    "view ok={} bvid={} title={} author={} play={} danmaku={} reply={} like={} dur={}",
+                    view["ok"], it["bvid"], it["title"], it["owner"]["name"], it["stat"]["view"],
+                    it["stat"]["danmaku"], it["stat"]["reply"], it["stat"]["like"], it["duration"]
+                );
             }
             Err(e) => println!("view ERR: {e:#}"),
         }
@@ -80,7 +81,10 @@ async fn main() {
         match client.get_video(&bvid).await {
             Ok(view) => println!(
                 "view ok={} title={} author={} play={}",
-                view["ok"], view["title"], view["author"], view["play"]
+                view["ok"],
+                view["item"]["title"],
+                view["item"]["owner"]["name"],
+                view["item"]["stat"]["view"]
             ),
             Err(e) => println!("view ERR: {e:#}"),
         }

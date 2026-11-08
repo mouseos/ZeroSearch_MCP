@@ -150,3 +150,24 @@ fn bvid_extraction() {
     assert_eq!(extract_bvid("bilibili://video/114514"), "");
     assert_eq!(strip_highlight("<em class=\"keyword\">a</em>b"), "ab");
 }
+
+#[test]
+fn metadata_wire_values_are_base64() {
+    use base64::Engine;
+    use bilibili_provider::encode_metadata_wire;
+    // A protobuf-shaped value (tag + length + text, with control bytes).
+    let raw = vec![0x12, 0x07, b'a', b'n', b'd', b'r', b'o', b'i', b'd'];
+    let wire = encode_metadata_wire(vec![
+        ("x-bili-metadata-bin".to_string(), raw.clone()),
+        ("env".to_string(), b"prod".to_vec()),
+    ]);
+    // -bin value: base64 text that decodes back to the exact protobuf.
+    let encoded = &wire[0].1;
+    assert!(encoded.iter().all(|b| b.is_ascii_graphic() || *b == b'='));
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .expect("wire value must be valid base64");
+    assert_eq!(decoded, raw);
+    // Plain headers pass through untouched.
+    assert_eq!(wire[1].1, b"prod".to_vec());
+}

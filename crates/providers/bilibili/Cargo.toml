@@ -3,7 +3,7 @@ name = "bilibili-provider"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Bilibili (Android app protocol) search provider: gRPC polymer SearchAll, app-generated buvid, guest (no login). Imported as `bilibili_provider`."
+description = "Bilibili (Android app protocol) search/detail provider: gRPC polymer SearchAll + viewunite View/RelatesFeed, app-generated buvid, guest (no login). Imported as `bilibili_provider`."
 repository = "https://github.com/mouseos/ZeroSearch_MCP"
 
 [dependencies]
@@ -11,6 +11,7 @@ tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+base64 = { workspace = true }
 rand = { workspace = true }
 bytes = "1"
 tokio-rustls = "0.26"

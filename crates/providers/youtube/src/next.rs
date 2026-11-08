@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 use crate::client::YoutubeClient;
 use crate::errors::{YoutubeError, KIND_NOT_FOUND};
-use crate::parse::{collect_renderers, text_of, thumbnail_url, VideoItem};
+use crate::parse::{collect_renderers, normalize_worded_count, text_of, thumbnail_url, VideoItem};
 
 /// Watch-next data for one video.
 pub struct WatchNext {
@@ -15,6 +15,16 @@ pub struct WatchNext {
     /// Continuation token that opens the comments section; feed it to
     /// [`YoutubeClient::get_comments`]. None when comments are off.
     pub comments_continuation: Option<String>,
+    /// Continuation token for the next page of related videos; feed
+    /// it to [`YoutubeClient::get_related_continuation`].
+    pub related_continuation: Option<String>,
+    /// Exact like count of the watched video, from the response's
+    /// `likeCountEntity` (the count a guest sees, i.e. the
+    /// "indifferent" figure). The ANDROID player response has no
+    /// microformat, so this is where the app itself gets the number.
+    pub like_count: Option<u64>,
+    /// Compact like-count text ("86K"), when present.
+    pub like_count_text: Option<String>,
 }
 
 impl WatchNext {
@@ -25,7 +35,28 @@ impl WatchNext {
             "video_id": self.video_id,
             "related": self.related.iter().map(|i| i.to_value()).collect::<Vec<_>>(),
             "related_count": self.related.len(),
+            "related_continuation": self.related_continuation,
             "comments_continuation": self.comments_continuation,
+            "like_count": self.like_count,
+            "like_count_text": self.like_count_text,
+        })
+    }
+}
+
+/// One page of related videos fetched via a continuation token.
+pub struct RelatedPage {
+    pub items: Vec<VideoItem>,
+    pub next_continuation: Option<String>,
+}
+
+impl RelatedPage {
+    pub fn to_value(&self) -> Value {
+        json!({
+            "provider": "youtube",
+            "ok": true,
+            "count": self.items.len(),
+            "items": self.items.iter().map(|i| i.to_value()).collect::<Vec<_>>(),
+            "next_continuation": self.next_continuation,
         })
     }
 }
@@ -84,14 +115,6 @@ fn parse_compact_video(r: &Value) -> Option<VideoItem> {
     // compactVideoRenderer has the same field names as videoRenderer
     // for the subset we expose.
     crate::parse::video_from_renderer(r)
-}
-
-/// Convert worded counts ("525 thousand") to the compact form the
-/// shared parser understands ("525K").
-fn normalize_worded_count(text: &str) -> String {
-    text.replace(" thousand", "K")
-        .replace(" million", "M")
-        .replace(" billion", "B")
 }
 
 /// Extract a VideoItem from an Elements-framework
@@ -239,6 +262,54 @@ fn extract_comments_continuation(resp: &Value) -> Option<String> {
     walk(resp, false)
 }
 
+/// Extract the watched video's like count from a watch-next
+/// response. The count rides in a `likeCountEntity` — both inside
+/// the action bar's segmented like/dislike model and as an entity
+/// mutation in `frameworkUpdates`. A guest has not liked the video,
+/// so the displayed count is `likeCountIfIndifferentNumber`.
+fn extract_like_count(resp: &Value) -> (Option<u64>, Option<String>) {
+    let mut entities = Vec::new();
+    collect_renderers(resp, "likeCountEntity", &mut entities);
+    for e in &entities {
+        let count = e
+            .get("likeCountIfIndifferentNumber")
+            .and_then(|n| n.as_str())
+            .and_then(|s| s.parse::<u64>().ok());
+        if count.is_some() {
+            let text = e
+                .pointer("/likeCountIfIndifferent/content")
+                .and_then(|t| t.as_str())
+                .map(|s| s.to_string());
+            return (count, text);
+        }
+    }
+    (None, None)
+}
+
+/// Extract a related-videos continuation: the `nextContinuationData`
+/// in a section's `continuations` array — in the watch-next response
+/// at the results level (the one labelled "Show more"), in a
+/// continuation response on the section continuation itself.
+fn extract_related_continuation(resp: &Value) -> Option<String> {
+    for base in [
+        "/contents/singleColumnWatchNextResults/results/results/continuations",
+        "/continuationContents/sectionListContinuation/continuations",
+        "/continuationContents/itemSectionContinuation/continuations",
+    ] {
+        if let Some(arr) = resp.pointer(base).and_then(|c| c.as_array()) {
+            for c in arr {
+                if let Some(tok) = c
+                    .pointer("/nextContinuationData/continuation")
+                    .and_then(|t| t.as_str())
+                {
+                    return Some(tok.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Parse a watch-next response.
 pub fn parse_next_response(resp: &Value, video_id: &str) -> WatchNext {
     let mut compacts = Vec::new();
@@ -252,10 +323,53 @@ pub fn parse_next_response(resp: &Value, video_id: &str) -> WatchNext {
     // De-duplicate by video id, keeping first occurrence order.
     let mut seen = std::collections::HashSet::new();
     related.retain(|i| seen.insert(i.video_id.clone()));
+    let (like_count, like_count_text) = extract_like_count(resp);
     WatchNext {
         video_id: video_id.to_string(),
         related,
         comments_continuation: extract_comments_continuation(resp),
+        related_continuation: extract_related_continuation(resp),
+        like_count,
+        like_count_text,
+    }
+}
+
+/// Parse a related-videos continuation response (`next` fed with a
+/// related token). Continuation responses append items under
+/// `continuationContents` or `onResponseReceivedCommands`, and carry
+/// the following page's token in a trailing
+/// `continuationItemRenderer` (or a further `nextContinuationData`).
+pub fn parse_related_continuation_response(resp: &Value) -> RelatedPage {
+    let mut compacts = Vec::new();
+    collect_renderers(resp, "compactVideoRenderer", &mut compacts);
+    let mut items: Vec<VideoItem> = compacts.iter().filter_map(parse_compact_video).collect();
+    let mut models = Vec::new();
+    collect_renderers(resp, "videoWithContextModel", &mut models);
+    items.extend(models.iter().filter_map(video_from_lockup_model));
+    let mut seen = std::collections::HashSet::new();
+    items.retain(|i| seen.insert(i.video_id.clone()));
+
+    // The next token: prefer a continuationItemRenderer token that is
+    // not the comments one (this response is the related section's),
+    // else any remaining nextContinuationData.
+    let mut next_continuation = None;
+    let mut conts = Vec::new();
+    collect_renderers(resp, "continuationItemRenderer", &mut conts);
+    for c in conts.iter().rev() {
+        if let Some(tok) = c
+            .pointer("/continuationEndpoint/continuationCommand/token")
+            .and_then(|t| t.as_str())
+        {
+            next_continuation = Some(tok.to_string());
+            break;
+        }
+    }
+    if next_continuation.is_none() {
+        next_continuation = extract_related_continuation(resp);
+    }
+    RelatedPage {
+        items,
+        next_continuation,
     }
 }
 
@@ -486,6 +600,19 @@ impl YoutubeClient {
             ));
         }
         Ok(wn)
+    }
+
+    /// Fetch the next page of related videos using a continuation
+    /// token from [`WatchNext::related_continuation`] or from a
+    /// previous related page.
+    pub async fn get_related_continuation(
+        &self,
+        continuation: &str,
+    ) -> Result<RelatedPage, YoutubeError> {
+        let resp = self
+            .post("next", json!({ "continuation": continuation }))
+            .await?;
+        Ok(parse_related_continuation_response(&resp))
     }
 
     /// Fetch one page of comments using a continuation token obtained

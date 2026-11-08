@@ -10,16 +10,19 @@
 //! Rust: no login, no access_key, no fabricated values — the buvid is
 //! derived by the app's own algorithm from this client's device identity.
 //!
-//! Live-verified state (2026-11-07, see the analysis report):
-//! - Search works end to end as a guest, including pagination.
-//! - The viewunite family (View / RelatesFeed) demands the device
-//!   context: bare calls get business error -400 (View) or an empty
-//!   feed (RelatesFeed). The metadata that carries the context cannot
-//!   cross the public edge — its Tengine/nghttp2 front rejects header
-//!   values containing control bytes (HTTP 400), and protobuf payloads
-//!   always contain some. [`BilibiliClient::with_metadata`] keeps the
-//!   app-faithful headers available for any ingress that accepts them;
-//!   the default is the bare call that the edge lets through.
+//! Live-verified state (2026-11-08, round 2 — supersedes round 1):
+//! - Search, video detail (viewunite `View`) and related videos
+//!   (`RelatesFeed`) all work end to end as a guest.
+//! - The viewunite family demands the device context (the
+//!   `x-bili-*-bin` metadata): bare calls get business error -400
+//!   (View) or an empty feed (RelatesFeed).
+//! - Round 1 concluded the metadata "cannot cross the public edge"
+//!   because raw protobuf values were rejected by the front with
+//!   HTTP 400. That was a representation error, not an edge law: on
+//!   this ingress the `-bin` values travel **base64-encoded** (the
+//!   front is a text-oriented bridge and the grpc-go backend
+//!   base64-decodes them). With base64 values all three surfaces
+//!   pass. See round2-report.md for the forensic trail.
 //!
 //! Intended tool mapping for the ZeroSearch integration (not wired here):
 //! `bilibili_search_videos`, `bilibili_get_video`, `bilibili_get_related`.
@@ -49,6 +52,8 @@ const PATH_RELATES: &str = "/bilibili.app.viewunite.v1.View/RelatesFeed";
 pub struct BilibiliClient {
     egress: Egress,
     send_metadata: bool,
+    host: &'static str,
+    extra_headers: Vec<(String, Vec<u8>)>,
     identity: DeviceIdentity,
     buvid: String,
     session_id: String,
@@ -67,7 +72,9 @@ impl BilibiliClient {
         let buvid = identity.local_buvid();
         Self {
             egress: Egress::Direct,
-            send_metadata: false,
+            send_metadata: true,
+            host: GRPC_HOST,
+            extra_headers: Vec::new(),
             identity,
             buvid,
             session_id: buvid::fawkes_session_id(),
@@ -75,13 +82,27 @@ impl BilibiliClient {
         }
     }
 
+    /// Override the gRPC host (round-2 forensics: the app is known to
+    /// use more than one front for the same services).
+    pub fn with_host(mut self, host: &'static str) -> Self {
+        self.host = host;
+        self
+    }
+
+    /// Append one extra plain header to every call (forensics knob;
+    /// e.g. the `user-agent` a grpc-java/OkHttp client always sends).
+    pub fn with_extra_header(mut self, name: &str, value: &str) -> Self {
+        self.extra_headers
+            .push((name.to_string(), value.as_bytes().to_vec()));
+        self
+    }
+
     /// Attach the app's `x-bili-*-bin` metadata headers (with buvid) to
-    /// every call. Default: off. The public edge in front of the gRPC
-    /// host (Tengine/nghttp2) rejects header values containing control
-    /// bytes with HTTP 400, and protobuf payloads always contain some —
-    /// so the metadata cannot cross that edge; the service answers the
-    /// bare gRPC calls without it. Kept for protocol fidelity and for
-    /// any direct ingress where it is accepted.
+    /// every call. Default: on — the viewunite family refuses bare
+    /// calls, and search accepts the metadata too. On the wire the
+    /// `-bin` values are base64-encoded (see
+    /// [`encode_metadata_wire`]); that is the representation this
+    /// ingress carries.
     pub fn with_metadata(mut self, send: bool) -> Self {
         self.send_metadata = send;
         self
@@ -176,12 +197,13 @@ impl BilibiliClient {
         Req: Message,
         Resp: Message + Default,
     {
-        let headers = if self.send_metadata {
-            self.metadata()
+        let mut headers = if self.send_metadata {
+            encode_metadata_wire(self.metadata())
         } else {
             vec![("env".to_string(), b"prod".to_vec())]
         };
-        transport::grpc_unary(&self.egress, GRPC_HOST, path, &headers, &msg).await
+        headers.extend(self.extra_headers.iter().cloned());
+        transport::grpc_unary(&self.egress, self.host, path, &headers, &msg).await
     }
 
     // ------------------------------------------------------------------
@@ -332,6 +354,31 @@ impl Default for BilibiliClient {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The wire representation of the metadata headers on the public
+/// ingress: every `*-bin` value is base64-encoded (standard alphabet,
+/// with padding); plain headers such as `env` pass through unchanged.
+///
+/// Round 2 established this empirically: raw protobuf values are
+/// rejected by the front with HTTP 400 (its header validation refuses
+/// control bytes), while the grpc-go backend base64-decodes `-bin`
+/// values — feeding it printable-but-not-base64 bytes produced its
+/// `malformed binary metadata ... illegal base64 data` error. With
+/// base64 values, search, `View` and `RelatesFeed` all succeed.
+pub fn encode_metadata_wire(headers: Vec<(String, Vec<u8>)>) -> Vec<(String, Vec<u8>)> {
+    use base64::Engine;
+    headers
+        .into_iter()
+        .map(|(name, value)| {
+            if name.ends_with("-bin") {
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&value);
+                (name, encoded.into_bytes())
+            } else {
+                (name, value)
+            }
+        })
+        .collect()
 }
 
 /// Player arguments the app attaches to view requests (guest defaults:

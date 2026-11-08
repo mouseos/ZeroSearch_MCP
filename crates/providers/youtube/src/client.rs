@@ -77,12 +77,6 @@ impl YoutubeClient {
     pub fn with_locale(hl: &str, gl: &str) -> Self {
         let profile = default_profile();
         let http = reqwest::Client::builder()
-            // Select rustls explicitly: inside the ZeroSearch
-            // workspace, feature unification also enables reqwest's
-            // native-tls backend (used by the other providers), which
-            // would otherwise become the default and silently change
-            // this provider's verified transport.
-            .use_rustls_tls()
             .user_agent(profile.user_agent.clone())
             .timeout(std::time::Duration::from_secs(30))
             .build()
@@ -181,6 +175,32 @@ impl YoutubeClient {
             *self.visitor_data.lock().unwrap() = Some(vd.to_string());
         }
         Ok(value)
+    }
+
+    /// GET a server-issued URL as plain text (used for caption-track
+    /// URLs handed out in player responses). The request goes through
+    /// the same HTTP client — and therefore the same user agent — as
+    /// the app uses for these fetches.
+    pub async fn fetch_text(&self, url: &str) -> Result<String, YoutubeError> {
+        let resp = self.http.get(url).send().await?;
+        let status = resp.status();
+        let text = resp.text().await.map_err(YoutubeError::from)?;
+        if !status.is_success() {
+            let kind = match status.as_u16() {
+                403 => KIND_ACCESS_RESTRICTED,
+                429 => KIND_CAPTCHA,
+                _ => KIND_HTTP_ERROR,
+            };
+            return Err(YoutubeError::new(
+                kind,
+                format!(
+                    "GET caption track returned HTTP {status}: {}",
+                    snippet(&text)
+                ),
+            )
+            .with_status(status.as_u16() as i64));
+        }
+        Ok(text)
     }
 
     /// Bootstrap the guest session the way the app does on first run:

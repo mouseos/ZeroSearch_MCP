@@ -6,11 +6,18 @@ use serde_json::{json, Value};
 use crate::client::YoutubeClient;
 use crate::errors::YoutubeError;
 use crate::filters::SearchFilters;
-use crate::parse::{video_from_renderer, VideoItem};
+use crate::parse::{
+    channel_from_model, channel_from_renderer, playlist_from_renderer, short_from_shelf_item,
+    video_from_renderer, SearchItem, VideoItem,
+};
 
 /// One page of search results.
 pub struct SearchPage {
+    /// Video-kind results only (backwards-compatible view).
     pub items: Vec<VideoItem>,
+    /// Every result in the order YouTube returned it, tagged by
+    /// kind: videos, Shorts, channels and playlists.
+    pub results: Vec<SearchItem>,
     /// Estimated total result count reported by YouTube
     /// (`estimatedResults`), when present.
     pub estimated_results: Option<u64>,
@@ -29,22 +36,54 @@ impl SearchPage {
             "count": self.items.len(),
             "estimated_results": self.estimated_results,
             "items": self.items.iter().map(|i| i.to_value()).collect::<Vec<_>>(),
+            "results": self.results.iter().map(|i| i.to_value()).collect::<Vec<_>>(),
             "next_continuation": self.next_continuation,
         })
     }
 }
 
-/// Collect video items in document order. The Android client's
-/// search results are `compactVideoRenderer`s; `videoRenderer` is
-/// handled too for layout variants.
-fn collect_video_items(resp: &Value) -> Vec<VideoItem> {
-    fn walk(v: &Value, out: &mut Vec<VideoItem>) {
+/// Collect every search result in document order, tagged by kind.
+/// The Android client's video results are `compactVideoRenderer`s
+/// (`videoRenderer` handled too for layout variants); channels and
+/// playlists use their own compact renderers; Shorts arrive as
+/// Elements `shortsShelfModel` shelves whose `shelfItems` are
+/// individual Shorts.
+fn collect_search_items(resp: &Value) -> Vec<SearchItem> {
+    fn walk(v: &Value, out: &mut Vec<SearchItem>) {
         match v {
             Value::Object(map) => {
-                for key in ["compactVideoRenderer", "videoRenderer"] {
+                for key in [
+                    "compactVideoRenderer",
+                    "videoRenderer",
+                    "compactMovieRenderer",
+                ] {
                     if let Some(r) = map.get(key) {
                         if let Some(item) = video_from_renderer(r) {
-                            out.push(item);
+                            out.push(SearchItem::Video(item));
+                        }
+                    }
+                }
+                if let Some(r) = map.get("compactChannelRenderer") {
+                    if let Some(item) = channel_from_renderer(r) {
+                        out.push(SearchItem::Channel(item));
+                    }
+                }
+                if let Some(m) = map.get("compactChannelModel") {
+                    if let Some(item) = channel_from_model(m) {
+                        out.push(SearchItem::Channel(item));
+                    }
+                }
+                if let Some(r) = map.get("compactPlaylistRenderer") {
+                    if let Some(item) = playlist_from_renderer(r) {
+                        out.push(SearchItem::Playlist(item));
+                    }
+                }
+                if let Some(shelf) = map.get("shortsShelfModel") {
+                    if let Some(items) = shelf.get("shelfItems").and_then(|i| i.as_array()) {
+                        for entry in items {
+                            if let Some(item) = short_from_shelf_item(entry) {
+                                out.push(SearchItem::Short(item));
+                            }
                         }
                     }
                 }
@@ -111,11 +150,19 @@ fn collect_next_continuation(resp: &Value) -> Option<String> {
 /// (`contents` for a fresh search, `continuationContents` /
 /// `onResponseReceivedCommands` for a continuation response).
 pub fn parse_search_response(resp: &Value) -> SearchPage {
-    let items = collect_video_items(resp);
+    let results = collect_search_items(resp);
+    let items: Vec<VideoItem> = results
+        .iter()
+        .filter_map(|r| match r {
+            SearchItem::Video(v) => Some(v.clone()),
+            _ => None,
+        })
+        .collect();
     let next_continuation = collect_next_continuation(resp);
 
     SearchPage {
         items,
+        results,
         estimated_results: resp
             .get("estimatedResults")
             .and_then(|e| e.as_str())
