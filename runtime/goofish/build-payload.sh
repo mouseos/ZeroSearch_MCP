@@ -171,10 +171,19 @@ elif command -v mvn >/dev/null 2>&1; then
   echo "[build-payload] resolving dependency jars with Maven"
   mkdir -p "$WORK/mvnharness"
   cp "$HERE/harness/pom.xml" "$WORK/mvnharness/pom.xml"
-  if (cd "$WORK/mvnharness" && mvn -q org.apache.maven.plugins:maven-dependency-plugin:3.6.1:copy-dependencies -DoutputDirectory="$WORK/mvnlib" >/dev/null 2>&1) \
-     && collect_from_flat "$WORK/mvnlib"; then
-    DEPS_OK=1
-  fi
+  # Maven Central rate-limits datacenter egress at times; retry, and
+  # keep the log so a failure is diagnosable (this used to discard
+  # all Maven output, which made CI failures opaque).
+  for attempt in 1 2 3; do
+    if (cd "$WORK/mvnharness" && mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.6.1:copy-dependencies -DoutputDirectory="$WORK/mvnlib" >"$WORK/mvn.log" 2>&1) \
+       && collect_from_flat "$WORK/mvnlib"; then
+      DEPS_OK=1
+      break
+    fi
+    echo "[build-payload] Maven resolution attempt $attempt failed" >&2
+    tail -n 30 "$WORK/mvn.log" >&2 || true
+    [ "$attempt" -lt 3 ] && sleep 20
+  done
 fi
 if [ "$DEPS_OK" -eq 0 ]; then
   for repo in "${MAVEN_REPO_LOCAL:-}" "$HOME/.m2/repository" "/root/.m2/repository"; do

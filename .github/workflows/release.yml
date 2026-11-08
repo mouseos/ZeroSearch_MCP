@@ -75,7 +75,12 @@ jobs:
       - name: Set up JDK 8 for the Goofish payload build
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          # Zulu: Temurin's setup-java catalog no longer offers a
+          # macOS arm64 JDK 8 (the v0.4.0 release run failed there
+          # with "Could not find satisfied version for SemVer '8'").
+          # Zulu 8 exists for all three runner platforms and is
+          # already the payload's macOS JRE source.
+          distribution: zulu
           java-version: '8'
 
       - name: Build Goofish signing payload
