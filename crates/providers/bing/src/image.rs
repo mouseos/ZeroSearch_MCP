@@ -136,6 +136,23 @@ mod tests {
         assert!(parse_image_results(html, 1, 12).is_err());
     }
 
+    /// Audit W-18: page 2 (`first=13`) was implemented from the
+    /// in-page link alone; verify it live, once, on demand.
+    #[tokio::test]
+    #[ignore = "live network test"]
+    async fn live_image_second_page() {
+        let client = BingSearchClient::new().unwrap();
+        let result = client
+            .image_search("猫", 2, 12, "ja-JP", "ja")
+            .await
+            .unwrap();
+        assert!(!result.items.is_empty(), "page 2 returned no items");
+        assert!(
+            result.items.iter().all(|i| i.rank > 12),
+            "page 2 ranks must continue from page 1"
+        );
+    }
+
     #[test]
     fn parse_one_unit_from_m_json() {
         let html = r##"<html><body><a class="iusc" href="/images/search?view=detailV2" m="{&quot;murl&quot;:&quot;https://example.com/a.jpg&quot;,&quot;turl&quot;:&quot;https://ts1.mm.bing.net/th?id=OIP.x&amp;pid=15.1&quot;,&quot;purl&quot;:&quot;https://example.com/post&quot;,&quot;t&quot;:&quot;Title&quot;}">x</a><a href="/images/search?first=13">next</a></body></html>"##;

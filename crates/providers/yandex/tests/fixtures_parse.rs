@@ -5,8 +5,8 @@
 //! tests do.
 
 use yandex_search::{
-    approx_total_text, parse_image_results, parse_suggest_body, parse_video_results,
-    parse_web_results,
+    approx_total_text, parse_image_results, parse_special_cards, parse_suggest_body,
+    parse_suggest_endings_body, parse_video_results, parse_web_results,
 };
 
 const WEB_P1: &str = include_str!("fixtures/fixture-web-p1.html");
@@ -14,6 +14,30 @@ const WEB_P2: &str = include_str!("fixtures/fixture-web-p2.html");
 const IMAGES: &str = include_str!("fixtures/fixture-images.html");
 const VIDEO: &str = include_str!("fixtures/fixture-video.html");
 const SUGGEST: &str = include_str!("fixtures/fixture-suggest.json");
+const SUGGEST_ENDINGS: &str = include_str!("fixtures/fixture-suggest-endings.json");
+
+#[test]
+fn web_page1_special_cards_are_surfaced() {
+    // Audit W-37: page 1's non-organic cards — the AI answer, the
+    // adv_unisearch block, the related-searches card and the
+    // labelled ad — come back as their own kinds.
+    let cards = parse_special_cards(WEB_P1);
+    let kinds: Vec<&str> = cards.iter().map(|c| c.kind.as_str()).collect();
+    assert!(kinds.contains(&"neuro_answer"), "kinds: {kinds:?}");
+    assert!(kinds.contains(&"adv_unisearch"), "kinds: {kinds:?}");
+    assert!(kinds.contains(&"ad"), "kinds: {kinds:?}");
+    let ai = cards.iter().find(|c| c.kind == "neuro_answer").unwrap();
+    assert!(ai.text.as_deref().unwrap().contains("Алисы AI"));
+}
+
+#[test]
+fn suggest_endings_fixture_parses_four_candidates() {
+    // The analysis' live capture (round 3, trial 6b).
+    let body: serde_json::Value = serde_json::from_str(SUGGEST_ENDINGS).unwrap();
+    let result = parse_suggest_endings_body(&body, "test", 20);
+    assert_eq!(result.count, 4);
+    assert_eq!(result.suggestions[0].keyword, "testcenter kz");
+}
 
 #[test]
 fn web_page1_yields_ten_organic_results() {

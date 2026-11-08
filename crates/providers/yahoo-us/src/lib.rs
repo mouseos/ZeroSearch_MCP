@@ -91,7 +91,9 @@ pub mod web;
 // here so callers never have to reach into a module path.
 
 /// Text and URL helpers shared by all verticals.
-pub use common::{clean_text, decode_entities, decode_redirect_url, urldecode, urlencode};
+pub use common::{
+    clean_text, decode_entities, decode_redirect_url, parse_related_queries, urldecode, urlencode,
+};
 /// Image item returned by [`YahooUsSearchClient::image_search`].
 pub use image::ImageItem;
 /// Offline image parsers for saved SERP pages.
@@ -105,7 +107,9 @@ pub use suggest::parse_suggest_response;
 /// Autocomplete types returned by [`YahooUsSearchClient::suggest`].
 pub use suggest::{SuggestResult, Suggestion};
 /// Search URL builder (no network).
-pub use urlbuild::build_search_url;
+pub use urlbuild::{
+    build_image_search_url, build_search_url, build_search_url_with_vm, ImageFilters,
+};
 /// Video item returned by [`YahooUsSearchClient::video_search`].
 pub use video::VideoItem;
 /// Offline video parsers for saved SERP pages.
@@ -315,6 +319,10 @@ pub fn verticals() -> serde_json::Value {
                 "paginated": true,
                 "supported": true
             }
+        ],
+        "unsupported": [
+            { "id": "shopping", "name": "Yahoo Shopping Search", "reason": "Retired by Yahoo (measured live 2026-11-08): shopping.search.yahoo.com/search 301-redirects to shopping.yahoo.com/search, which in turn redirects to scout.yahoo.com/chat — the Yahoo Scout AI chat. No anonymous shopping SERP exists anymore." },
+            { "id": "dictionary", "name": "Yahoo Dictionary Search", "reason": "Retired by Yahoo (measured live 2026-11-08): dictionary.search.yahoo.com/search 301-redirects to the plain web search (search.yahoo.com/search); there is no separate dictionary vertical." }
         ]
     })
 }

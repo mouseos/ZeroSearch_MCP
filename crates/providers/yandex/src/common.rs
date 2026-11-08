@@ -13,6 +13,13 @@ pub const USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebK
 pub const ACCEPT_LANGUAGE: &str = "ru-RU,ru;q=0.9";
 /// Package name of the Yandex app; sent by the app's web view on every load.
 pub const REQUESTED_WITH: &str = "ru.yandex.searchplugin";
+/// The app's `X-Yandex-Flags` header value
+/// (`WebVerticalsUtils.getXYandexFlagsHeaderValue()` in the APK
+/// analysis; audit W-39).
+pub const YANDEX_FLAGS: &str = "appsearch-header=1;disable_intents=1;accept-api=1";
+/// The `ui` query parameter the app attaches to its search page
+/// loads (`WebVerticalsUtils.b()`; audit W-39).
+pub const UI_PARAM: &str = "ui=webmobileapp.yandex";
 
 static TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]*>").unwrap());
 

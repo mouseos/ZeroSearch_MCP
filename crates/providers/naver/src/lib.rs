@@ -22,10 +22,12 @@
 //!   URL's paging parameters — page 1 and page 2 URLs return identical
 //!   content. Deeper batches of the image / news / video / blog tabs
 //!   are served by the "more" API whose URL each page itself issues;
-//!   paging follows that chain (see the `more` module), up to page 10.
-//! * The web tab's batch is a fixed top selection with no more-API
-//!   chain, so for web only page 1 exists — deeper pages are an
-//!   error, never a silent repeat of page 1.
+//!   paging follows that chain (see the `more` module), up to page 100.
+//! * The web-results view pages through its own pagination-bar
+//!   hrefs (`page=N+1&start=(N-1)*20+1` for batch N); the batches
+//!   are disjoint (audit W-22, measured 2026-11-08 — an earlier
+//!   "same batch on every page" finding came from following the
+//!   bar's batch-1 link and was wrong).
 //!
 //! # Library usage
 //!
@@ -94,8 +96,10 @@ use serde_json::Value;
 use std::time::Duration;
 
 pub mod blog;
+pub mod cafe;
 pub mod common;
 pub mod image;
+pub mod kin;
 pub mod more;
 pub mod news;
 pub mod search;
@@ -111,12 +115,14 @@ pub mod web;
 // parsers and the URL builders are re-exported here so callers never
 // have to reach into a module path.
 pub use blog::{parse_blog_results, BlogItem};
+pub use cafe::{parse_cafe_results, CafeItem};
 pub use common::{clean_text, decode_entities, urlencode};
 pub use image::{extract_image_items, map_image_items, parse_image_results, ImageItem};
+pub use kin::{parse_kin_results, KinItem};
 pub use more::{extract_more_url, parse_more_response, MorePayload, MAX_PAGE};
 pub use news::{parse_news_results, NewsItem};
 pub use search::{parse_integrated_results, IntegratedItem, IntegratedResult, IntegratedSection};
-pub use suggest::{parse_suggest_json, SuggestResult, Suggestion};
+pub use suggest::{parse_suggest_json, parse_suggest_response, ParsedSuggest, SuggestResult, Suggestion};
 pub use urlbuild::{build_page_url, build_search_url, suggest_url};
 pub use video::{parse_video_results, VideoItem};
 pub use web::{parse_web_results, WebItem};
@@ -264,36 +270,50 @@ pub fn verticals() -> Value {
                 "id": "web",
                 "name": "Naver 웹문서 (Web results)",
                 "tool": "naver_web_search",
-                "description": "Web-results-only view: the tab's top-selection batch. The tab serves the same batch for every page over plain HTTP, so only page 1 exists; page 2+ is an error.",
-                "paginated": false
+                "description": "Web-results-only view. Pages follow the view's own pagination-bar hrefs (page=N+1, start=(N-1)*20+1); batches are disjoint (measured live).",
+                "paginated": true
             },
             {
                 "id": "image",
                 "name": "Naver 이미지 (Images)",
                 "tool": "naver_image_search",
-                "description": "Image search with original image URL, thumbnail, source page and dimensions. Pages follow the page-issued more-API chain (up to page 10).",
+                "description": "Image search with original image URL, thumbnail, source page and dimensions. Pages follow the page-issued more-API chain (up to page 100).",
                 "paginated": true
             },
             {
                 "id": "news",
                 "name": "Naver 뉴스 (News)",
                 "tool": "naver_news_search",
-                "description": "News articles with publisher and relative publish time. Pages follow the page-issued more-API chain (up to page 10).",
+                "description": "News articles with publisher and relative publish time. Pages follow the page-issued more-API chain (up to page 100).",
                 "paginated": true
             },
             {
                 "id": "video",
                 "name": "Naver 동영상 (Videos)",
                 "tool": "naver_video_search",
-                "description": "Video search across YouTube and other hosts, with channel, duration and view count. Pages follow the page-issued more-API chain (up to page 10).",
+                "description": "Video search across YouTube and other hosts, with channel, duration and view count. Pages follow the page-issued more-API chain (up to page 100).",
                 "paginated": true
             },
             {
                 "id": "blog",
                 "name": "Naver 블로그 (Blog)",
                 "tool": "naver_blog_search",
-                "description": "Blog posts with blog name and relative publish time. Pages follow the page-issued more-API chain (up to page 10).",
+                "description": "Blog posts with blog name and relative publish time. Pages follow the page-issued more-API chain (up to page 100).",
                 "paginated": true
+            },
+            {
+                "id": "cafe",
+                "name": "Naver 카페 (Cafe)",
+                "tool": "naver_cafe_search",
+                "description": "Cafe posts with cafe name, body excerpt and relative date. First page only: the tab's more-API URL is assembled by the page's JavaScript, not page-issued.",
+                "paginated": false
+            },
+            {
+                "id": "kin",
+                "name": "Naver 지식iN (Q&A)",
+                "tool": "naver_kin_search",
+                "description": "지식iN questions with the answer excerpt. First page only: the list is an infinite-scroll list whose deeper batches are not page-issued as URLs.",
+                "paginated": false
             },
             {
                 "id": "suggest",
@@ -304,8 +324,8 @@ pub fn verticals() -> Value {
             }
         ],
         "unsupported": [
-            { "id": "cafe", "name": "Naver 카페 (Cafe)", "reason": "Tab exists in the app (ssc=tab.m_cafe.all) but was not verified over plain HTTP." },
-            { "id": "kin", "name": "Naver 지식iN (Q&A)", "reason": "Tab exists in the app (ssc=tab.m_kin.all) but was not verified over plain HTTP." }
+            { "id": "ai", "name": "Naver AI탭 (AI search tab)", "reason": "The app builds the AI-tab URL (ssc=tab.m_ait.all) and it is buildable via naver_build_search_url, but the page served over plain HTTP is a client-rendered shell with no server-rendered answer (measured live 2026-11-08); the answer loads through a separate client-side API that the APK analysis did not identify." },
+            { "id": "clip", "name": "Naver 클립 (Clip)", "reason": "Clip search uses a native API host (clip-api-ex.io.naver.com) whose API shape the APK analysis did not determine; no page-based route exists." }
         ],
         "builder_tool": "naver_build_search_url",
         "list_tool": "naver_list_verticals"
@@ -317,7 +337,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn verticals_lists_seven_supported() {
+    fn verticals_lists_nine_supported() {
         let v = verticals();
         let list = v["verticals"].as_array().unwrap();
         let ids: Vec<&str> = list.iter().map(|x| x["id"].as_str().unwrap()).collect();
@@ -330,6 +350,8 @@ mod tests {
                 "news",
                 "video",
                 "blog",
+                "cafe",
+                "kin",
                 "suggest"
             ]
         );

@@ -133,11 +133,11 @@ fn every_vertical_item_type_is_constructible_from_the_root() {
 fn offline_url_building_from_the_root() {
     assert_eq!(
         build_search_url("test", "web").unwrap(),
-        "https://yandex.ru/search/touch/?text=test"
+        "https://yandex.ru/search/touch/?text=test&ui=webmobileapp.yandex"
     );
     assert_eq!(
         build_search_url("test", "image").unwrap(),
-        "https://yandex.ru/images/touch/search?text=test&source=tabbar"
+        "https://yandex.ru/images/touch/search?text=test&source=tabbar&ui=webmobileapp.yandex"
     );
     // News is unsupported, with the reason in the error.
     let err = build_search_url("test", "news").unwrap_err().to_string();

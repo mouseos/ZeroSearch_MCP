@@ -4,9 +4,10 @@
 //! or breaks extraction, the counts and representative fields below move.
 
 use naver_search::{
-    extract_more_url, map_image_items, parse_blog_results, parse_image_results,
-    parse_integrated_results, parse_more_response, parse_news_results, parse_suggest_json,
-    parse_video_results, parse_web_results, MorePayload,
+    extract_more_url, map_image_items, parse_blog_results, parse_cafe_results,
+    parse_image_results, parse_integrated_results, parse_kin_results, parse_more_response,
+    parse_news_results, parse_suggest_json, parse_video_results, parse_web_results,
+    MorePayload,
 };
 
 fn fixture(name: &str) -> String {
@@ -16,10 +17,11 @@ fn fixture(name: &str) -> String {
 
 #[test]
 fn web_tab_fixture_batch() {
-    // This capture was fetched with a page=2 URL during the analysis —
-    // and is byte-equivalent in results to page 1, which is how the
-    // web tab's fixed top-selection batch was discovered. The ranks
-    // are Naver's own (sparse: 1, 1, 5, 6, 6, 18, 18, 20, 20).
+    // This capture was fetched with a page=2 URL during the analysis.
+    // Audit W-22 (2026-11-08) resolved why it matches page 1: the
+    // bar's page=2 link carries start=1, i.e. it points back at
+    // batch 1 — the batches do change (see web_paging_fixtures).
+    // The ranks are Naver's own (sparse: 1, 1, 5, 6, 6, 18, 18, 20, 20).
     let items = parse_web_results(&fixture("fixture-web-mobile.html"), 20).unwrap();
     assert_eq!(items.len(), 9, "the tab batch lists 9 results");
     assert_eq!(items[0].url, "https://test-it.co.kr/");
@@ -130,6 +132,49 @@ fn integrated_fixture_sections() {
         .iter()
         .flat_map(|s| &s.items)
         .all(|i| i.url.starts_with("http") && !i.title.is_empty()));
+    // Audit W-27: generic (non-web) sections now surface snippets
+    // where the page carries body text for an item. (The 뉴스
+    // section's cards carry no body text in the SSR markup, so the
+    // assertion is over all sections, not per-section.)
+    assert!(sections
+        .iter()
+        .flat_map(|s| &s.items)
+        .any(|i| i.snippet.is_some()));
+}
+
+#[test]
+fn web_paging_fixtures_are_disjoint_batches() {
+    // Captured live 2026-11-08 (audit W-22): batch 1 (the tab URL)
+    // and batch 2 (the bar's page=3&start=21 href) share no result
+    // URL — the web view really pages.
+    let batch1 = parse_web_results(&fixture("fixture-web-paging.html"), 30).unwrap();
+    let batch2 = parse_web_results(&fixture("fixture-web-page2-mobile.html"), 30).unwrap();
+    assert!(!batch1.is_empty() && !batch2.is_empty());
+    let urls1: Vec<&str> = batch1.iter().map(|i| i.url.as_str()).collect();
+    assert!(batch2.iter().all(|i| !urls1.contains(&i.url.as_str())));
+}
+
+#[test]
+fn cafe_fixture_parses_posts() {
+    // Captured live 2026-11-08 (audit W-21), query 커피.
+    let items = parse_cafe_results(&fixture("fixture-cafe-mobile.html"), 30).unwrap();
+    assert!(!items.is_empty(), "cafe items empty");
+    assert!(items
+        .iter()
+        .all(|i| i.url.contains("cafe.naver.com/") && !i.title.is_empty()));
+    assert!(items.iter().any(|i| i.cafe_name.is_some()));
+    assert!(items.iter().any(|i| i.snippet.is_some()));
+}
+
+#[test]
+fn kin_fixture_parses_questions() {
+    // Captured live 2026-11-08 (audit W-21), query 보험.
+    let items = parse_kin_results(&fixture("fixture-kin-mobile.html"), 30).unwrap();
+    assert!(!items.is_empty(), "kin items empty");
+    assert!(items
+        .iter()
+        .all(|i| i.url.contains("kin.naver.com/qna/") && !i.title.is_empty()));
+    assert!(items.iter().any(|i| i.snippet.is_some()));
 }
 
 #[test]
@@ -138,6 +183,9 @@ fn suggest_fixture_json() {
     let out = parse_suggest_json(&value);
     assert_eq!(out.len(), 10);
     assert_eq!(out[0].keyword, "네이버웹툰");
+    // Audit W-25: the candidate kind (second pair element) is kept.
+    assert_eq!(out[0].kind.as_deref(), Some("0"));
+    assert_eq!(out[1].kind.as_deref(), Some("1"));
     assert!(out
         .iter()
         .all(|s| s.search_url.contains("m.search.naver.com")));

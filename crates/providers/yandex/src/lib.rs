@@ -3,14 +3,17 @@
 //!
 //! Everything is read from the touch (mobile web) interface the official
 //! Yandex app itself uses. Requests reproduce the app's request shape — its
-//! user agent, `Accept-Language: ru-RU` and the `X-Requested-With:
-//! ru.yandex.searchplugin` header — and, critically, its *session*: Yandex
+//! user agent, `Accept-Language: ru-RU`, the `X-Requested-With:
+//! ru.yandex.searchplugin` and `X-Yandex-Flags` headers, and the
+//! `ui=webmobileapp.yandex` page parameter (audit W-39) — and, critically,
+//! its *session*: Yandex
 //! only serves page 2 and deeper, and the other verticals, to clients that
 //! first loaded a search page and kept the cookies the server issued. The
 //! client therefore keeps a cookie store and establishes the session from
 //! the web touch page before anything else, using only server-issued
 //! cookies. Nothing here needs an API key, a login or any user
-//! configuration.
+//! configuration. (The app's `clid` is a device-side identifier and is
+//! deliberately not sent: fabricating one would misstate the client.)
 //!
 //! If Yandex answers with a captcha challenge (`showcaptcha`) or HTTP
 //! 403/429, the call fails with an `access_restricted` error. The client
@@ -77,7 +80,7 @@
 //! assert_eq!(result.count, 1);
 //! assert_eq!(
 //!     yandex_search::build_search_url("тест", "web").unwrap(),
-//!     "https://yandex.ru/search/touch/?text=%D1%82%D0%B5%D1%81%D1%82"
+//!     "https://yandex.ru/search/touch/?text=%D1%82%D0%B5%D1%81%D1%82&ui=webmobileapp.yandex"
 //! );
 //! ```
 
@@ -93,7 +96,7 @@ pub mod urlbuild;
 pub mod video;
 pub mod web;
 
-use common::{ACCEPT_LANGUAGE, REQUESTED_WITH, USER_AGENT};
+use common::{ACCEPT_LANGUAGE, REQUESTED_WITH, USER_AGENT, YANDEX_FLAGS};
 
 // ── Root re-exports: the stable library surface ──
 //
@@ -112,10 +115,14 @@ pub use image::parse_image_results;
 pub use image::ImageItem;
 /// Suggest response parser for saved responses (offline).
 pub use suggest::parse_suggest_body;
+/// Suggest-endings response parser for saved responses (offline).
+pub use suggest::parse_suggest_endings_body;
 /// Autocomplete types returned by [`YandexSearchClient::suggest`].
 pub use suggest::{SuggestResult, Suggestion};
 /// Offline search-URL construction (the `yandex_build_search_url` tool).
 pub use urlbuild::build_search_url;
+/// Offline suggest-endings URL construction.
+pub use urlbuild::build_suggest_endings_url;
 /// Video page parser for saved pages (offline).
 pub use video::parse_video_results;
 /// Video item returned by [`YandexSearchClient::video_search`].
@@ -124,10 +131,23 @@ pub use video::VideoItem;
 pub use web::WebItem;
 /// Web page parser for saved pages (offline), and the approximate-total
 /// display string Yandex prints on the page.
-pub use web::{approx_total_text, parse_web_results};
+pub use web::{approx_total_text, parse_special_cards, parse_web_results, SpecialCard, WebSearchPage};
 
 /// Provider identifier used in every result envelope (`"yandex"`).
 pub const PROVIDER: &str = "yandex";
+
+/// Deepest page verified live within one cookie session (audit
+/// W-38). Measured 2026-11-08: pages 1 and 2 returned results in a
+/// single session; page 3 was answered with a captcha challenge
+/// (`access_restricted`). The analysis rounds had likewise only
+/// ever verified pages 1–2. Deeper pages are still attempted — the
+/// outcome may differ by query and time — but results beyond this
+/// page carry a note marking them as outside the verified range.
+pub const VERIFIED_MAX_PAGE: i64 = 2;
+
+/// Note attached to results beyond [`VERIFIED_MAX_PAGE`].
+pub(crate) const BEYOND_VERIFIED_NOTE: &str =
+    "Beyond the live-verified session range (pages 1-2; page 3 drew a captcha challenge when measured 2026-11-08).";
 
 /// Prefix of the error message returned when Yandex restricts access
 /// (captcha challenge or HTTP 403/429). Callers branch on this prefix; the
@@ -258,6 +278,7 @@ impl YandexSearchClient {
             )
             .header("Accept-Language", ACCEPT_LANGUAGE)
             .header("X-Requested-With", REQUESTED_WITH)
+            .header("X-Yandex-Flags", YANDEX_FLAGS)
             .send()
             .await?;
         let status = resp.status();

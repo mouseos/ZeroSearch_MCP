@@ -54,9 +54,41 @@ fn search_sort(s: &str) -> (usize, usize) {
         "lowest_price" | "price_asc" => (4, 1),
         "highest_price" | "price_desc" => (4, 0),
         "similarity" => (5, 0),
+        // [S1-24] SORT_PRICE_WITHOUT_TIME_FILTER (index 6). Bare name
+        // follows the enum default order (ORDER_DESC, index 0); explicit
+        // asc/desc spellings select the order.
+        "price_without_time_filter" | "sort_price_without_time_filter" => (6, 0),
+        "price_asc_without_time_filter" | "lowest_price_without_time_filter" => (6, 1),
+        "price_desc_without_time_filter" | "highest_price_without_time_filter" => (6, 0),
         _ => (0, 0),
     }
 }
+
+/// Every input spelling accepted by [`search_sort`], for tool docs / wiring.
+pub const SEARCH_SORT_SPELLINGS: &[&str] = &[
+    "default",
+    "recommended",
+    "score",
+    "relevance",
+    "newest",
+    "created_desc",
+    "oldest",
+    "created_asc",
+    "liked",
+    "likes",
+    "num_likes",
+    "lowest_price",
+    "price_asc",
+    "highest_price",
+    "price_desc",
+    "similarity",
+    "price_without_time_filter",
+    "sort_price_without_time_filter",
+    "price_asc_without_time_filter",
+    "lowest_price_without_time_filter",
+    "price_desc_without_time_filter",
+    "highest_price_without_time_filter",
+];
 
 fn search_status_value(s: &str) -> Option<usize> {
     match s.to_lowercase().as_str() {
@@ -136,6 +168,223 @@ pub struct SearchParams {
     pub color_ids: String,
     pub item_types: String,
     pub exclude_auction: bool,
+    // [S1-21] Previously hard-coded searchCondition fields, now caller-set.
+    /// Sent verbatim as `hasCoupon`.
+    pub has_coupon: bool,
+    /// Raw JSON attribute filter objects, sent verbatim as `attributes`.
+    /// The upstream attribute-object shape is not pinned by any fixture in
+    /// this crate, so values pass through untouched instead of being
+    /// remodelled (and possibly mangled) here.
+    pub attributes: Vec<Value>,
+    /// Sent as `skuIds` (numeric id array, like the neighbouring
+    /// categoryId / brandId / colorId arrays).
+    pub sku_ids: Vec<i64>,
+    /// Sent as `shopIds` (numeric id array).
+    pub shop_ids: Vec<i64>,
+    /// Sent as `excludeShippingMethodIds` (numeric id array).
+    pub exclude_shipping_method_ids: Vec<i64>,
+    /// Sent as `shippingFromArea` (numeric area / prefecture id array).
+    pub shipping_from_area: Vec<i64>,
+    /// Sent as `shippingMethod` (numeric shipping-method id array).
+    pub shipping_method: Vec<i64>,
+}
+
+/// Build the exact wire JSON for `entities:search` from typed params.
+/// Pure (no I/O) so the [S1-21] fields can be asserted offline.
+pub fn build_search_request(params: &SearchParams, limit: i32, session_id: &str) -> Value {
+    let (sort_idx, order_idx) = search_sort(&params.sort);
+
+    let mut status_list = vec![];
+    if let Some(sv) = search_status_value(&params.status) {
+        status_list.push(enum_at(STATUS_ENUMS, sv));
+    }
+
+    let mut item_type_list = vec![];
+    for t in split_values(&params.item_types) {
+        match t.to_lowercase().as_str() {
+            "mercari" | "item" => item_type_list.push("ITEM_TYPE_MERCARI"),
+            "beyond" | "shops" | "shop" => item_type_list.push("ITEM_TYPE_BEYOND"),
+            _ => {}
+        }
+    }
+
+    let condition = json!({
+        "keyword": params.query,
+        "excludeKeyword": params.exclude_keyword,
+        "sort": enum_at(SORT_ENUMS, sort_idx),
+        "order": enum_at(ORDER_ENUMS, order_idx),
+        "status": status_list,
+        "sizeId": split_values(&params.size_ids),
+        "categoryId": int_list(&params.category_ids),
+        "brandId": int_list(&params.brand_ids),
+        "sellerId": split_values(&params.seller_ids),
+        "priceMin": params.price_min.unwrap_or(0),
+        "priceMax": params.price_max.unwrap_or(0),
+        "itemConditionId": int_list(&params.item_condition_ids),
+        "shippingPayerId": int_list(&params.shipping_payer_ids),
+        "colorId": int_list(&params.color_ids),
+        "hasCoupon": params.has_coupon,
+        "attributes": params.attributes,
+        "itemTypes": item_type_list,
+        "skuIds": params.sku_ids,
+        "shopIds": params.shop_ids,
+        "excludeShippingMethodIds": params.exclude_shipping_method_ids,
+        "shippingFromArea": params.shipping_from_area,
+        "shippingMethod": params.shipping_method,
+    });
+
+    json!({
+        "userId": "",
+        "config": {"responseToggles": []},
+        "pageSize": limit,
+        "pageToken": params.page_token,
+        "searchSessionId": session_id,
+        "source": "BaseSerp",
+        "searchCondition": condition,
+        "serviceFrom": "suruga",
+        "withItemBrand": true,
+        "withItemSizes": true,
+        "withItemPromotions": true,
+        "withAuction": true,
+        "useDynamicAttribute": true,
+    })
+}
+
+/// Query params for `items/get_items` [S1-23]. The `offset` argument is
+/// retained for signature compatibility but is NEVER sent: live probing
+/// (2026-11-08) proved the endpoint ignores both `offset` and `page`
+/// (page 2 returned byte-identical data), so no continuation parameter
+/// is fabricated here. The endpoint's real continuation mechanism is
+/// unidentified; its `meta` carries only `has_next` / `total_item_count`.
+pub fn build_seller_items_params(
+    seller_id: &str,
+    status: &str,
+    limit: i32,
+    offset: i32,
+) -> Vec<(String, String)> {
+    let _ = offset;
+    vec![
+        ("seller_id".to_string(), seller_id.to_string()),
+        ("status".to_string(), status.to_string()),
+        ("limit".to_string(), limit.to_string()),
+        ("with_auction".to_string(), "true".to_string()),
+        ("with_total_item_count".to_string(), "true".to_string()),
+    ]
+}
+
+/// Extract whatever continuation state the seller-items `meta` actually
+/// carries. This tolerantly surfaces both spellings (`nextPageToken` /
+/// `next_page_token`, `has_next` / `hasNext`, total counts) when present.
+/// `next_offset` is always null: offset continuation was disproven live
+/// (see [`build_seller_items_params`]), so no usable offset is claimed.
+pub fn seller_items_pagination(
+    meta: Option<&Value>,
+    offset: i32,
+    returned: usize,
+    limit: i32,
+) -> Value {
+    let _ = (returned, limit);
+    let mut out = json!({
+        "offset": offset,
+        "next_offset": Value::Null,
+    });
+    if let Some(meta) = meta.filter(|m| m.is_object()) {
+        if let Some(tok) = meta
+            .get("nextPageToken")
+            .or_else(|| meta.get("next_page_token"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            out["next_page_token"] = json!(tok);
+        }
+        if let Some(has_next) = meta
+            .get("has_next")
+            .or_else(|| meta.get("hasNext"))
+            .and_then(|v| v.as_bool())
+        {
+            out["has_next"] = json!(has_next);
+        }
+        for key in [
+            "totalItemCount",
+            "total_item_count",
+            "numFound",
+            "num_found",
+            "total",
+        ] {
+            if let Some(n) = meta.get(key).and_then(to_int) {
+                out["total_item_count"] = json!(n);
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Query params for `reviews/history` [S1-22]. Always the original
+/// three params, for every page value: live probing (2026-11-08) proved
+/// the endpoint ignores both `offset` and `page` (page 2 returned
+/// byte-identical data), so no continuation parameter is fabricated
+/// here. `meta` exposes `has_next` and a `requested` value whose role
+/// as a cursor is undetermined. [`MercariClient::get_reviews`] rejects
+/// page > 1 explicitly instead of silently returning page 1 again.
+pub fn build_reviews_params(seller_id: &str, page: i32, limit: i32) -> Vec<(String, String)> {
+    let _ = page;
+    vec![
+        ("user_id".to_string(), seller_id.to_string()),
+        ("fame".to_string(), "good,normal,bad".to_string()),
+        ("limit".to_string(), limit.to_string()),
+    ]
+}
+
+/// Normalize a `reviews/history` response body. Pure, for fixture tests.
+pub fn normalize_reviews_response(body: &Value, seller_id: &str, page: i32, limit: i32) -> Value {
+    let meta = &body["meta"];
+    let reviews: Vec<Value> = body["data"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|r| {
+                    if !r.is_object() {
+                        return None;
+                    }
+                    Some(json!({
+                        "rating": r["fame"].as_str().unwrap_or("unknown"),
+                        "message": r["message"].as_str().unwrap_or(""),
+                        "reviewer_name": r["user"]["name"].as_str().unwrap_or(""),
+                        "reviewer_id": r["user"]["id"].as_i64()
+                            .map(|id| id.to_string())
+                            .or_else(|| r["user"]["id"].as_str().map(|s| s.to_string()))
+                            .unwrap_or_default(),
+                        "role": r["subject"].as_str().unwrap_or(""),
+                        "date": to_int(&r["created"]),
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let ratings = &meta["ratings"];
+    let good = ratings["good"].as_i64().unwrap_or(0);
+    let normal = ratings["normal"].as_i64().unwrap_or(0);
+    let bad = ratings["bad"].as_i64().unwrap_or(0);
+    let count = reviews.len();
+
+    json!({
+        "provider": "mercari",
+        "ok": true,
+        "seller_id": seller_id,
+        "page": page.max(1),
+        "ratings_summary": {
+            "good": good,
+            "normal": normal,
+            "bad": bad,
+            "total": meta["num_ratings"].as_i64().unwrap_or(good + normal + bad),
+            "star_rating": meta["star_rating_score"].as_i64().unwrap_or(0),
+        },
+        "reviews": reviews,
+        "has_next": meta["has_next"].as_bool().unwrap_or(false),
+        "count": count,
+    })
 }
 
 pub struct MercariClient {
@@ -158,62 +407,7 @@ impl MercariClient {
     pub async fn search_products(&self, params: SearchParams) -> Result<Value> {
         let limit = params.limit.clamp(1, 120);
         let session_id = uuid::Uuid::new_v4().to_string();
-        let (sort_idx, order_idx) = search_sort(&params.sort);
-
-        let mut status_list = vec![];
-        if let Some(sv) = search_status_value(&params.status) {
-            status_list.push(enum_at(STATUS_ENUMS, sv));
-        }
-
-        let mut item_type_list = vec![];
-        for t in split_values(&params.item_types) {
-            match t.to_lowercase().as_str() {
-                "mercari" | "item" => item_type_list.push("ITEM_TYPE_MERCARI"),
-                "beyond" | "shops" | "shop" => item_type_list.push("ITEM_TYPE_BEYOND"),
-                _ => {}
-            }
-        }
-
-        let condition = json!({
-            "keyword": params.query,
-            "excludeKeyword": params.exclude_keyword,
-            "sort": enum_at(SORT_ENUMS, sort_idx),
-            "order": enum_at(ORDER_ENUMS, order_idx),
-            "status": status_list,
-            "sizeId": split_values(&params.size_ids),
-            "categoryId": int_list(&params.category_ids),
-            "brandId": int_list(&params.brand_ids),
-            "sellerId": split_values(&params.seller_ids),
-            "priceMin": params.price_min.unwrap_or(0),
-            "priceMax": params.price_max.unwrap_or(0),
-            "itemConditionId": int_list(&params.item_condition_ids),
-            "shippingPayerId": int_list(&params.shipping_payer_ids),
-            "colorId": int_list(&params.color_ids),
-            "hasCoupon": false,
-            "attributes": [],
-            "itemTypes": item_type_list,
-            "skuIds": [],
-            "shopIds": [],
-            "excludeShippingMethodIds": [],
-            "shippingFromArea": [],
-            "shippingMethod": [],
-        });
-
-        let request = json!({
-            "userId": "",
-            "config": {"responseToggles": []},
-            "pageSize": limit,
-            "pageToken": params.page_token,
-            "searchSessionId": session_id,
-            "source": "BaseSerp",
-            "searchCondition": condition,
-            "serviceFrom": "suruga",
-            "withItemBrand": true,
-            "withItemSizes": true,
-            "withItemPromotions": true,
-            "withAuction": true,
-            "useDynamicAttribute": true,
-        });
+        let request = build_search_request(&params, limit, &session_id);
 
         let body = self.post_json(SEARCH_ENDPOINT, &request).await?;
         let items = normalize_search_response(&body);
@@ -288,15 +482,38 @@ impl MercariClient {
         status: &str,
         limit: i32,
     ) -> Result<Value> {
+        self.search_seller_products_with_offset(seller_id, status, limit, 0)
+            .await
+    }
+
+    /// [S1-23] Seller item list. `offset == 0` sends exactly the
+    /// parameters the original method sent. `offset > 0` is rejected
+    /// explicitly: live probing (2026-11-08) proved `items/get_items`
+    /// ignores both `offset` and `page` (page 2 is byte-identical to
+    /// page 1), and its `meta` carries no continuation token (only
+    /// `has_next` / `total_item_count`), so the real continuation
+    /// mechanism is unidentified. The result still surfaces whatever
+    /// continuation fields `meta` actually contains
+    /// (`next_page_token` / `has_next`, extracted tolerantly by
+    /// [`seller_items_pagination`]); `next_offset` is always null.
+    pub async fn search_seller_products_with_offset(
+        &self,
+        seller_id: &str,
+        status: &str,
+        limit: i32,
+        offset: i32,
+    ) -> Result<Value> {
+        let offset = offset.max(0);
+        if offset > 0 {
+            anyhow::bail!(
+                "mercari seller items offset {offset} is unavailable: items/get_items \
+                 ignores offset/page parameters (live-verified); only the first page \
+                 can be fetched"
+            );
+        }
         let url = format!("{API_BASE}{ITEMS_GET_ENDPOINT}");
         let limit = limit.clamp(1, 100);
-        let params = [
-            ("seller_id", seller_id.to_string()),
-            ("status", status.to_string()),
-            ("limit", limit.to_string()),
-            ("with_auction", "true".to_string()),
-            ("with_total_item_count", "true".to_string()),
-        ];
+        let params = build_seller_items_params(seller_id, status, limit, offset);
 
         let dpop_proof = {
             let full_url = reqwest::Url::parse_with_params(&url, &params)?;
@@ -331,13 +548,18 @@ impl MercariClient {
             })
             .unwrap_or_default();
 
+        let count = items.len();
         Ok(json!({
             "provider": "mercari",
             "ok": true,
             "seller_id": seller_id,
             "status": status,
             "items": items,
-            "count": items.len(),
+            "count": count,
+            "offset": offset,
+            "limit": limit,
+            "next_offset": Value::Null,
+            "pagination": seller_items_pagination(data.get("meta"), offset, count, limit),
             "meta": data.get("meta"),
         }))
     }
@@ -441,17 +663,30 @@ impl MercariClient {
         }))
     }
 
-    pub async fn get_reviews(&self, seller_id: &str, _page: i32, limit: i32) -> Result<Value> {
+    pub async fn get_reviews(&self, seller_id: &str, page: i32, limit: i32) -> Result<Value> {
         let limit = limit.clamp(1, 100);
+        let page = page.max(1);
+        if page > 1 {
+            // [S1-22] The endpoint ignores `offset` and `page` alike
+            // (live-verified 2026-11-08: page 2 is byte-identical to
+            // page 1). Fail explicitly rather than return page 1 again
+            // labelled as page 2. The real continuation mechanism is
+            // unidentified (meta carries has_next and an undetermined
+            // `requested` value only).
+            anyhow::bail!(
+                "mercari reviews page {page} is unavailable: reviews/history ignores \
+                 offset/page parameters (live-verified); only page 1 can be fetched"
+            );
+        }
         let url = format!("{API_BASE}{REVIEWS_ENDPOINT}");
-        let params = [
-            ("user_id", seller_id.to_string()),
-            ("fame", "good,normal,bad".to_string()),
-            ("limit", limit.to_string()),
-        ];
+        let params = build_reviews_params(seller_id, page, limit);
+        let params_ref: Vec<(&str, &str)> = params
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
 
         let dpop_proof = {
-            let full_url = reqwest::Url::parse_with_params(&url, &params)?;
+            let full_url = reqwest::Url::parse_with_params(&url, &params_ref)?;
             let signer = self.dpop.lock().await;
             signer.proof("GET", full_url.as_ref())
         };
@@ -459,7 +694,7 @@ impl MercariClient {
         let resp = self
             .client
             .get(&url)
-            .query(&params)
+            .query(&params_ref)
             .header("DPoP", dpop_proof)
             .header("X-Platform", "web")
             .header("Accept-Language", "ja-JP")
@@ -469,52 +704,7 @@ impl MercariClient {
             .error_for_status()?;
 
         let body: Value = resp.json().await?;
-        let meta = &body["meta"];
-
-        let reviews: Vec<Value> = body["data"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|r| {
-                        if !r.is_object() {
-                            return None;
-                        }
-                        Some(json!({
-                            "rating": r["fame"].as_str().unwrap_or("unknown"),
-                            "message": r["message"].as_str().unwrap_or(""),
-                            "reviewer_name": r["user"]["name"].as_str().unwrap_or(""),
-                            "reviewer_id": r["user"]["id"].as_i64()
-                                .map(|id| id.to_string())
-                                .or_else(|| r["user"]["id"].as_str().map(|s| s.to_string()))
-                                .unwrap_or_default(),
-                            "role": r["subject"].as_str().unwrap_or(""),
-                            "date": to_int(&r["created"]),
-                        }))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let ratings = &meta["ratings"];
-        let good = ratings["good"].as_i64().unwrap_or(0);
-        let normal = ratings["normal"].as_i64().unwrap_or(0);
-        let bad = ratings["bad"].as_i64().unwrap_or(0);
-
-        Ok(json!({
-            "provider": "mercari",
-            "ok": true,
-            "seller_id": seller_id,
-            "ratings_summary": {
-                "good": good,
-                "normal": normal,
-                "bad": bad,
-                "total": meta["num_ratings"].as_i64().unwrap_or(good + normal + bad),
-                "star_rating": meta["star_rating_score"].as_i64().unwrap_or(0),
-            },
-            "reviews": reviews,
-            "has_next": meta["has_next"].as_bool().unwrap_or(false),
-            "count": reviews.len(),
-        }))
+        Ok(normalize_reviews_response(&body, seller_id, page, limit))
     }
 
     async fn post_json(&self, path: &str, body: &Value) -> Result<Value> {
@@ -843,6 +1033,155 @@ mod tests {
         assert_eq!(search_sort("price_desc"), (4, 0));
     }
 
+    // [S1-24]
+    #[test]
+    fn test_search_sort_price_without_time_filter() {
+        assert_eq!(search_sort("price_without_time_filter"), (6, 0));
+        assert_eq!(search_sort("SORT_PRICE_WITHOUT_TIME_FILTER"), (6, 0));
+        assert_eq!(search_sort("price_asc_without_time_filter"), (6, 1));
+        assert_eq!(search_sort("lowest_price_without_time_filter"), (6, 1));
+        assert_eq!(search_sort("price_desc_without_time_filter"), (6, 0));
+        assert_eq!(search_sort("highest_price_without_time_filter"), (6, 0));
+        let req = build_search_request(
+            &SearchParams {
+                query: "x".into(),
+                sort: "price_asc_without_time_filter".into(),
+                ..Default::default()
+            },
+            20,
+            "sess",
+        );
+        assert_eq!(
+            req["searchCondition"]["sort"],
+            "SORT_PRICE_WITHOUT_TIME_FILTER"
+        );
+        assert_eq!(req["searchCondition"]["order"], "ORDER_ASC");
+        for s in [
+            "price_without_time_filter",
+            "sort_price_without_time_filter",
+            "price_asc_without_time_filter",
+            "lowest_price_without_time_filter",
+            "price_desc_without_time_filter",
+            "highest_price_without_time_filter",
+        ] {
+            assert!(
+                SEARCH_SORT_SPELLINGS.contains(&s),
+                "spelling list must contain {s}"
+            );
+            // Every published spelling must actually map to index 6.
+            assert_eq!(search_sort(s).0, 6, "spelling {s}");
+        }
+    }
+
+    // [S1-21]
+    #[test]
+    fn test_build_search_request_extras_reach_wire() {
+        let params = SearchParams {
+            query: "バッグ".into(),
+            has_coupon: true,
+            attributes: vec![json!({"attributeId": 1, "valueIds": [2, 3]})],
+            sku_ids: vec![111, 222],
+            shop_ids: vec![333],
+            exclude_shipping_method_ids: vec![4, 5],
+            shipping_from_area: vec![1, 13],
+            shipping_method: vec![7],
+            ..Default::default()
+        };
+        let req = build_search_request(&params, 20, "sess-1");
+        let c = &req["searchCondition"];
+        assert_eq!(c["hasCoupon"], true);
+        assert_eq!(c["attributes"][0]["attributeId"], 1);
+        assert_eq!(c["attributes"][0]["valueIds"], json!([2, 3]));
+        assert_eq!(c["skuIds"], json!([111, 222]));
+        assert_eq!(c["shopIds"], json!([333]));
+        assert_eq!(c["excludeShippingMethodIds"], json!([4, 5]));
+        assert_eq!(c["shippingFromArea"], json!([1, 13]));
+        assert_eq!(c["shippingMethod"], json!([7]));
+        assert_eq!(req["searchSessionId"], "sess-1");
+    }
+
+    // [S1-21] Defaults must preserve the previous fixed wire values.
+    #[test]
+    fn test_build_search_request_defaults_preserve_old_fixed_values() {
+        let req = build_search_request(
+            &SearchParams {
+                query: "x".into(),
+                ..Default::default()
+            },
+            20,
+            "sess",
+        );
+        let c = &req["searchCondition"];
+        assert_eq!(c["hasCoupon"], false);
+        assert_eq!(c["attributes"], json!([]));
+        assert_eq!(c["skuIds"], json!([]));
+        assert_eq!(c["shopIds"], json!([]));
+        assert_eq!(c["excludeShippingMethodIds"], json!([]));
+        assert_eq!(c["shippingFromArea"], json!([]));
+        assert_eq!(c["shippingMethod"], json!([]));
+    }
+
+    // [S1-22] Live probing disproved offset/page continuation, so the
+    // params builder must never emit a continuation parameter.
+    #[test]
+    fn test_reviews_params_have_no_continuation() {
+        for page in [1, 2, 3] {
+            let p = build_reviews_params("42", page, 20);
+            assert_eq!(p.len(), 3, "params must stay the original three: {p:?}");
+            assert!(!p.iter().any(|(k, _)| k == "offset" || k == "page"));
+        }
+    }
+
+    // [S1-22]
+    #[test]
+    fn test_normalize_reviews_response_fixture() {
+        let body = json!({
+            "data": [
+                {"fame": "good", "message": "ありがとうございました", "subject": "seller",
+                 "created": 1700000000_i64, "user": {"id": 99, "name": "buyer-a"}},
+                {"fame": "bad", "message": "", "subject": "seller",
+                 "created": "1700000100", "user": {"id": "100", "name": "buyer-b"}}
+            ],
+            "meta": {
+                "has_next": true,
+                "num_ratings": 12,
+                "star_rating_score": 5,
+                "ratings": {"good": 10, "normal": 1, "bad": 1}
+            }
+        });
+        let out = normalize_reviews_response(&body, "42", 2, 5);
+        assert_eq!(out["page"], 2);
+        assert_eq!(out["has_next"], true);
+        assert_eq!(out["count"], 2);
+        assert_eq!(out["ratings_summary"]["total"], 12);
+        assert_eq!(out["reviews"][0]["reviewer_id"], "99");
+        assert_eq!(out["reviews"][1]["reviewer_id"], "100");
+        assert_eq!(out["reviews"][1]["date"], 1700000100_i64);
+    }
+
+    // [S1-23] Offset continuation was disproven live; the params
+    // builder never emits it and next_offset stays null.
+    #[test]
+    fn test_seller_items_pagination() {
+        for off in [0, 30] {
+            let p = build_seller_items_params("42", "on_sale", 30, off);
+            assert!(
+                !p.iter().any(|(k, _)| k == "offset" || k == "page"),
+                "no continuation parameter may be sent: {p:?}"
+            );
+        }
+        // Tolerant meta extraction, both spellings.
+        let meta = json!({"nextPageToken": "tok-abc", "has_next": true, "totalItemCount": 87});
+        let pg = seller_items_pagination(Some(&meta), 0, 30, 30);
+        assert_eq!(pg["next_page_token"], "tok-abc");
+        assert_eq!(pg["has_next"], true);
+        assert_eq!(pg["total_item_count"], 87);
+        assert_eq!(pg["next_offset"], Value::Null);
+        let pg_none = seller_items_pagination(None, 0, 3, 30);
+        assert!(pg_none.get("next_page_token").is_none());
+        assert_eq!(pg_none["next_offset"], Value::Null);
+    }
+
     #[test]
     fn test_extract_item_id_url_variants() {
         assert_eq!(
@@ -1033,6 +1372,27 @@ mod tests {
         assert!(!items.is_empty(), "multi-word search returned 0 items");
     }
 
+    // [S1-24] The index-6 sort (SORT_PRICE_WITHOUT_TIME_FILTER) must be
+    // accepted by the live search API via its new spellings.
+    #[tokio::test]
+    #[ignore = "live test: verify index-6 sort is accepted"]
+    async fn test_live_search_sort_price_without_time_filter() {
+        let client = MercariClient::new();
+        let result = client
+            .search_products(SearchParams {
+                query: "カメラ".into(),
+                limit: 5,
+                sort: "price_without_time_filter".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(result["ok"], true, "index-6 sort failed: {}", result);
+        assert_eq!(result["sort"], "price_without_time_filter");
+        let items = result["items"].as_array().unwrap();
+        assert!(!items.is_empty(), "index-6 sort returned 0 items");
+    }
+
     #[tokio::test]
     #[ignore = "live test: run with --ignored"]
     async fn test_live_search_sort_price() {
@@ -1218,6 +1578,171 @@ mod tests {
                 e
             ),
         }
+    }
+
+    // [S1-22/S1-23 probe] Raw-shape probe: `offset` was ignored by both
+    // endpoints live (2026-11-08). Fetch page 1 raw, then the same
+    // request plus `page=2`, and print meta + leading ids so the real
+    // continuation parameter can be identified from evidence.
+    #[tokio::test]
+    #[ignore = "live probe: identify the real pagination parameter"]
+    async fn test_live_probe_pagination_params() {
+        async fn raw_get(client: &MercariClient, endpoint: &str, params: &[(&str, &str)]) -> Value {
+            let url = format!("{API_BASE}{endpoint}");
+            let dpop_proof = {
+                let full_url = reqwest::Url::parse_with_params(&url, params).unwrap();
+                let signer = client.dpop.lock().await;
+                signer.proof("GET", full_url.as_ref())
+            };
+            client
+                .client
+                .get(&url)
+                .query(&params)
+                .header("DPoP", dpop_proof)
+                .header("X-Platform", "web")
+                .header("Accept-Language", "ja-JP")
+                .header("Accept", "application/json")
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap()
+        }
+        let client = MercariClient::new();
+        let search = client
+            .search_products(SearchParams {
+                query: "バッグ".into(),
+                limit: 5,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let seller_id = search["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|i| {
+                i["seller_id"]
+                    .as_str()
+                    .map(str::to_string)
+                    .or_else(|| i["seller_id"].as_i64().map(|n| n.to_string()))
+            })
+            .expect("need a seller_id");
+        println!("PROBE seller_id={seller_id}");
+
+        let rev_base: Vec<(&str, &str)> = vec![
+            ("user_id", seller_id.as_str()),
+            ("fame", "good,normal,bad"),
+            ("limit", "5"),
+        ];
+        let rev1 = raw_get(&client, REVIEWS_ENDPOINT, &rev_base).await;
+        let mut rev2_params = rev_base.clone();
+        rev2_params.push(("page", "2"));
+        let rev2 = raw_get(&client, REVIEWS_ENDPOINT, &rev2_params).await;
+        println!("PROBE reviews meta p1: {}", rev1["meta"]);
+        println!("PROBE reviews meta p2(page=2): {}", rev2["meta"]);
+        println!(
+            "PROBE reviews data differs with page=2: {}",
+            rev1["data"] != rev2["data"]
+        );
+
+        let items_base: Vec<(&str, &str)> = vec![
+            ("seller_id", seller_id.as_str()),
+            ("status", "on_sale"),
+            ("limit", "5"),
+            ("with_auction", "true"),
+            ("with_total_item_count", "true"),
+        ];
+        let it1 = raw_get(&client, ITEMS_GET_ENDPOINT, &items_base).await;
+        let mut it2_params = items_base.clone();
+        it2_params.push(("page", "2"));
+        let it2 = raw_get(&client, ITEMS_GET_ENDPOINT, &it2_params).await;
+        println!("PROBE items meta p1: {}", it1["meta"]);
+        println!("PROBE items meta p2(page=2): {}", it2["meta"]);
+        println!(
+            "PROBE items data differs with page=2: {}",
+            it1["data"] != it2["data"]
+        );
+    }
+
+    // [S1-22] Live-verified 2026-11-08: offset/page are ignored by the
+    // endpoint, so page 2 must now fail explicitly (client-side, no
+    // send) instead of returning page 1 again.
+    #[tokio::test]
+    #[ignore = "live test: verify reviews page2 is rejected explicitly"]
+    async fn test_live_get_reviews_page2_differs() {
+        let client = MercariClient::new();
+        let search = client
+            .search_products(SearchParams {
+                query: "バッグ".into(),
+                limit: 5,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let seller_id = search["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|i| {
+                i["seller_id"]
+                    .as_str()
+                    .map(str::to_string)
+                    .or_else(|| i["seller_id"].as_i64().map(|n| n.to_string()))
+            })
+            .expect("need a seller_id");
+        let p1 = client.get_reviews(&seller_id, 1, 5).await.unwrap();
+        assert_eq!(p1["ok"], true, "page1 failed: {p1}");
+        if p1["has_next"] == true {
+            let p2 = client.get_reviews(&seller_id, 2, 5).await;
+            assert!(
+                p2.is_err(),
+                "page2 must be rejected explicitly, got: {p2:?}"
+            );
+        }
+    }
+
+    // [S1-23] Live-verified 2026-11-08: offset/page are ignored by the
+    // endpoint, so offset > 0 must fail explicitly (client-side).
+    #[tokio::test]
+    #[ignore = "live test: verify seller items offset is rejected explicitly"]
+    async fn test_live_seller_items_offset_differs() {
+        let client = MercariClient::new();
+        let search = client
+            .search_products(SearchParams {
+                query: "バッグ".into(),
+                limit: 5,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let seller_id = search["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|i| {
+                i["seller_id"]
+                    .as_str()
+                    .map(str::to_string)
+                    .or_else(|| i["seller_id"].as_i64().map(|n| n.to_string()))
+            })
+            .expect("need a seller_id");
+        let p1 = client
+            .search_seller_products_with_offset(&seller_id, "on_sale", 5, 0)
+            .await
+            .unwrap();
+        assert_eq!(p1["ok"], true, "seller items failed: {p1}");
+        assert_eq!(p1["next_offset"], Value::Null);
+        let p2 = client
+            .search_seller_products_with_offset(&seller_id, "on_sale", 5, 5)
+            .await;
+        assert!(
+            p2.is_err(),
+            "offset > 0 must be rejected explicitly, got: {p2:?}"
+        );
     }
 
     #[tokio::test]

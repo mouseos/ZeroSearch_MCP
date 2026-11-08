@@ -21,6 +21,13 @@ use crate::common::*;
 use crate::urlbuild::{web_api_url, WEB_PER_PAGE};
 use crate::{BingSearchClient, SearchResult};
 
+/// One deep link (site link) nested under a web result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeepLink {
+    pub name: String,
+    pub url: String,
+}
+
 /// One organic web result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebItem {
@@ -32,6 +39,21 @@ pub struct WebItem {
     pub display_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
+    /// Site links the API nests under the result (audit W-14).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deep_links: Vec<DeepLink>,
+    /// ISO-8601 crawl timestamp (`dateLastCrawled`, audit W-14).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub date_last_crawled: Option<String>,
+    /// Content language code (`language`, audit W-14).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_family_friendly: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_navigational: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumbnail_url: Option<String>,
 }
 
 /// Parsed web search API response: items plus the paging facts and the
@@ -42,6 +64,9 @@ pub struct WebResults {
     pub total_hits: Option<i64>,
     pub has_next_page: bool,
     pub related_queries: Vec<String>,
+    /// `webPages.someResultsRemoved`: the API's own flag that some
+    /// results were withheld (audit W-14).
+    pub some_results_removed: Option<bool>,
 }
 
 /// Parse a v7 search API response (offline-testable). `limit` caps the
@@ -88,12 +113,48 @@ pub fn parse_web_results(value: &Value, limit: usize) -> Result<WebResults> {
                 .and_then(|s| s.as_str())
                 .map(clean_text)
                 .filter(|s| !s.is_empty());
+            let deep_links = entry
+                .get("deepLinks")
+                .and_then(|d| d.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|d| {
+                            let name = d
+                                .get("name")
+                                .and_then(|n| n.as_str())
+                                .map(clean_text)
+                                .filter(|s| !s.is_empty())?;
+                            let url = d
+                                .get("url")
+                                .and_then(|u| u.as_str())
+                                .filter(|s| !s.is_empty())?
+                                .to_string();
+                            Some(DeepLink { name, url })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let raw_str = |key: &str| {
+                entry
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            };
             items.push(WebItem {
                 rank: items.len() as i64 + 1,
                 title,
                 url,
                 display_url,
                 snippet,
+                deep_links,
+                date_last_crawled: raw_str("dateLastCrawled"),
+                language: raw_str("language"),
+                is_family_friendly: entry
+                    .get("isFamilyFriendly")
+                    .and_then(|v| v.as_bool()),
+                is_navigational: entry.get("isNavigational").and_then(|v| v.as_bool()),
+                thumbnail_url: raw_str("thumbnailUrl"),
             });
         }
     }
@@ -128,6 +189,9 @@ pub fn parse_web_results(value: &Value, limit: usize) -> Result<WebResults> {
         total_hits,
         has_next_page,
         related_queries,
+        some_results_removed: web_pages
+            .get("someResultsRemoved")
+            .and_then(|v| v.as_bool()),
     })
 }
 
@@ -153,11 +217,21 @@ impl BingSearchClient {
             item.rank += (page - 1) * WEB_PER_PAGE;
         }
         let count = items.len();
+        let note = if parsed.some_results_removed == Some(true) {
+            Some(
+                "Bing reports that some results were removed for this query (someResultsRemoved)"
+                    .to_string(),
+            )
+        } else if count == 0 {
+            Some("Bing returned no results".to_string())
+        } else {
+            None
+        };
         Ok(SearchResult::new("web", query, page, items)
             .with_total(parsed.total_hits)
             .with_next_page(parsed.has_next_page.then_some(page + 1))
             .with_related_queries(parsed.related_queries)
-            .with_note_opt((count == 0).then(|| "Bing returned no results".to_string())))
+            .with_note_opt(note))
     }
 }
 
@@ -210,6 +284,67 @@ mod tests {
         assert_eq!(parsed.items[1].rank, 2);
         assert!(!parsed.has_next_page);
         assert_eq!(parsed.total_hits, None);
+    }
+
+    #[test]
+    fn parse_reads_extended_fields_and_removal_flag() {
+        // Keys mirror the real fixture fixture-web-ja.json (audit W-14).
+        let value = json!({
+            "webPages": {
+                "someResultsRemoved": true,
+                "totalEstimatedMatches": 10,
+                "value": [{
+                    "name": "Fast",
+                    "url": "https://fast.com/",
+                    "displayUrl": "https://fast.com",
+                    "snippet": "speed",
+                    "deepLinks": [{"name": "Share", "url": "https://fast.com/share"}],
+                    "dateLastCrawled": "2026-11-06T14:59:00.0000000Z",
+                    "language": "ja",
+                    "isFamilyFriendly": true,
+                    "isNavigational": true
+                }, {
+                    "name": "Thumb",
+                    "url": "https://thumb.example/",
+                    "thumbnailUrl": "https://ts.example/th?id=1"
+                }]
+            }
+        });
+        let parsed = parse_web_results(&value, 10).unwrap();
+        assert_eq!(parsed.some_results_removed, Some(true));
+        let first = &parsed.items[0];
+        assert_eq!(first.deep_links.len(), 1);
+        assert_eq!(first.deep_links[0].url, "https://fast.com/share");
+        assert_eq!(
+            first.date_last_crawled.as_deref(),
+            Some("2026-11-06T14:59:00.0000000Z")
+        );
+        assert_eq!(first.language.as_deref(), Some("ja"));
+        assert_eq!(first.is_family_friendly, Some(true));
+        assert_eq!(first.is_navigational, Some(true));
+        assert_eq!(
+            parsed.items[1].thumbnail_url.as_deref(),
+            Some("https://ts.example/th?id=1")
+        );
+        // Absent fields stay absent (no new keys serialized).
+        let v = serde_json::to_value(&parsed.items[1]).unwrap();
+        assert!(v.get("deep_links").is_none());
+        assert!(v.get("language").is_none());
+    }
+
+    /// Audit W-19: only offsets up to page 2 were measured when
+    /// this shipped. Verify a deep page (5, offset=40) live, once,
+    /// on demand.
+    #[tokio::test]
+    #[ignore = "live network test"]
+    async fn live_web_deep_page() {
+        let client = BingSearchClient::new().unwrap();
+        let result = client
+            .web_search("Rust", 5, 10, "ja-JP", "ja")
+            .await
+            .unwrap();
+        assert!(!result.items.is_empty(), "page 5 returned no items");
+        assert!(result.items.iter().all(|i| i.rank > 40));
     }
 
     #[test]

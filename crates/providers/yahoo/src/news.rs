@@ -45,23 +45,29 @@ impl YahooSearchClient {
 
         let url = format!("{BASE}?p={}&ei=UTF-8", urlencode(query.trim()));
         let html = self.get_html(&url, REFERER).await?;
-        let state = extract_preloaded_state(&html)?;
-
-        let search = state.get("search").cloned().unwrap_or(Value::Null);
-        let items: Vec<NewsItem> = search
-            .get("contents")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(parse_news).take(limit).collect())
-            .unwrap_or_default();
-
-        Ok(
-            SearchResult::new("news", query, 1, items)
-                .with_total(get_i64(&search, "totalResults"))
-                .with_note(
-                    "Yahoo!ニュース検索 returns a single server-rendered batch (up to 60 articles) and does not support offset paging.",
-                ),
-        )
+        parse_news_page(&html, query, limit as i64)
     }
+}
+
+/// Parse a saved news-search page (offline; audit W-10).
+pub fn parse_news_page(html: &str, query: &str, limit: i64) -> Result<SearchResult<NewsItem>> {
+    let limit = clamp_limit(limit, MAX_ITEMS);
+    let state = extract_preloaded_state(html)?;
+
+    let search = state.get("search").cloned().unwrap_or(Value::Null);
+    let items: Vec<NewsItem> = search
+        .get("contents")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(parse_news).take(limit).collect())
+        .unwrap_or_default();
+
+    Ok(
+        SearchResult::new("news", query, 1, items)
+            .with_total(get_i64(&search, "totalResults"))
+            .with_note(
+                "Yahoo!ニュース検索 returns a single server-rendered batch (up to 60 articles) and does not support offset paging.",
+            ),
+    )
 }
 
 fn parse_news(content: &Value) -> Option<NewsItem> {

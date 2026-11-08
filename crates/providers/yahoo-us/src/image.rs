@@ -86,7 +86,34 @@ impl YahooUsSearchClient {
         let limit = clamp_limit(limit, PER_PAGE);
 
         let url = crate::build_search_url(query, "image", page)?;
-        let html = self.get_image_html(&url).await?;
+        self.fetch_image_page(query, page, limit, &url).await
+    }
+
+    /// Search images with the SERP's own filters applied (audit
+    /// W-28; see [`crate::ImageFilters`] for the measured value
+    /// sets). Invalid filter values are an error before any request
+    /// is made.
+    pub async fn image_search_filtered(
+        &self,
+        query: &str,
+        page: i64,
+        limit: i64,
+        filters: &crate::ImageFilters,
+    ) -> Result<SearchResult<ImageItem>> {
+        let page = page.max(1);
+        let limit = clamp_limit(limit, PER_PAGE);
+        let url = crate::build_image_search_url(query, page, filters)?;
+        self.fetch_image_page(query, page, limit, &url).await
+    }
+
+    async fn fetch_image_page(
+        &self,
+        query: &str,
+        page: i64,
+        limit: usize,
+        url: &str,
+    ) -> Result<SearchResult<ImageItem>> {
+        let html = self.get_image_html(url).await?;
         if !html.contains("image-results") && parse_image_total(&html).is_none() {
             return Err(anyhow!(
                 "image results container not found (Yahoo page layout may have changed)"
@@ -107,7 +134,8 @@ impl YahooUsSearchClient {
 
         Ok(SearchResult::new("image", query, page, items)
             .with_total(total)
-            .with_next_page(has_next.then_some(page + 1)))
+            .with_next_page(has_next.then_some(page + 1))
+            .with_related(parse_related_queries(&html)))
     }
 }
 

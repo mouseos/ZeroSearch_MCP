@@ -101,6 +101,10 @@ pub struct RelatedSearch {
 }
 
 /// A `.c-result` element whose template could not be classified.
+/// The generic title / URL / snippet extraction applied to known
+/// results also runs for these elements (audit W-05), so a result
+/// served under a template the classifier does not know yet stays
+/// visible instead of being reduced to metadata only.
 #[derive(Debug, Clone, Serialize)]
 pub struct UnknownElement {
     pub display_position: Option<i64>,
@@ -108,6 +112,9 @@ pub struct UnknownElement {
     pub tpl: Option<String>,
     pub srcid: Option<String>,
     pub reason: String,
+    pub title: Option<String>,
+    pub url: Option<String>,
+    pub snippet: Option<String>,
 }
 
 /// Pagination information for a parsed page (`pn`, page number, next/previous URLs).

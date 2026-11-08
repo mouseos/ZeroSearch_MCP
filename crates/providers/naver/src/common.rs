@@ -67,8 +67,8 @@ pub fn layout_error(vertical: &str) -> anyhow::Error {
 
 /// Error for `page` values that cannot be served: tab pages ignore
 /// page parameters (deeper batches come from the page-issued more-API
-/// chain, not a URL), the web and integrated views have no deeper
-/// pages, and chained paging is capped at `more::MAX_PAGE`.
+/// chain, not a URL), the integrated view has no deeper pages, and
+/// chained paging is capped at `more::MAX_PAGE`.
 pub fn unsupported_page(vertical: &str, page: i64) -> anyhow::Error {
     anyhow!("unsupported_page: page {page} is not available for the {vertical} search")
 }

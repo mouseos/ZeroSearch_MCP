@@ -3,7 +3,7 @@
 //! Results come from `__NEXT_DATA__ -> props.pageProps.initialProps.pageData`,
 //! the same payload the page hydrates React from.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -25,6 +25,12 @@ pub struct WebItem {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub site: Option<String>,
+    /// Payload entry type for entries that are not ordinary
+    /// `"Algo"` results (audit W-09). Ordinary results leave this
+    /// `None`; other typed entries the page returns are surfaced
+    /// with their type verbatim instead of being silently dropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_type: Option<String>,
 }
 
 /// Value accepted by the `updated` argument, mapped to Yahoo's `vd` parameter.
@@ -58,7 +64,15 @@ impl YahooSearchClient {
 
         let mut effective_query = query.trim().to_string();
         let site = site.trim();
-        if !site.is_empty() && !effective_query.contains("site:") {
+        if !site.is_empty() {
+            // Audit W-12: previously the `site` argument was
+            // silently ignored when the query already contained a
+            // `site:` operator. Refuse the ambiguity explicitly.
+            if effective_query.contains("site:") {
+                return Err(anyhow!(
+                    "site argument '{site}' conflicts with a site: operator already present in the query; pass only one of them"
+                ));
+            }
             effective_query = format!("{effective_query} site:{site}");
         }
 
@@ -72,22 +86,34 @@ impl YahooSearchClient {
         }
 
         let html = self.get_html(&url, REFERER).await?;
-        let data = extract_next_data(&html)?;
-        let page_data = get_path(&data, &["props", "pageProps", "initialProps", "pageData"])
-            .cloned()
-            .unwrap_or(Value::Null);
-
-        let items = parse_algos(&page_data, limit);
-        let total = get_path(&page_data, &["pager", "hits"]).and_then(|v| v.as_i64());
-        let has_next = get_path(&page_data, &["pager", "nextPage"])
-            .and_then(|v| v.as_str())
-            .is_some();
-
-        Ok(SearchResult::new("web", query, page, items)
-            .with_total(total)
-            .with_next_page(has_next.then_some(page + 1))
-            .with_related(parse_related(&page_data)))
+        parse_web_page(&html, query, page, limit as i64)
     }
+}
+
+/// Parse a saved web-search page (offline; audit W-10).
+pub fn parse_web_page(
+    html: &str,
+    query: &str,
+    page: i64,
+    limit: i64,
+) -> Result<SearchResult<WebItem>> {
+    let page = page.max(1);
+    let limit = clamp_limit(limit, PER_PAGE);
+    let data = extract_next_data(html)?;
+    let page_data = get_path(&data, &["props", "pageProps", "initialProps", "pageData"])
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    let items = parse_algos(&page_data, limit);
+    let total = get_path(&page_data, &["pager", "hits"]).and_then(|v| v.as_i64());
+    let has_next = get_path(&page_data, &["pager", "nextPage"])
+        .and_then(|v| v.as_str())
+        .is_some();
+
+    Ok(SearchResult::new("web", query, page, items)
+        .with_total(total)
+        .with_next_page(has_next.then_some(page + 1))
+        .with_related(parse_related(&page_data)))
 }
 
 fn parse_algos(page_data: &Value, limit: usize) -> Vec<WebItem> {
@@ -96,8 +122,17 @@ fn parse_algos(page_data: &Value, limit: usize) -> Vec<WebItem> {
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter(|a| a.get("type").and_then(|t| t.as_str()) == Some("Algo"))
-                .filter_map(parse_algo)
+                .filter_map(|a| {
+                    // Audit W-09: entries whose payload `type` is
+                    // not "Algo" used to be discarded without a
+                    // trace. Surface them, marked with their type.
+                    let entry_type = a.get("type").and_then(|t| t.as_str())?;
+                    let mut item = parse_algo(a)?;
+                    if entry_type != "Algo" {
+                        item.entry_type = Some(entry_type.to_string());
+                    }
+                    Some(item)
+                })
                 .take(limit)
                 .collect()
         })
@@ -112,6 +147,7 @@ fn parse_algo(algo: &Value) -> Option<WebItem> {
         url,
         description: get_str(algo, "description"),
         site: get_str(algo, "citeString"),
+        entry_type: None,
     })
 }
 
@@ -159,5 +195,21 @@ mod tests {
     #[test]
     fn parse_algo_skips_entries_without_url() {
         assert!(parse_algo(&serde_json::json!({"title": "x"})).is_none());
+    }
+
+    #[test]
+    fn parse_algos_surfaces_non_algo_entries_with_type() {
+        // Audit W-09: non-"Algo" entries must not vanish silently.
+        let page_data = serde_json::json!({"algos": [
+            {"type": "Algo", "index": 1, "title": "A", "url": "https://a.jp/"},
+            {"type": "KnowledgePanel", "index": 2, "title": "B", "url": "https://b.jp/"}
+        ]});
+        let items = parse_algos(&page_data, 10);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].entry_type, None);
+        assert_eq!(items[1].entry_type.as_deref(), Some("KnowledgePanel"));
+        // Ordinary results serialize exactly as before (no new key).
+        let v = serde_json::to_value(&items[0]).unwrap();
+        assert!(v.get("entry_type").is_none());
     }
 }

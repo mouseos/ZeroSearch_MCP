@@ -346,6 +346,87 @@ impl<F: Fetcher> BaiduClient<F> {
         self.parse_response(response, query, &url)
     }
 
+    /// Fetch exactly one page addressed by its 1-based page number
+    /// (audit W-06). The URL is built with the `pn` offset scheme
+    /// the server-issued pagination URLs use; see
+    /// [`crate::urlbuild::build_search_url_for_page`].
+    pub async fn search_page_at(
+        &self,
+        query: &str,
+        page: i64,
+    ) -> Result<SinglePageResult, BaiduError> {
+        let url = crate::urlbuild::build_search_url_for_page(
+            query,
+            page,
+            crate::search_url::now_ms(),
+        )
+        .ok_or_else(|| {
+            BaiduError::new(KIND_BAIDU_SEARCH_ERROR, "page must be >= 1")
+        })?;
+        self.search_page(query, Some(&url)).await
+    }
+
+    /// Fetch one vertical (tab) search page — `video`, `image`,
+    /// `realtime` or `wenda` (audit W-02). Vertical pages are
+    /// served from the app's `sf/vsearch` URL template; they do
+    /// not necessarily carry the main page's `#results` container,
+    /// so the main-page gate in [`Self::parse_response`] is not
+    /// applied, but verification pages are still rejected.
+    ///
+    /// Live status (2026-11-08): a direct anonymous GET of the
+    /// plain template URL is redirected to the Baidu home page,
+    /// and the bundled-config variant (`atn=page&fr=tab`) returns
+    /// the `sf` app shell (~1.5 MB) whose results are rendered
+    /// client-side — no server-rendered result markup is served
+    /// either way, so this currently yields an empty page with an
+    /// `empty_results` warning rather than items. The URL
+    /// construction itself is exact per the app template.
+    pub async fn search_vertical(
+        &self,
+        vertical: &str,
+        query: &str,
+    ) -> Result<SinglePageResult, BaiduError> {
+        let url = crate::urlbuild::build_vertical_search_url(vertical, query)
+            .ok_or_else(|| {
+                BaiduError::new(
+                    KIND_BAIDU_SEARCH_ERROR,
+                    format!("unknown vertical '{}'", vertical),
+                )
+            })?;
+        let response = self.fetcher.fetch(&url).await?;
+        let text = String::from_utf8_lossy(&response.body).into_owned();
+        if VERIFICATION_MARKERS
+            .iter()
+            .any(|m| text.contains(m) || response.final_url.contains(m))
+        {
+            return Err(BaiduError::new(
+                KIND_CAPTCHA,
+                "server returned a verification page instead of search results",
+            )
+            .with_url(response.final_url.clone())
+            .with_status(response.status_code));
+        }
+        let page = parser::parse_search_results_bytes(
+            &response.body,
+            Some(query),
+            Some(&response.final_url),
+        );
+        let total_entries =
+            page.results.len() + page.ads.len() + page.cards.len() + page.unknown_elements.len();
+        let mut warnings: Vec<String> = Vec::new();
+        if total_entries == 0 {
+            warnings.push("empty_results".to_string());
+        }
+        Ok(SinglePageResult {
+            query: Some(query.to_string()),
+            source_url: url,
+            final_url: Some(response.final_url),
+            status_code: Some(response.status_code),
+            page,
+            warnings,
+        })
+    }
+
     /// Python `BaiduSearchClient._parse_response`.
     pub fn parse_response(
         &self,

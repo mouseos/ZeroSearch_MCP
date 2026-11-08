@@ -60,6 +60,7 @@
 //!     url: "https://example.jp/".to_string(),
 //!     description: None,
 //!     site: None,
+//!     entry_type: None,
 //! };
 //! let result = SearchResult::new("web", "クエリ", 1, vec![item]).with_total(Some(42));
 //! assert_eq!(result.provider, PROVIDER);
@@ -92,6 +93,14 @@ use common::{ACCEPT_LANGUAGE, USER_AGENT};
 
 /// Q&A item returned by [`YahooSearchClient::chiebukuro_search`].
 pub use chiebukuro::ChiebukuroItem;
+/// Offline page parsers (audit W-10): parse a saved search page
+/// into the same envelope the live methods return.
+pub use chiebukuro::parse_chiebukuro_page;
+pub use image::parse_image_page;
+pub use news::parse_news_page;
+pub use realtime::parse_realtime_page;
+pub use video::parse_video_page;
+pub use web::parse_web_page;
 /// Offline helpers: payload extraction from saved pages and text cleanup.
 pub use common::{
     clean_text, decode_entities, extract_next_data, extract_preloaded_state, extract_window_props,
@@ -191,8 +200,9 @@ impl<T> SearchResult<T> {
 #[derive(Clone)]
 pub struct YahooSearchClient {
     http: Client,
-    /// Cached keyword-suggest app id, scraped from the public search page.
-    suggest_appid: std::sync::Arc<tokio::sync::Mutex<Option<String>>>,
+    /// Cached keyword-suggest app id and its source
+    /// (`"page"` / `"fallback"`), scraped from the public search page.
+    suggest_appid: std::sync::Arc<tokio::sync::Mutex<Option<(String, String)>>>,
 }
 
 impl Default for YahooSearchClient {

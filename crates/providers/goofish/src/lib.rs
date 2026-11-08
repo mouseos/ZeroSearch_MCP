@@ -23,12 +23,14 @@
 //! called — the port of the Python client's send-halt rule.
 
 pub mod classify;
+pub mod cpv;
 pub mod identity;
 pub mod netdiag;
 pub mod parse;
 pub mod protocol;
 pub mod registry;
 pub mod requests;
+pub mod search_session;
 pub mod signing;
 pub mod transport;
 pub mod util;
@@ -46,6 +48,7 @@ use transport::Transport;
 pub use classify::*;
 pub use protocol::{GATEWAY_FALLBACK, GATEWAY_PRIMARY, PUBLIC_APP_KEY};
 pub use requests::*;
+pub use search_session::SearchSession;
 pub use transport::{MockTransport, StatusMockTransport};
 
 // ---------------------------------------------------------------------------
@@ -708,6 +711,41 @@ impl GoofishClient {
         }
     }
 
+    /// Search products with a full [`SearchFilters`] (S1-16): CPV
+    /// selections (`prop_selections` -> propValueStr), region
+    /// (province/city/area -> the fields plus extraFilterValue),
+    /// category (category_id / front_cat_id / leaf_id), the panel
+    /// price band (`price_range_value`), the router price form
+    /// (start_price / end_price) and the sort pair — everything
+    /// `SearchFilters::to_search_fields` serialises, now reachable
+    /// from the public API instead of only sort + price range.
+    ///
+    /// This is a one-shot send (`from_filter=false`, like
+    /// [`GoofishClient::search_products`]). For the app's stateful
+    /// operation flow (condition changes through the shared refresh
+    /// funnel, response carry-overs), drive a [`SearchSession`] and
+    /// execute its plans instead. A sorted/filtered search is
+    /// expected to draw a 419 verification response live (S1-19; the
+    /// cause is undetermined); it is surfaced, not hidden.
+    pub async fn search_products_with_filters(
+        &self,
+        query: &str,
+        page: i64,
+        limit: i64,
+        filters: SearchFilters,
+    ) -> Value {
+        let opts = SearchOptions {
+            page_number: page,
+            rows_per_page: limit,
+            filters: Some(filters),
+            ..SearchOptions::default()
+        };
+        match build_search_request(Some(query), &opts) {
+            Ok(plan) => self.execute_live(&plan).await,
+            Err(e) => error_value("invalid_request", e.to_string()),
+        }
+    }
+
     /// Item detail. `product` is a numeric item id or a
     /// fleamarket/goofish URL containing one.
     pub async fn get_product(&self, product: &str) -> Value {
@@ -746,11 +784,24 @@ impl GoofishClient {
         result
     }
 
-    /// Public comments for an item. The comment.list request carries no
-    /// page field in the app (rowsPerPage only), so `page` is accepted
-    /// for interface symmetry and a single fetch is performed.
-    pub async fn get_comments(&self, product: &str, page: i64) -> Value {
-        let _ = page;
+    /// Public comments for an item (S1-17). The app's comment.list
+    /// request (`CommentListRequest {itemId, rowsPerPage}`) has **no
+    /// page or cursor field at all** — the detail component performs
+    /// a single fetch, and the registry pagination kind is
+    /// `single_shot` — so the former dead `page` parameter is gone
+    /// and `rows_per_page` is the real control: it is sent verbatim
+    /// as `rowsPerPage` (the app falls back to 10 when unset; pass 10
+    /// for the app default). The response's `next_page` flag is
+    /// informational only: no request shape exists that could fetch
+    /// a continuation. `rows_per_page < 1` is refused before any
+    /// send (a client-side guard; the app never produces it).
+    pub async fn get_comments(&self, product: &str, rows_per_page: i64) -> Value {
+        if rows_per_page < 1 {
+            return error_value(
+                "invalid_request",
+                format!("rows_per_page must be >= 1, got {rows_per_page}"),
+            );
+        }
         let item_id = match extract_item_id(product) {
             Some(id) => id,
             None => {
@@ -760,14 +811,32 @@ impl GoofishClient {
                 )
             }
         };
-        match build_comment_list_request(&item_id, 10, None, None) {
+        match build_comment_list_request(&item_id, rows_per_page, None, None) {
             Ok(plan) => self.execute_live(&plan).await,
             Err(e) => error_value("invalid_request", e.to_string()),
         }
     }
 
-    /// Related-item recommendations for an item.
+    /// Related-item recommendations for an item (first page; the
+    /// accumulate state starts empty).
     pub async fn get_recommendations(&self, product: &str) -> Value {
+        self.get_recommendations_with_state(product, &RecommendPagination::new())
+            .await
+    }
+
+    /// Related-item recommendations with caller-carried accumulate
+    /// state (S1-18, `recommend_accumulate`): `state` supplies
+    /// pageNum / pageSize / currentSize / historyItemIds for this
+    /// send — pass a fresh [`RecommendPagination`] for the first
+    /// page, then feed each successful result's `data` to
+    /// `state.advance(...)` and pass the same state again for the
+    /// continuation. The client itself stays stateless, exactly as
+    /// the Python client's pagination objects are caller-driven.
+    pub async fn get_recommendations_with_state(
+        &self,
+        product: &str,
+        state: &RecommendPagination,
+    ) -> Value {
         let item_id = match extract_item_id(product) {
             Some(id) => id,
             None => {
@@ -781,6 +850,7 @@ impl GoofishClient {
         req_params.insert("itemId".to_string(), json!(item_id));
         let mut opts = RecommendOptions::new();
         opts.req_params = Some(req_params);
+        state.apply_to(&mut opts);
         match build_recommend_request(&opts) {
             Ok(plan) => self.execute_live(&plan).await,
             Err(e) => error_value("invalid_request", e.to_string()),
@@ -794,6 +864,251 @@ impl GoofishClient {
             ..HomeFeedOptions::default()
         };
         match build_home_feed_request(&opts) {
+            Ok(plan) => self.execute_live(&plan).await,
+            Err(e) => error_value("invalid_request", e.to_string()),
+        }
+    }
+
+    /// Home feed with caller-carried recycle state (S1-18,
+    /// `home_recycle_carryover`): `state` supplies pageNumber /
+    /// lastResponseCount / clientRecycleParams for this send — pass
+    /// a fresh [`HomePagination`] for the first page, then feed each
+    /// successful result's `data` to `state.advance(...)` and pass
+    /// the same state again for the continuation (the response's
+    /// clientRecycleParams is copied verbatim into the next request
+    /// by the state, as HomeRecommendReq.updatePageNumber does).
+    pub async fn home_feed_with_state(&self, state: &HomePagination) -> Value {
+        let mut opts = HomeFeedOptions::default();
+        state.apply_to(&mut opts);
+        match build_home_feed_request(&opts) {
+            Ok(plan) => self.execute_live(&plan).await,
+            Err(e) => error_value("invalid_request", e.to_string()),
+        }
+    }
+
+    /// Similar items (S1-12): `mtop.taobao.idle.search.spusimilar.itemlist`.
+    /// Builder and parser existed; this is the client method.
+    /// `conditions` is the caller-supplied conditions object (in the
+    /// measured attempt it was built from the search response's
+    /// server-issued spuId, because the detail response carries no
+    /// spu identifier); `page` is a [`PageNoPagination`] state
+    /// (`flag_nextpage_pageno`: feed each successful result's `data`
+    /// to `page.advance(...)` and reuse it for the next page), or
+    /// `None` for the first page with the Dart constructor's initial
+    /// values (pageNo 1, pageSize 10).
+    ///
+    /// **Live-unmeasured**: the one measured attempt (round 20) was
+    /// rejected by the server-side app-version gate
+    /// FAIL_BIZ_SERVER_NEED_UPGRADE_MSG2, so a live call may surface
+    /// that as a business error rather than data.
+    pub async fn get_similar_items(
+        &self,
+        product: &str,
+        conditions: Option<Map<String, Value>>,
+        page: Option<&PageNoPagination>,
+    ) -> Value {
+        let item_id = match extract_item_id(product) {
+            Some(id) => id,
+            None => {
+                return error_value(
+                    "invalid_request",
+                    format!("no numeric item id found in {product:?}"),
+                )
+            }
+        };
+        let state = page.cloned().unwrap_or_default();
+        match build_spusimilar_request(&item_id, conditions, state.page_no, state.page_size) {
+            Ok(plan) => self.execute_live(&plan).await,
+            Err(e) => error_value("invalid_request", e.to_string()),
+        }
+    }
+
+    /// Category guide (S1-7): `mtop.taobao.idle.category.guide`.
+    /// `name: None` is the first phase (left navigation); passing a
+    /// selected category name fetches the right pane. Live-measured
+    /// (registry A4, measured=true).
+    pub async fn get_category_guide(&self, name: Option<&str>) -> Value {
+        match build_category_request(name) {
+            Ok(plan) => self.execute_live(&plan).await,
+            Err(e) => error_value("invalid_request", e.to_string()),
+        }
+    }
+
+    /// Rate list (S1-8): `mtop.taobao.idle.rate.list` — the seller
+    /// evaluations for one item. `product` is a numeric item id or a
+    /// URL containing one; `rated_uid` is the rated user's id;
+    /// `page` is 1-based (the wire form carries it as a string).
+    /// Live-measured (registry B8, measured=true).
+    pub async fn get_rate_list(&self, product: &str, rated_uid: &str, page: i64) -> Value {
+        let item_id = match extract_item_id(product) {
+            Some(id) => id,
+            None => {
+                return error_value(
+                    "invalid_request",
+                    format!("no numeric item id found in {product:?}"),
+                )
+            }
+        };
+        if page < 1 {
+            return error_value("invalid_request", format!("page must be >= 1, got {page}"));
+        }
+        match build_rate_list_request(&item_id, rated_uid, &page.to_string()) {
+            Ok(plan) => self.execute_live(&plan).await,
+            Err(e) => error_value("invalid_request", e.to_string()),
+        }
+    }
+
+    /// User head info (S1-9): `mtop.taobao.idle.user.headinfo.get`.
+    /// Built from the statically typed request class
+    /// (`user_id` primary selector, `nick` alternative, `my_user_id`
+    /// the viewer's own id). Live-unmeasured, and the request class
+    /// has no confirmed construction site in this APK version (a
+    /// legacy fleamarket-layer definition) — see
+    /// `build_user_headinfo_request`.
+    pub async fn get_user_headinfo(
+        &self,
+        user_id: Option<&str>,
+        nick: Option<&str>,
+        my_user_id: Option<i64>,
+    ) -> Value {
+        match build_user_headinfo_request(user_id, nick, my_user_id) {
+            Ok(plan) => self.execute_live(&plan).await,
+            Err(e) => error_value("invalid_request", e.to_string()),
+        }
+    }
+
+    /// Published items (S1-9): `mtop.taobao.idle.user.publish.items`.
+    /// Only the confirmed consumer's paging fields exist — there is
+    /// **no target-user parameter** in the confirmed request, and the
+    /// confirmed consumer is own-item selection, so this must not be
+    /// treated as a public other-user listing. Live-unmeasured.
+    pub async fn get_seller_items(&self, page: i64, page_size: i64) -> Value {
+        match build_seller_items_request(page, page_size) {
+            Ok(plan) => self.execute_live(&plan).await,
+            Err(e) => error_value("invalid_request", e.to_string()),
+        }
+    }
+
+    /// City feed (S1-10): `mtop.taobao.idle.local.home` when
+    /// `opts.feeds_api` is false, `mtop.taobao.idle.local.home.feeds`
+    /// when true — both share `build_city_feed_request`. Coordinates
+    /// and the tab/version fields are caller-supplied through
+    /// `opts` (the builder omits absent latitude/longitude).
+    /// local.home is live-measured (registry A6); the feeds variant
+    /// is not (A6/A7, measured=false).
+    pub async fn get_city_feed(&self, opts: &CityFeedOptions) -> Value {
+        match build_city_feed_request(opts) {
+            Ok(plan) => self.execute_live(&plan).await,
+            Err(e) => error_value("invalid_request", e.to_string()),
+        }
+    }
+
+    /// Nearby corner info (S1-10):
+    /// `mtop.taobao.idle.local.near.by.corner.info`. All four fields
+    /// are strings in the typed request; latitude/longitude are the
+    /// caller-supplied location values stringified, never invented.
+    /// Live-unmeasured (builder added round 36).
+    pub async fn get_city_nearby(
+        &self,
+        city: Option<&str>,
+        latitude: Option<&str>,
+        longitude: Option<&str>,
+        select_city: Option<&str>,
+    ) -> Value {
+        match build_city_nearby_request(city, latitude, longitude, select_city) {
+            Ok(plan) => self.execute_live(&plan).await,
+            Err(e) => error_value("invalid_request", e.to_string()),
+        }
+    }
+
+    /// Fishpond list (S1-11): `com.taobao.idle.fishpool.list`.
+    /// Live-unmeasured (registry A8, measured=false); round 21 also
+    /// recorded both name forms returning FAIL_SYS_API_NOT_FOUNDED on
+    /// the production gateway, so a live call may surface that as an
+    /// api_error rather than data.
+    pub async fn get_fishpond_list(&self, page: i64, limit: i64) -> Value {
+        match build_fishpond_list_request(page, limit, false, None, None) {
+            Ok(plan) => self.execute_live(&plan).await,
+            Err(e) => error_value("invalid_request", e.to_string()),
+        }
+    }
+
+    /// Fishpond detail (S1-11): `mtop.taobao.idle.fishpool.id`.
+    /// Live-unmeasured (registry A9, measured=false) — no legitimate
+    /// pool id was obtainable in the measurement rounds.
+    pub async fn get_fishpond_info(&self, pool_id: i64) -> Value {
+        match build_fishpond_info_request(pool_id, None) {
+            Ok(plan) => self.execute_live(&plan).await,
+            Err(e) => error_value("invalid_request", e.to_string()),
+        }
+    }
+
+    /// Fishpond public posts / comments (S1-11):
+    /// `com.taobao.idle.fishpool.comment.list`. Coordinates are
+    /// caller-supplied and omitted when absent. Live-unmeasured
+    /// (registry A9, measured=false).
+    pub async fn get_fishpond_comments(
+        &self,
+        pool_id: i64,
+        page: i64,
+        latitude: Option<f64>,
+        longitude: Option<f64>,
+    ) -> Value {
+        match build_fishpond_comments_request(pool_id, page, latitude, longitude, None) {
+            Ok(plan) => self.execute_live(&plan).await,
+            Err(e) => error_value("invalid_request", e.to_string()),
+        }
+    }
+
+    /// Video play info (S1-13): `com.taobao.idle.video.play`.
+    /// `item_id` may be 0 (the formal feed route). Live-unmeasured
+    /// (registry D10, measured=false).
+    pub async fn get_video_play(&self, video_id: i64, item_id: i64) -> Value {
+        match build_video_play_request(video_id, item_id, None) {
+            Ok(plan) => self.execute_live(&plan).await,
+            Err(e) => error_value("invalid_request", e.to_string()),
+        }
+    }
+
+    /// Video play info from a normalized feed card (S1-13): the
+    /// `video_id` / `has_video` view produced by
+    /// `parse_feed_item_card`. Refuses cards without a confirmed
+    /// video id and item/video pairings that disagree with the card.
+    /// Live-unmeasured.
+    pub async fn get_video_play_from_feed_card(&self, card: &Value, item_id: Option<i64>) -> Value {
+        match build_video_play_request_from_feed_card(card, item_id, None) {
+            Ok(plan) => self.execute_live(&plan).await,
+            Err(e) => error_value("invalid_request", e.to_string()),
+        }
+    }
+
+    /// Fun general comments (S1-14):
+    /// `mtop.taobao.idle.fun.general.comment.list`. Cursor paging:
+    /// pass the previous response's `last_cursor` as `begin_cursor`
+    /// (`None` for the first page). Live-unmeasured (registry B10,
+    /// measured=false; builder added round 36).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn get_fun_comments(
+        &self,
+        target_id: &str,
+        target_type: &str,
+        namespace: &str,
+        source_id: &str,
+        begin_cursor: Option<&str>,
+        page_size: i64,
+        rows_per_page: i64,
+        top_comment_id: Option<&str>,
+    ) -> Value {
+        match build_fun_comment_list_request(
+            target_id,
+            target_type,
+            namespace,
+            source_id,
+            begin_cursor,
+            page_size,
+            rows_per_page,
+            top_comment_id,
+        ) {
             Ok(plan) => self.execute_live(&plan).await,
             Err(e) => error_value("invalid_request", e.to_string()),
         }
@@ -1336,6 +1651,486 @@ mod tests {
         );
         std::env::remove_var("XDG_DATA_HOME");
         std::fs::remove_dir_all(&data_home).ok();
+    }
+
+    // -----------------------------------------------------------------
+    // Offline tests for the S1-7..S1-14 client methods added on top of
+    // the existing builders/parsers. Each test drives the exact plan
+    // the corresponding `GoofishClient` method builds through the
+    // offline `CoreClient` + `MockTransport` path (the live client
+    // shares builders, registry preflight and parsers), asserting
+    // both the recorded request shape and the fixture parsing.
+    // -----------------------------------------------------------------
+
+    fn bundle_fixture(name: &str) -> Value {
+        let path = format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), name);
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    fn mock_core(api: &str, version: &str, envelope: Value) -> CoreClient<MockTransport> {
+        let mut queues: HashMap<(String, String), Vec<Value>> = HashMap::new();
+        queues.insert((api.to_string(), version.to_string()), vec![envelope]);
+        CoreClient::new(MockTransport::new(queues))
+    }
+
+    #[test]
+    fn new_method_category_guide_offline() {
+        let bundle = bundle_fixture("browse_round7.json");
+        let core = mock_core(
+            "mtop.taobao.idle.category.guide",
+            "2.1",
+            bundle["category_guide"].clone(),
+        );
+        let plan = build_category_request(Some("手机")).unwrap();
+        let result = core.execute(&plan);
+        assert_eq!(result["ok"], json!(true));
+        assert_eq!(result["data"]["categories"].as_array().unwrap().len(), 3);
+        assert_eq!(result["data"]["categories"][0]["name"], json!("手机"));
+        let requests = core.transport.requests.lock().unwrap();
+        assert_eq!(requests[0].data, json!({"name": "手机"}));
+    }
+
+    #[test]
+    fn new_method_rate_list_offline() {
+        let bundle = bundle_fixture("browse_round7.json");
+        let core = mock_core("mtop.taobao.idle.rate.list", "6.0", bundle["rates"].clone());
+        let plan = build_rate_list_request("42", "777", "1").unwrap();
+        let result = core.execute(&plan);
+        assert_eq!(result["ok"], json!(true));
+        assert_eq!(result["data"]["displayable_count"], json!(1));
+        assert_eq!(result["data"]["cards"].as_array().unwrap().len(), 2);
+        let requests = core.transport.requests.lock().unwrap();
+        assert_eq!(requests[0].data["pageNumber"], json!("1"));
+        assert!(requests[0].data["pageNumber"].is_string());
+        assert_eq!(requests[0].data["ratedUid"], json!("777"));
+        assert_eq!(requests[0].data["rowsPerPage"], json!(20));
+    }
+
+    #[test]
+    fn new_method_user_headinfo_offline() {
+        let bundle = bundle_fixture("headinfo_round9.json");
+        let core = mock_core(
+            "mtop.taobao.idle.user.headinfo.get",
+            "4.0",
+            bundle["headinfo_full"].clone(),
+        );
+        let plan = build_user_headinfo_request(Some("2211445566"), None, None).unwrap();
+        let result = core.execute(&plan);
+        assert_eq!(result["ok"], json!(true));
+        assert_eq!(result["data"]["id"], json!("2211445566"));
+        assert_eq!(result["data"]["nick"], json!("示例闲鱼号"));
+        let requests = core.transport.requests.lock().unwrap();
+        assert_eq!(requests[0].data, json!({"userId": "2211445566"}));
+    }
+
+    #[test]
+    fn new_method_seller_items_offline() {
+        let bundle = bundle_fixture("browse_round7.json");
+        let core = mock_core(
+            "mtop.taobao.idle.user.publish.items",
+            "6.0",
+            bundle["seller_items"].clone(),
+        );
+        let plan = build_seller_items_request(1, 20).unwrap();
+        let result = core.execute(&plan);
+        assert_eq!(result["ok"], json!(true));
+        assert_eq!(result["data"]["total_count"], json!(21));
+        assert_eq!(result["data"]["next_page"], json!(true));
+        let requests = core.transport.requests.lock().unwrap();
+        // Exactly the confirmed consumer's paging fields, no user selector.
+        assert_eq!(requests[0].data, json!({"pageNumber": 1, "pageSize": 20}));
+    }
+
+    fn city_opts(version: &str, feeds_api: bool, with_coords: bool) -> CityFeedOptions {
+        CityFeedOptions {
+            version: version.to_string(),
+            data_source_id: "ALL_CITY_FEEDS".to_string(),
+            tab_name: None,
+            page_number: "1".to_string(),
+            last_response_count: "0".to_string(),
+            keywords: None,
+            latitude: with_coords.then_some(30.25),
+            longitude: with_coords.then_some(120.16),
+            feeds_api,
+            extra_fields: None,
+        }
+    }
+
+    #[test]
+    fn new_method_city_feed_local_home_offline() {
+        let bundle = bundle_fixture("explore_round8.json");
+        let core = mock_core(
+            "mtop.taobao.idle.local.home",
+            "4.0",
+            bundle["city_feed_last"].clone(),
+        );
+        let plan = build_city_feed_request(&city_opts("4.0", false, false)).unwrap();
+        let result = core.execute(&plan);
+        assert_eq!(result["ok"], json!(true));
+        assert_eq!(result["data"]["feeds_count"], json!(0));
+        assert_eq!(result["data"]["next_page"], json!(false));
+        let requests = core.transport.requests.lock().unwrap();
+        assert_eq!(requests[0].api_name, "mtop.taobao.idle.local.home");
+        assert!(requests[0].data.get("latitude").is_none());
+    }
+
+    #[test]
+    fn new_method_city_feed_local_home_feeds_offline() {
+        let bundle = bundle_fixture("explore_round8.json");
+        let core = mock_core(
+            "mtop.taobao.idle.local.home.feeds",
+            "3.0",
+            bundle["city_feed"].clone(),
+        );
+        let plan = build_city_feed_request(&city_opts("3.0", true, true)).unwrap();
+        let result = core.execute(&plan);
+        assert_eq!(result["ok"], json!(true));
+        assert_eq!(result["data"]["feeds_count"], json!(40));
+        assert_eq!(result["data"]["next_page"], json!(true));
+        let requests = core.transport.requests.lock().unwrap();
+        assert_eq!(requests[0].api_name, "mtop.taobao.idle.local.home.feeds");
+        assert_eq!(requests[0].data["pageNumber"], json!("1"));
+        assert_eq!(requests[0].data["latitude"], json!(30.25));
+        assert_eq!(requests[0].data["longitude"], json!(120.16));
+    }
+
+    #[test]
+    fn new_method_city_nearby_offline() {
+        let bundle = bundle_fixture("explore_round8.json");
+        let core = mock_core(
+            "mtop.taobao.idle.local.near.by.corner.info",
+            "1.0",
+            bundle["city_nearby"].clone(),
+        );
+        let plan =
+            build_city_nearby_request(Some("杭州"), Some("30.25"), Some("120.16"), None).unwrap();
+        let result = core.execute(&plan);
+        assert_eq!(result["ok"], json!(true));
+        assert_eq!(result["data"]["items"][0]["item_id"], json!("700000000002"));
+        let requests = core.transport.requests.lock().unwrap();
+        assert_eq!(
+            requests[0].data,
+            json!({"city": "杭州", "latitude": "30.25", "longitude": "120.16"})
+        );
+    }
+
+    #[test]
+    fn new_method_fishpond_list_offline() {
+        let bundle = bundle_fixture("explore_round8.json");
+        let core = mock_core(
+            "com.taobao.idle.fishpool.list",
+            "3.0",
+            bundle["fishpond_list"].clone(),
+        );
+        let plan = build_fishpond_list_request(1, 20, false, None, None).unwrap();
+        let result = core.execute(&plan);
+        assert_eq!(result["ok"], json!(true));
+        assert_eq!(result["data"]["total_count"], json!(57));
+        assert_eq!(result["data"]["items"][0]["pond_id"], json!(88001234));
+        let requests = core.transport.requests.lock().unwrap();
+        assert_eq!(requests[0].data["nearby"], json!(false));
+        assert_eq!(requests[0].data["type"], json!(1));
+    }
+
+    #[test]
+    fn new_method_fishpond_info_offline() {
+        let bundle = bundle_fixture("explore_round8.json");
+        let core = mock_core(
+            "mtop.taobao.idle.fishpool.id",
+            "6.0",
+            bundle["fishpond_info"].clone(),
+        );
+        let plan = build_fishpond_info_request(88001234, None).unwrap();
+        let result = core.execute(&plan);
+        assert_eq!(result["ok"], json!(true));
+        assert_eq!(result["data"]["pond_id"], json!(88001234));
+        assert_eq!(result["data"]["follower_num"], json!("321"));
+        let requests = core.transport.requests.lock().unwrap();
+        assert_eq!(requests[0].data["fishPoolId"], json!(88001234));
+    }
+
+    #[test]
+    fn new_method_fishpond_comments_offline() {
+        let bundle = bundle_fixture("explore_round8.json");
+        let core = mock_core(
+            "com.taobao.idle.fishpool.comment.list",
+            "2.0",
+            bundle["fishpond_comments"].clone(),
+        );
+        let plan = build_fishpond_comments_request(88001234, 1, None, None, None).unwrap();
+        let result = core.execute(&plan);
+        assert_eq!(result["ok"], json!(true));
+        assert_eq!(result["data"]["total_count"], json!(3));
+        assert_eq!(result["data"]["pool_id"], json!(88001234));
+        let requests = core.transport.requests.lock().unwrap();
+        assert_eq!(requests[0].data["poolId"], json!(88001234));
+        assert!(requests[0].data.get("lat").is_none());
+    }
+
+    #[test]
+    fn new_method_video_play_offline() {
+        let bundle = bundle_fixture("video_play_round10.json");
+        let core = mock_core(
+            "com.taobao.idle.video.play",
+            "5.0",
+            bundle["video_play_full"].clone(),
+        );
+        let plan = build_video_play_request(1234567890123, 0, None).unwrap();
+        let result = core.execute(&plan);
+        assert_eq!(result["ok"], json!(true));
+        assert_eq!(
+            result["data"]["play_url"],
+            json!("https://example.invalid/video/play.mp4")
+        );
+        assert_eq!(result["data"]["mts_videoid"], json!(1234567890123i64));
+        let requests = core.transport.requests.lock().unwrap();
+        assert_eq!(
+            requests[0].data,
+            json!({"itemid": 0, "videoid": 1234567890123i64})
+        );
+    }
+
+    #[test]
+    fn new_method_video_play_from_feed_card_offline() {
+        let bundle = bundle_fixture("video_play_round10.json");
+        let core = mock_core(
+            "com.taobao.idle.video.play",
+            "5.0",
+            bundle["video_play_full"].clone(),
+        );
+        let card = json!({"item_id": "55", "video_id": "77", "has_video": true});
+        let plan = build_video_play_request_from_feed_card(&card, None, None).unwrap();
+        let result = core.execute(&plan);
+        assert_eq!(result["ok"], json!(true));
+        let requests = core.transport.requests.lock().unwrap();
+        assert_eq!(requests[0].data, json!({"itemid": 0, "videoid": 77}));
+    }
+
+    #[test]
+    fn new_method_fun_comments_offline() {
+        let bundle = bundle_fixture("explore_round8.json");
+        let core = mock_core(
+            "mtop.taobao.idle.fun.general.comment.list",
+            "1.0",
+            bundle["fun_comments"].clone(),
+        );
+        let plan =
+            build_fun_comment_list_request("t1", "item", "ns", "s1", None, 10, 10, None).unwrap();
+        let result = core.execute(&plan);
+        assert_eq!(result["ok"], json!(true));
+        assert_eq!(result["data"]["total"], json!(42));
+        assert_eq!(result["data"]["items"][0]["comment_id"], json!(9001));
+        let requests = core.transport.requests.lock().unwrap();
+        assert_eq!(requests[0].data["targetId"], json!("t1"));
+        assert!(requests[0].data.get("beginCursor").is_none());
+    }
+
+    #[test]
+    fn gf2_spusimilar_offline() {
+        // S1-12: the new get_similar_items client path, driven
+        // offline through CoreClient with the same plan the method
+        // builds (page state 1/10, no conditions).
+        let envelope = bundle_fixture("spusimilar_round16.json");
+        let core = mock_core(
+            "mtop.taobao.idle.search.spusimilar.itemlist",
+            "1.0",
+            envelope,
+        );
+        let state = PageNoPagination::new();
+        let plan = build_spusimilar_request("42", None, state.page_no, state.page_size).unwrap();
+        let result = core.execute(&plan);
+        assert_eq!(result["ok"], json!(true));
+        assert_eq!(result["data"]["cards"].as_array().unwrap().len(), 2);
+        assert_eq!(result["data"]["next_page"], json!(true));
+        let requests = core.transport.requests.lock().unwrap();
+        assert_eq!(
+            requests[0].data,
+            json!({"itemId": "42", "pageNo": 1, "pageSize": 10})
+        );
+        drop(requests);
+        // The parsed page advances the pageNo state (flag_nextpage_pageno).
+        let mut state = state;
+        assert!(state.advance(&result["data"]));
+        assert_eq!(state.page_no, 2);
+    }
+
+    #[test]
+    fn gf2_search_with_filters_request_shape() {
+        // S1-16: CPV / region / category reach the wire through
+        // SearchFilters (the fields search_products_with_filters
+        // sends). The plain search_products path is untouched.
+        let filters = SearchFilters {
+            prop_selections: vec![("20000".into(), vec!["81155".into()])],
+            province: Some("浙江".into()),
+            city: Some("杭州".into()),
+            area: Some("西湖区".into()),
+            category_id: Some("50025387".into()),
+            front_cat_id: Some("123".into()),
+            leaf_id: Some("456".into()),
+            ..Default::default()
+        };
+        let opts = SearchOptions {
+            page_number: 1,
+            rows_per_page: 10,
+            filters: Some(filters),
+            ..SearchOptions::default()
+        };
+        let plan = build_search_request(Some("相机"), &opts).unwrap();
+        let d = &plan.data;
+        assert_eq!(
+            d["propValueStr"],
+            json!("{\"searchFilter\":\"20000:81155\"}")
+        );
+        assert_eq!(d["province"], json!("浙江"));
+        assert_eq!(d["city"], json!("杭州"));
+        assert_eq!(d["area"], json!("西湖区"));
+        assert_eq!(
+            d["extraFilterValue"],
+            json!("{\"divisionList\":[{\"area\":\"西湖区\",\"city\":\"杭州\",\"province\":\"浙江\"}]}")
+        );
+        assert_eq!(d["categoryId"], json!("50025387"));
+        assert_eq!(d["frontCatId"], json!("123"));
+        assert_eq!(d["leafId"], json!("456"));
+        // One-shot form: no funnel accompaniments.
+        assert_eq!(d["fromFilter"], json!(false));
+        assert!(d.get("fromCombo").is_none());
+    }
+
+    #[test]
+    fn gf2_comment_request_rows_per_page_is_the_only_control() {
+        // S1-17: rowsPerPage is sent verbatim; there is no page /
+        // cursor key in the request shape at all.
+        let plan = build_comment_list_request("42", 30, None, None).unwrap();
+        assert_eq!(plan.data, json!({"itemId": "42", "rowsPerPage": 30}));
+        assert!(plan.data.get("page").is_none());
+        assert!(plan.data.get("pageNumber").is_none());
+    }
+
+    /// Live check for all methods added in S1-7..S1-14, in ONE client
+    /// session (one signing-harness startup) and in sequence. Never
+    /// run in CI / by default. Note: if any call draws a restriction
+    /// response (419/403/429), the client's send-halt latch trips and
+    /// the remaining calls return `send_halted` — that is the
+    /// documented client behaviour, and per the halt rule no further
+    /// sends may be attempted in that session. Inputs are the
+    /// synthetic fixture ids (no real user/item identifiers beyond
+    /// what the bundled fixtures already carry).
+    #[tokio::test]
+    #[ignore = "live test: sends real MTOP requests through the local signing harness"]
+    async fn live_new_methods_sequential() {
+        let client = GoofishClient::new();
+        let mut results: Vec<Value> = Vec::new();
+        results.push(client.get_category_guide(None).await);
+        results.push(client.get_category_guide(Some("手机")).await);
+        results.push(client.get_rate_list("1001", "40001", 1).await);
+        results.push(
+            client
+                .get_user_headinfo(Some("2211445566"), None, None)
+                .await,
+        );
+        results.push(client.get_seller_items(1, 20).await);
+        results.push(client.get_city_feed(&city_opts("4.0", false, false)).await);
+        results.push(client.get_city_feed(&city_opts("3.0", true, true)).await);
+        results.push(
+            client
+                .get_city_nearby(Some("杭州"), Some("30.25"), Some("120.16"), None)
+                .await,
+        );
+        results.push(client.get_fishpond_list(1, 20).await);
+        results.push(client.get_fishpond_info(88001234).await);
+        results.push(client.get_fishpond_comments(88001234, 1, None, None).await);
+        results.push(client.get_video_play(1234567890123, 0).await);
+        let card = json!({"item_id": "55", "video_id": "77", "has_video": true});
+        results.push(client.get_video_play_from_feed_card(&card, None).await);
+        results.push(
+            client
+                .get_fun_comments("t1", "item", "ns", "s1", None, 10, 10, None)
+                .await,
+        );
+        for result in &results {
+            assert_eq!(result["provider"], json!("goofish"), "{result}");
+            assert!(result.get("ok").is_some(), "{result}");
+        }
+    }
+
+    /// Live check for the S1-16/17/18/12 additions, in ONE client
+    /// session and in sequence. Never run in CI / by default, and NOT
+    /// run by the Z6-G-C task (no live sends were authorised).
+    /// Expected live behaviour, from the round records: the plain
+    /// session search should succeed; the funnel sort send and any
+    /// filtered send may draw HTTP 419 (S1-19, cause undetermined) —
+    /// the send-halt latch then makes the remaining calls return
+    /// `send_halted`, which is the documented behaviour, so this test
+    /// only asserts the result envelope shape, never `ok == true`.
+    /// spusimilar is expected to surface the app-version gate
+    /// FAIL_BIZ_SERVER_NEED_UPGRADE_MSG2 (round 20).
+    #[tokio::test]
+    #[ignore = "live test: sends real MTOP requests through the local signing harness"]
+    async fn live_gf2_stateful_sequential() {
+        let client = GoofishClient::new();
+        let mut results: Vec<Value> = Vec::new();
+
+        // S1-16: SearchSession-driven search (initial -> accept ->
+        // next page), then a one-shot filtered search (region only).
+        let mut session = SearchSession::new(Some("相机"), None);
+        let first = client.execute_live(&session.initial_plan().unwrap()).await;
+        if first.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+            let has_next = session.accept_response(&first["data"], false, true);
+            results.push(first);
+            if has_next {
+                let page2 = client
+                    .execute_live(&session.next_page_plan().unwrap())
+                    .await;
+                results.push(page2);
+            }
+        } else {
+            results.push(first);
+        }
+        let filters = SearchFilters {
+            province: Some("浙江".into()),
+            city: Some("杭州".into()),
+            ..Default::default()
+        };
+        results.push(
+            client
+                .search_products_with_filters("相机", 1, 10, filters)
+                .await,
+        );
+
+        // S1-17: comments with an explicit rows_per_page.
+        results.push(client.get_comments("1001", 20).await);
+
+        // S1-18: recommend accumulate + home recycle carry-over.
+        let mut rec_state = RecommendPagination::new();
+        let rec1 = client
+            .get_recommendations_with_state("1001", &rec_state)
+            .await;
+        if rec1.get("ok").and_then(|v| v.as_bool()) == Some(true)
+            && rec_state.advance(&rec1["data"])
+        {
+            results.push(
+                client
+                    .get_recommendations_with_state("1001", &rec_state)
+                    .await,
+            );
+        }
+        results.push(rec1);
+        let mut home_state = HomePagination::new();
+        let home1 = client.home_feed_with_state(&home_state).await;
+        if home1.get("ok").and_then(|v| v.as_bool()) == Some(true)
+            && home_state.advance(&home1["data"])
+        {
+            results.push(client.home_feed_with_state(&home_state).await);
+        }
+        results.push(home1);
+
+        // S1-12: similar items (version gate expected).
+        results.push(client.get_similar_items("1001", None, None).await);
+
+        for result in &results {
+            assert_eq!(result["provider"], json!("goofish"), "{result}");
+            assert!(result.get("ok").is_some(), "{result}");
+        }
     }
 
     #[test]

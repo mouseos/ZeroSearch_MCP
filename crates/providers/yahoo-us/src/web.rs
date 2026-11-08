@@ -70,7 +70,8 @@ impl YahooUsSearchClient {
         let has_next = web_has_next_page(&html);
 
         Ok(SearchResult::new("web", query, page, items)
-            .with_next_page(has_next.then_some(page + 1)))
+            .with_next_page(has_next.then_some(page + 1))
+            .with_related(parse_related_queries(&html)))
     }
 }
 

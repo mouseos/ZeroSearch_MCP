@@ -23,6 +23,13 @@ const REFERER: &str = "https://search.yahoo.com/";
 pub struct Suggestion {
     pub keyword: String,
     pub search_url: String,
+    /// The gossip response's `mrk` value for this candidate, kept
+    /// verbatim (audit W-33). Its semantics are the service's own —
+    /// the analysis never pinned down what it measures (every
+    /// captured response carried `mrk: 6`), so it is surfaced
+    /// uninterpreted rather than dropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mrk: Option<i64>,
 }
 
 /// Response envelope for [`YahooUsSearchClient::suggest`].
@@ -72,6 +79,7 @@ pub fn parse_suggest_response(body: &Value, query: &str, limit: usize) -> Sugges
                     Some(Suggestion {
                         keyword,
                         search_url,
+                        mrk: r.get("mrk").and_then(|m| m.as_i64()),
                     })
                 })
                 .take(limit)
@@ -111,6 +119,8 @@ mod tests {
             .suggestions
             .iter()
             .any(|s| s.keyword == "applebee's grill + bar"));
+        // Audit W-33: every fixture result carries `mrk: 6`.
+        assert!(result.suggestions.iter().all(|s| s.mrk == Some(6)));
     }
 
     #[test]

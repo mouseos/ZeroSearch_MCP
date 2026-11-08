@@ -59,25 +59,38 @@ impl YahooSearchClient {
 
         let url = format!("{BASE}?p={}&ei=UTF-8&b={offset}", urlencode(query.trim()));
         let html = self.get_html(&url, REFERER).await?;
-        let data = extract_next_data(&html)?;
-
-        let props = get_path(&data, &["props", "initialProps", "pageProps"])
-            .cloned()
-            .unwrap_or(Value::Null);
-
-        let items: Vec<ImageItem> = props
-            .get("algos")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(parse_image).take(limit).collect())
-            .unwrap_or_default();
-
-        let has_next = items.len() as i64 >= PER_PAGE
-            || props.get("endIndex").and_then(|v| v.as_i64()).unwrap_or(0) >= offset + PER_PAGE - 1;
-
-        Ok(SearchResult::new("image", query, page, items)
-            .with_next_page(has_next.then_some(page + 1))
-            .with_related(parse_related(&props)))
+        parse_image_page(&html, query, page, limit as i64)
     }
+}
+
+/// Parse a saved image-search page (offline; audit W-10).
+pub fn parse_image_page(
+    html: &str,
+    query: &str,
+    page: i64,
+    limit: i64,
+) -> Result<SearchResult<ImageItem>> {
+    let page = page.max(1);
+    let limit = clamp_limit(limit, PER_PAGE);
+    let offset = (page - 1) * PER_PAGE + 1;
+    let data = extract_next_data(html)?;
+
+    let props = get_path(&data, &["props", "initialProps", "pageProps"])
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    let items: Vec<ImageItem> = props
+        .get("algos")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(parse_image).take(limit).collect())
+        .unwrap_or_default();
+
+    let has_next = items.len() as i64 >= PER_PAGE
+        || props.get("endIndex").and_then(|v| v.as_i64()).unwrap_or(0) >= offset + PER_PAGE - 1;
+
+    Ok(SearchResult::new("image", query, page, items)
+        .with_next_page(has_next.then_some(page + 1))
+        .with_related(parse_related(&props)))
 }
 
 fn parse_size(v: &Value, key: &str) -> Option<ImageSize> {

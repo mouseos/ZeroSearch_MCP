@@ -8,15 +8,15 @@
 //! plain HTTP, so everything here stays on the mobile host.
 //!
 //! Paging, as measured against the live pages: every tab page renders
-//! one batch and ignores its URL's `start`/`page` parameters (page 1
-//! and page 2 URLs return identical content). Deeper batches of the
-//! image / news / video / blog tabs are served by the "more" API whose
-//! URL each page itself issues — see the `more` module; those pages
-//! therefore cannot be expressed as a single URL and are an error
-//! here. The web tab has no such API and its batch never changes, so
-//! its deeper pages are an error too
-//! ([`crate::common::unsupported_page`]), never a silent repeat of
-//! page 1.
+//! one batch and ignores its URL's `start`/`page` parameters when
+//! they are varied naively. Deeper batches of the image / news /
+//! video / blog tabs are served by the "more" API whose URL each
+//! page itself issues — see the `more` module; those pages therefore
+//! cannot be expressed as a single URL and are an error here
+//! ([`crate::common::unsupported_page`]). The web-results view is
+//! the exception: it pages through its own pagination-bar hrefs
+//! (`page=N+1&start=(N-1)*20+1`, audit W-22), which are expressible
+//! as URLs and are built below.
 
 use anyhow::{anyhow, Result};
 
@@ -27,6 +27,9 @@ pub const SEARCH_BASE: &str = "https://m.search.naver.com/search.naver";
 /// Suggestions endpoint (the public `nx/ac` JSON API, verified live).
 pub const SUGGEST_BASE: &str = "https://ac.search.naver.com/nx/ac";
 
+/// Items per batch of the web-results view: its pagination bar
+/// advances `start` in steps of 20 (measured live, audit W-22).
+pub const WEB_PER_PAGE: i64 = 20;
 /// Items in the blog tab's first batch.
 pub const BLOG_PER_PAGE: i64 = 30;
 /// Items in the news tab's first batch.
@@ -43,6 +46,9 @@ pub fn normalize_vertical(vertical: &str) -> &str {
         "news" => "news",
         "video" | "videos" => "video",
         "blog" => "blog",
+        "cafe" => "cafe",
+        "kin" | "qna" => "kin",
+        "ai" => "ai",
         "suggest" | "suggestions" => "suggest",
         _ => "integrated",
     }
@@ -58,6 +64,9 @@ fn strict_vertical(vertical: &str) -> Result<&'static str> {
         "news" => Ok("news"),
         "video" | "videos" => Ok("video"),
         "blog" => Ok("blog"),
+        "cafe" => Ok("cafe"),
+        "kin" => Ok("kin"),
+        "ai" => Ok("ai"),
         other => Err(anyhow!("unsupported vertical: {other}")),
     }
 }
@@ -77,10 +86,22 @@ pub fn build_page_url(query: &str, vertical: &str, page: i64) -> Result<String> 
             format!("{SEARCH_BASE}?where=m&ie=utf8&query={q}&sm=mob_hty.sch")
         }
         "web" => {
-            if page > 1 {
-                return Err(unsupported_page("web", page));
+            if page == 1 {
+                format!("{SEARCH_BASE}?ssc=tab.m_ur.all&sm=mtb_jum&query={q}")
+            } else {
+                // The view's own pagination-bar href form (measured
+                // live 2026-11-08, audit W-22): the bar's link for
+                // batch N (N ≥ 2) carries `page=N+1` and
+                // `start=(N-1)*20+1`. The often-cited
+                // `page=2&start=1` link points back at batch 1,
+                // which is how an earlier measurement concluded the
+                // batches never change — they do.
+                let start = (page - 1) * WEB_PER_PAGE + 1;
+                format!(
+                    "{SEARCH_BASE}?nso=&page={}&qdt=0&query={q}&sm=mtb_pge&ssc=tab.m_ur.all&start={start}",
+                    page + 1
+                )
             }
-            format!("{SEARCH_BASE}?ssc=tab.m_ur.all&sm=mtb_jum&query={q}")
         }
         "image" => {
             if page > 1 {
@@ -105,6 +126,29 @@ pub fn build_page_url(query: &str, vertical: &str, page: i64) -> Result<String> 
                 return Err(unsupported_page("blog", page));
             }
             format!("{SEARCH_BASE}?ssc=tab.m_blog.all&sm=mtb_jum&query={q}")
+        }
+        "cafe" => {
+            if page > 1 {
+                return Err(unsupported_page("cafe", page));
+            }
+            format!("{SEARCH_BASE}?ssc=tab.m_cafe.all&sm=mtb_jum&query={q}")
+        }
+        "kin" => {
+            if page > 1 {
+                return Err(unsupported_page("kin", page));
+            }
+            format!("{SEARCH_BASE}?ssc=tab.m_kin.all&sm=mtb_jum&query={q}")
+        }
+        "ai" => {
+            if page > 1 {
+                return Err(unsupported_page("ai", page));
+            }
+            // The app's AI-tab URL (`getKeywordAiSearchURL`). The
+            // page it returns is a client-rendered shell with no
+            // server-rendered answer (measured live 2026-11-08), so
+            // the URL is buildable here but no search method fetches
+            // it (audit W-23).
+            format!("{SEARCH_BASE}?ssc=tab.m_ait.all&query={q}&sm=mob_hty.aitab")
         }
         _ => unreachable!("strict_vertical only returns known verticals"),
     };
@@ -142,17 +186,30 @@ mod tests {
     fn deep_pages_are_not_expressible_as_urls() {
         // Tab pages ignore page/start parameters; deeper batches come
         // from the page-issued more-API chain (module `more`), and the
-        // web/integrated views have no deeper pages at all.
-        for v in ["web", "image", "news", "video", "blog", "integrated"] {
+        // integrated view has no deeper pages at all. The web view is
+        // the exception: it pages through its own bar hrefs (below).
+        for v in ["image", "news", "video", "blog", "integrated", "cafe", "kin", "ai"] {
             let err = build_page_url("x", v, 2).unwrap_err();
             assert!(
                 err.to_string().starts_with("unsupported_page:"),
                 "{v}: {err}"
             );
         }
-        for v in ["web", "image", "news", "video", "blog"] {
+        for v in ["web", "image", "news", "video", "blog", "cafe", "kin", "ai"] {
             assert!(build_page_url("x", v, 1).is_ok(), "{v} page 1");
         }
+    }
+
+    #[test]
+    fn web_page_two_uses_the_pagination_bar_href() {
+        // Measured live 2026-11-08 (audit W-22): batch 2 is the bar's
+        // page=3&start=21 href; batch 3 is page=4&start=41.
+        let url = build_page_url("테스트", "web", 2).unwrap();
+        assert!(url.contains("page=3"), "{url}");
+        assert!(url.contains("start=21"), "{url}");
+        assert!(url.contains("sm=mtb_pge"), "{url}");
+        let url3 = build_page_url("테스트", "web", 3).unwrap();
+        assert!(url3.contains("page=4") && url3.contains("start=41"), "{url3}");
     }
 
     #[test]
@@ -164,7 +221,7 @@ mod tests {
 
     #[test]
     fn unknown_vertical_is_an_error() {
-        assert!(build_search_url("x", "cafe").is_err());
-        assert!(build_search_url("x", "kin").is_err());
+        assert!(build_search_url("x", "shopping").is_err());
+        assert!(build_search_url("x", "dictionary").is_err());
     }
 }

@@ -42,6 +42,7 @@ fn web_result_builds_and_serialises() {
         url: "https://example.jp/".to_string(),
         description: Some("説明".to_string()),
         site: None,
+        entry_type: None,
     };
     let result = SearchResult::new("web", "クエリ", 1, vec![item])
         .with_total(Some(123))
@@ -165,6 +166,7 @@ fn every_vertical_item_type_is_constructible_from_the_root() {
             keyword: "ラーメン 作り方".to_string(),
             search_url: "https://search.yahoo.co.jp/search?p=x".to_string(),
         }],
+        appid_source: String::new(),
     };
     assert_eq!(suggest.suggestions[0].keyword, "ラーメン 作り方");
 }

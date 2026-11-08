@@ -136,6 +136,9 @@ impl YandexSearchClient {
         if total_found >= PER_PAGE as usize {
             result = result.with_next_page(Some(page + 1));
         }
+        if page > crate::VERIFIED_MAX_PAGE {
+            result = result.with_note(crate::BEYOND_VERIFIED_NOTE);
+        }
         Ok(result)
     }
 }
@@ -148,11 +151,11 @@ mod tests {
     fn image_url_uses_tabbar_form() {
         assert_eq!(
             image_search_url("test", 1),
-            "https://yandex.ru/images/touch/search?text=test&source=tabbar"
+            "https://yandex.ru/images/touch/search?text=test&source=tabbar&ui=webmobileapp.yandex"
         );
         assert_eq!(
             image_search_url("test", 2),
-            "https://yandex.ru/images/touch/search?text=test&source=tabbar&p=1"
+            "https://yandex.ru/images/touch/search?text=test&source=tabbar&ui=webmobileapp.yandex&p=1"
         );
     }
 

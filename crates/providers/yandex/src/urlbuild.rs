@@ -8,7 +8,18 @@ use crate::common::urlencode;
 
 /// Verticals a URL can be built for. News is deliberately absent: the news
 /// vertical moved to dzen.ru and requires Yandex SSO sign-in.
-pub const URL_VERTICALS: [&str; 4] = ["web", "image", "video", "suggest"];
+pub const URL_VERTICALS: [&str; 5] = ["web", "image", "video", "suggest", "suggest_endings"];
+
+/// Build the suggest-endings (tail-completion) URL — the second
+/// autocomplete endpoint, verified live in the analysis (round 3,
+/// trial 6b). Its response shape differs from suggest-ya.cgi; see
+/// `suggest::parse_suggest_endings_body`.
+pub fn build_suggest_endings_url(query: &str) -> String {
+    format!(
+        "https://yandex.ru/suggest/suggest-endings?part={}&v=4",
+        urlencode(query.trim())
+    )
+}
 
 /// Build the touch search URL for `vertical` without any network access.
 ///
@@ -23,18 +34,25 @@ pub fn build_search_url(query: &str, vertical: &str) -> Result<String> {
     }
     let q = urlencode(query);
     match vertical.trim().to_lowercase().as_str() {
-        "" | "web" => Ok(format!("https://yandex.ru/search/touch/?text={q}")),
+        "" | "web" => Ok(format!(
+            "https://yandex.ru/search/touch/?text={q}&{}",
+            crate::common::UI_PARAM
+        )),
         "image" | "images" => Ok(format!(
-            "https://yandex.ru/images/touch/search?text={q}&source=tabbar"
+            "https://yandex.ru/images/touch/search?text={q}&source=tabbar&{}",
+            crate::common::UI_PARAM
         )),
         "video" | "videos" => Ok(format!(
-            "https://yandex.ru/video/touch/search?text={q}&source=tabbar"
+            "https://yandex.ru/video/touch/search?text={q}&source=tabbar&{}",
+            crate::common::UI_PARAM
         )),
         "suggest" => Ok(format!(
             "https://yandex.ru/suggest/suggest-ya.cgi?part={q}&v=4&tpah=1&uil=ru"
         )),
+        "suggest_endings" | "suggest-endings" => Ok(build_suggest_endings_url(query)),
+
         other => Err(anyhow!(
-            "unsupported vertical: {other} (supported: web, image, video, suggest; \
+            "unsupported vertical: {other} (supported: web, image, video, suggest, suggest_endings; \
              news is unavailable — it moved to dzen.ru and requires Yandex SSO)"
         )),
     }
@@ -48,19 +66,19 @@ mod tests {
     fn builds_each_vertical() {
         assert_eq!(
             build_search_url("test", "web").unwrap(),
-            "https://yandex.ru/search/touch/?text=test"
+            "https://yandex.ru/search/touch/?text=test&ui=webmobileapp.yandex"
         );
         assert_eq!(
             build_search_url("test", "").unwrap(),
-            "https://yandex.ru/search/touch/?text=test"
+            "https://yandex.ru/search/touch/?text=test&ui=webmobileapp.yandex"
         );
         assert_eq!(
             build_search_url("test", "image").unwrap(),
-            "https://yandex.ru/images/touch/search?text=test&source=tabbar"
+            "https://yandex.ru/images/touch/search?text=test&source=tabbar&ui=webmobileapp.yandex"
         );
         assert_eq!(
             build_search_url("test", "video").unwrap(),
-            "https://yandex.ru/video/touch/search?text=test&source=tabbar"
+            "https://yandex.ru/video/touch/search?text=test&source=tabbar&ui=webmobileapp.yandex"
         );
         assert_eq!(
             build_search_url("test", "suggest").unwrap(),

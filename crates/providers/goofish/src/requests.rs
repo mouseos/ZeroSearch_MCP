@@ -573,6 +573,65 @@ pub fn build_rate_list_request(
 }
 
 // ---------------------------------------------------------------------------
+// User head info: mtop.taobao.idle.user.headinfo.get 4.0
+// ---------------------------------------------------------------------------
+
+/// Build a user.headinfo.get plan from the statically typed request
+/// class (classes10 `ApiUserHeadinfoGetRequest`, see
+/// seller-headinfo-api-trace.md §3): `userId` (String, the primary
+/// target selector), `nick` (String, alternative selector) and
+/// `myUserId` (Long, the viewer's own id). `None` fields are omitted.
+/// The class's `appKey` field is *not* part of the data map: it is
+/// supplied by the sending layer (the wire form carries the public
+/// app key as the `x-appkey` header; see `protocol::build_form`).
+///
+/// Caveat, recorded in round 36: no construction site for this
+/// request class exists in any of the 11 DEX files of this APK
+/// version — it is a legacy fleamarket-layer definition with no
+/// confirmed in-app caller. The request *shape* is statically
+/// determined, so the builder exists, but the API is unmeasured live
+/// and its in-app reachability is unconfirmed.
+pub fn build_user_headinfo_request(
+    user_id: Option<&str>,
+    nick: Option<&str>,
+    my_user_id: Option<i64>,
+) -> Result<RequestPlan> {
+    let mut data = Map::new();
+    insert_str(&mut data, "userId", user_id);
+    insert_str(&mut data, "nick", nick);
+    if let Some(id) = my_user_id {
+        data.insert("myUserId".into(), json!(id));
+    }
+    plan("mtop.taobao.idle.user.headinfo.get", data, None)
+}
+
+// ---------------------------------------------------------------------------
+// Seller / own published items: mtop.taobao.idle.user.publish.items 6.0
+// ---------------------------------------------------------------------------
+
+/// Build a user.publish.items plan from the only statically
+/// confirmed consumer (classes10 `MyIdleItemListController`, see
+/// seller-public-items-trace.md §2): its parameter object carries
+/// exactly `pageNumber` (int, default 1) and `pageSize` (int,
+/// default 20), sent through the generic `ApiProtocol` route.
+///
+/// Caveat: the confirmed request has **no target-user parameter**.
+/// The confirmed consumer is the message screen's own-item selection
+/// (the signed-in user's own listings); whether another user's page
+/// uses this API, and with what selector field, was not confirmed by
+/// static analysis. This builder therefore deliberately exposes no
+/// user selector — do not treat the resulting call as a public
+/// other-user listing API.
+pub fn build_seller_items_request(page_number: i64, page_size: i64) -> Result<RequestPlan> {
+    let page_number = require_positive_int("page_number", page_number)?;
+    let page_size = require_positive_int("page_size", page_size)?;
+    let mut data = Map::new();
+    data.insert("pageNumber".into(), json!(page_number));
+    data.insert("pageSize".into(), json!(page_size));
+    plan("mtop.taobao.idle.user.publish.items", data, None)
+}
+
+// ---------------------------------------------------------------------------
 // Recommendations: mtop.taobao.idle.item.recommend.list 5.0
 // ---------------------------------------------------------------------------
 
@@ -972,6 +1031,26 @@ impl SearchPagination {
         }
     }
 
+    /// Restart from page 1 (condition change / refresh), port of
+    /// Python `SearchPagination.reset` (round 30 correction): page
+    /// counters, both LastIndex accumulators and the sqi carry-over
+    /// return to their initial values, mirroring the app's
+    /// resetPageNumber + resetSqiControlFieldsJson.
+    /// `extra_filter_value` is preserved on purpose: the app's
+    /// refresh never clears it — `updateOtherParams` replaces it
+    /// with the server-returned form after each refresh-type
+    /// response and that form is carried into the next
+    /// condition-changed send. Use a fresh state for a genuinely new
+    /// search context.
+    pub fn reset(&mut self) {
+        self.page_number = 1;
+        self.relate_page_number = 1;
+        self.result_list_last_index = 0;
+        self.relate_result_list_last_index = 0;
+        self.sqi_control_fields_json = None;
+        // extra_filter_value intentionally preserved (see docstring).
+    }
+
     /// Fields for the next request; `firstRequest` is present with a
     /// null value, which `with_fields` turns into key removal.
     pub fn request_fields(&self) -> Map<String, Value> {
@@ -1047,6 +1126,243 @@ impl SearchPagination {
         true
     }
 }
+
+// ---------------------------------------------------------------------------
+// Recommend / home-feed / pageNo pagination states (pagination.py)
+// ---------------------------------------------------------------------------
+
+/// `recommend_accumulate` state (RecommendViewModel), port of Python
+/// `RecommendPagination`: refresh resets page_num/current_size to 0;
+/// load-more increments page_num and current_size accumulates the
+/// returned card count. `history_item_ids` are the already displayed
+/// item ids, regenerated for every request.
+#[derive(Debug, Clone)]
+pub struct RecommendPagination {
+    pub page_num: i64,
+    pub page_size: i64,
+    pub current_size: i64,
+    pub history_item_ids: Vec<String>,
+}
+
+impl Default for RecommendPagination {
+    fn default() -> Self {
+        Self {
+            page_num: 0,
+            page_size: 20,
+            current_size: 0,
+            history_item_ids: Vec::new(),
+        }
+    }
+}
+
+impl RecommendPagination {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Refresh semantics: page_num/current_size restart at 0 and the
+    /// displayed-item history is dropped. `page_size` is
+    /// configuration and is preserved.
+    pub fn reset(&mut self) {
+        self.page_num = 0;
+        self.current_size = 0;
+        self.history_item_ids.clear();
+    }
+
+    /// Fields for the next request (`historyItemIds` is always
+    /// assigned by fromFeedsModel — `""` when nothing shown).
+    pub fn request_fields(&self) -> Map<String, Value> {
+        let mut out = Map::new();
+        out.insert("pageNum".into(), json!(self.page_num));
+        out.insert("pageSize".into(), json!(self.page_size));
+        out.insert("currentSize".into(), json!(self.current_size));
+        out.insert(
+            "historyItemIds".into(),
+            json!(self.history_item_ids.join(",")),
+        );
+        out
+    }
+
+    /// Consume one parsed recommend page (the normalized Value from
+    /// `parse_recommend_response`: `cards[].item.item_id`,
+    /// `has_more`); returns true when another page should be
+    /// requested. Mirrors the Python state exactly: current_size and
+    /// history accumulate even on the final page; page_num advances
+    /// only when `has_more` is true.
+    pub fn advance(&mut self, parsed_page: &Value) -> bool {
+        let cards = parsed_page
+            .get("cards")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        self.current_size += cards.len() as i64;
+        for card in &cards {
+            if let Some(id) = card.pointer("/item/item_id").and_then(|v| match v {
+                Value::String(s) => Some(s.clone()),
+                Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            }) {
+                self.history_item_ids.push(id);
+            }
+        }
+        if parsed_page.get("has_more").and_then(|v| v.as_bool()) != Some(true) {
+            return false;
+        }
+        self.page_num += 1;
+        true
+    }
+
+    /// Apply this state to recommend options (the caller keeps its
+    /// req_params / tab fields; only the accumulate fields move).
+    pub fn apply_to(&self, opts: &mut RecommendOptions) {
+        opts.page_num = self.page_num;
+        opts.page_size = self.page_size;
+        opts.current_size = self.current_size;
+        opts.history_item_ids = self.history_item_ids.clone();
+    }
+}
+
+/// Request-data keys controlled by RecommendPagination.
+pub const RECOMMEND_PAGING_FIELDS: &[&str] =
+    &["pageNum", "pageSize", "currentSize", "historyItemIds"];
+
+/// `home_recycle_carryover` state (HomeRecommendReq.updatePageNumber),
+/// port of Python `HomePagination`: page_number advances only when
+/// the previous sections were non-empty; last_response_count
+/// accumulates feedsCount; client_recycle_params is copied verbatim
+/// from the previous response.
+#[derive(Debug, Clone, Default)]
+pub struct HomePagination {
+    pub page_number: i64,
+    pub last_response_count: i64,
+    pub client_recycle_params: Option<String>,
+}
+
+impl HomePagination {
+    pub fn new() -> Self {
+        Self {
+            page_number: 1,
+            last_response_count: 0,
+            client_recycle_params: None,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.page_number = 1;
+        self.last_response_count = 0;
+        self.client_recycle_params = None;
+    }
+
+    /// Fields for the next request; `needCustomsUrlParams` is present
+    /// with a null value, which `with_fields` turns into key removal
+    /// (HomeRecommendReq.updatePageNumber nulls it when advancing;
+    /// requestMtop only re-adds it for pageNumber == 1, which an
+    /// advanced state never is).
+    pub fn request_fields(&self) -> Map<String, Value> {
+        let mut out = Map::new();
+        out.insert("pageNumber".into(), json!(self.page_number));
+        out.insert("lastResponseCount".into(), json!(self.last_response_count));
+        out.insert("needCustomsUrlParams".into(), Value::Null);
+        if let Some(crp) = &self.client_recycle_params {
+            out.insert("clientRecycleParams".into(), json!(crp));
+        }
+        out
+    }
+
+    /// Consume one parsed home-feed page (the normalized Value from
+    /// `parse_home_feed_response`: `sections`, `feeds_count`,
+    /// `next_page`, `client_recycle_params`); returns true when
+    /// another page should be requested. The counters accumulate
+    /// whenever the previous sections were non-empty; next_page only
+    /// governs whether the caller continues.
+    pub fn advance(&mut self, parsed_page: &Value) -> bool {
+        let sections_len = parsed_page
+            .get("sections")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        let feeds = parsed_page
+            .get("feeds_count")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        if let Some(crp) = parsed_page
+            .get("client_recycle_params")
+            .and_then(|v| v.as_str())
+        {
+            self.client_recycle_params = Some(crp.to_string());
+        }
+        if sections_len > 0 {
+            self.page_number += 1;
+            self.last_response_count += feeds;
+        }
+        parsed_page.get("next_page").and_then(|v| v.as_bool()) == Some(true)
+    }
+
+    /// Apply this state to home-feed options.
+    pub fn apply_to(&self, opts: &mut HomeFeedOptions) {
+        opts.page_number = self.page_number;
+        opts.last_response_count = self.last_response_count;
+        opts.client_recycle_params = self.client_recycle_params.clone();
+    }
+}
+
+/// Request-data keys controlled by HomePagination.
+pub const HOME_PAGING_FIELDS: &[&str] = &[
+    "pageNumber",
+    "lastResponseCount",
+    "clientRecycleParams",
+    "needCustomsUrlParams",
+];
+
+/// `flag_nextpage_pageno` state, port of Python `PageNoPagination`:
+/// pageNo (int) advances while nextPage is true. Used by
+/// search.spusimilar.itemlist 1.0 (round 16): the request carries
+/// pageNo / pageSize (initial values 1 / 10 confirmed in the Dart
+/// constructor) and the response carries a nextPage bool.
+#[derive(Debug, Clone)]
+pub struct PageNoPagination {
+    pub page_no: i64,
+    pub page_size: i64,
+}
+
+impl Default for PageNoPagination {
+    fn default() -> Self {
+        Self {
+            page_no: 1,
+            page_size: 10,
+        }
+    }
+}
+
+impl PageNoPagination {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn reset(&mut self) {
+        self.page_no = 1;
+    }
+
+    pub fn request_fields(&self) -> Map<String, Value> {
+        let mut out = Map::new();
+        out.insert("pageNo".into(), json!(self.page_no));
+        out.insert("pageSize".into(), json!(self.page_size));
+        out
+    }
+
+    /// Consume one parsed page carrying `next_page`; returns true
+    /// when another page should be requested.
+    pub fn advance(&mut self, parsed_page: &Value) -> bool {
+        if parsed_page.get("next_page").and_then(|v| v.as_bool()) != Some(true) {
+            return false;
+        }
+        self.page_no += 1;
+        true
+    }
+}
+
+/// Request-data keys controlled by PageNoPagination.
+pub const PAGE_NO_PAGING_FIELDS: &[&str] = &["pageNo", "pageSize"];
 
 /// Request-data keys controlled by SearchPagination (client.py's
 /// condition-fingerprint exclusion set).
@@ -1409,6 +1725,156 @@ mod tests {
         assert!(build_video_play_request_from_feed_card(&card, Some(56), None).is_err());
         let novideo = json!({"item_id": "55", "has_video": false});
         assert!(build_video_play_request_from_feed_card(&novideo, None, None).is_err());
+    }
+
+    #[test]
+    fn user_headinfo_request_shape() {
+        // Full form: all three typed fields, myUserId stays numeric.
+        let plan = build_user_headinfo_request(Some("2211445566"), None, Some(123)).unwrap();
+        assert_eq!(plan.api_name, "mtop.taobao.idle.user.headinfo.get");
+        assert_eq!(plan.version, "4.0");
+        assert_eq!(plan.data, json!({"userId": "2211445566", "myUserId": 123}));
+        // nick is the alternative selector; None fields are omitted
+        // and appKey never enters the data map (sending-layer field).
+        let plan = build_user_headinfo_request(None, Some("示例闲鱼号"), None).unwrap();
+        assert_eq!(plan.data, json!({"nick": "示例闲鱼号"}));
+        assert!(plan.data.get("appKey").is_none());
+        // All-None is the empty map (no invented defaults).
+        let plan = build_user_headinfo_request(None, None, None).unwrap();
+        assert_eq!(plan.data, json!({}));
+    }
+
+    #[test]
+    fn seller_items_request_shape() {
+        let plan = build_seller_items_request(1, 20).unwrap();
+        assert_eq!(plan.api_name, "mtop.taobao.idle.user.publish.items");
+        assert_eq!(plan.version, "6.0");
+        // Exactly the confirmed consumer's two fields — crucially no
+        // target-user / seller field is invented.
+        assert_eq!(plan.data, json!({"pageNumber": 1, "pageSize": 20}));
+        assert!(build_seller_items_request(0, 20).is_err());
+        assert!(build_seller_items_request(1, 0).is_err());
+    }
+
+    #[test]
+    fn search_pagination_reset_preserves_extra_filter_value() {
+        // Round 30: reset() restarts counters and clears the sqi
+        // carry-over, but never clears the server extraFilterValue.
+        let mut state = SearchPagination::new();
+        state.page_number = 3;
+        state.result_list_last_index = 40;
+        state.sqi_control_fields_json = Some("SQI".into());
+        state.extra_filter_value = Some("EFV".into());
+        state.reset();
+        assert_eq!(state.page_number, 1);
+        assert_eq!(state.relate_page_number, 1);
+        assert_eq!(state.result_list_last_index, 0);
+        assert_eq!(state.sqi_control_fields_json, None);
+        assert_eq!(state.extra_filter_value.as_deref(), Some("EFV"));
+    }
+
+    #[test]
+    fn recommend_pagination_accumulates_like_python() {
+        // Port of pagination.py RecommendPagination over parsed
+        // recommend pages (cards[].item.item_id + has_more).
+        let mut state = RecommendPagination::new();
+        let fields = state.request_fields();
+        assert_eq!(fields["pageNum"], json!(0));
+        assert_eq!(fields["pageSize"], json!(20));
+        assert_eq!(fields["currentSize"], json!(0));
+        assert_eq!(fields["historyItemIds"], json!(""));
+        let page1 = json!({
+            "cards": [
+                {"item": {"item_id": "11"}},
+                {"item": {"item_id": "22"}},
+                {"card_type": "ad"},
+            ],
+            "has_more": true,
+        });
+        assert!(state.advance(&page1));
+        assert_eq!(state.page_num, 1);
+        assert_eq!(state.current_size, 3);
+        assert_eq!(state.history_item_ids, vec!["11", "22"]);
+        // Final page: counters still accumulate, page_num stays.
+        let page2 = json!({"cards": [{"item": {"item_id": "33"}}], "has_more": false});
+        assert!(!state.advance(&page2));
+        assert_eq!(state.page_num, 1);
+        assert_eq!(state.current_size, 4);
+        assert_eq!(state.history_item_ids, vec!["11", "22", "33"]);
+        // Refresh resets to 0 and drops history; page_size is kept.
+        state.reset();
+        assert_eq!(state.page_num, 0);
+        assert_eq!(state.current_size, 0);
+        assert!(state.history_item_ids.is_empty());
+        assert_eq!(state.page_size, 20);
+        // apply_to moves exactly the accumulate fields.
+        let mut opts = RecommendOptions::new();
+        state.history_item_ids = vec!["7".into()];
+        state.apply_to(&mut opts);
+        assert_eq!(opts.history_item_ids, vec!["7"]);
+        let plan = build_recommend_request(&opts).unwrap();
+        assert_eq!(plan.data["historyItemIds"], json!("7"));
+    }
+
+    #[test]
+    fn home_pagination_recycle_carryover_like_python() {
+        // Port of pagination.py HomePagination over parsed home
+        // pages (sections / feeds_count / next_page /
+        // client_recycle_params). Mirrors the measured round-21/22
+        // transition: counts accumulate, the recycle token is copied
+        // verbatim, needCustomsUrlParams is nulled on advance.
+        let mut state = HomePagination::new();
+        let page1 = json!({
+            "sections": [{}, {}, {}],
+            "feeds_count": 3,
+            "next_page": true,
+            "client_recycle_params": "RAW-TOKEN",
+        });
+        assert!(state.advance(&page1));
+        assert_eq!(state.page_number, 2);
+        assert_eq!(state.last_response_count, 3);
+        assert_eq!(state.client_recycle_params.as_deref(), Some("RAW-TOKEN"));
+        let fields = state.request_fields();
+        assert_eq!(fields["pageNumber"], json!(2));
+        assert_eq!(fields["clientRecycleParams"], json!("RAW-TOKEN"));
+        assert_eq!(fields["needCustomsUrlParams"], Value::Null);
+        // Empty final page: no counter movement, continuation stops,
+        // but the response's recycle token is still taken in.
+        let page2 = json!({
+            "sections": [],
+            "feeds_count": 0,
+            "next_page": false,
+            "client_recycle_params": "RAW-TOKEN-2",
+        });
+        assert!(!state.advance(&page2));
+        assert_eq!(state.page_number, 2);
+        assert_eq!(state.last_response_count, 3);
+        assert_eq!(state.client_recycle_params.as_deref(), Some("RAW-TOKEN-2"));
+        // apply_to + builder: the advanced send drops
+        // needCustomsUrlParams exactly as updatePageNumber nulls it.
+        let mut opts = HomeFeedOptions::default();
+        state.apply_to(&mut opts);
+        let plan = build_home_feed_request(&opts).unwrap();
+        assert_eq!(plan.data["pageNumber"], json!(2));
+        assert_eq!(plan.data["lastResponseCount"], json!(3));
+        assert_eq!(plan.data["clientRecycleParams"], json!("RAW-TOKEN-2"));
+        assert!(plan.data.get("needCustomsUrlParams").is_none());
+        state.reset();
+        assert_eq!(state.page_number, 1);
+        assert_eq!(state.client_recycle_params, None);
+    }
+
+    #[test]
+    fn page_no_pagination_advances_on_next_page() {
+        let mut state = PageNoPagination::new();
+        assert_eq!(state.request_fields()["pageNo"], json!(1));
+        assert_eq!(state.request_fields()["pageSize"], json!(10));
+        assert!(state.advance(&json!({"next_page": true})));
+        assert_eq!(state.page_no, 2);
+        assert!(!state.advance(&json!({"next_page": false})));
+        assert_eq!(state.page_no, 2);
+        state.reset();
+        assert_eq!(state.page_no, 1);
     }
 
     #[test]

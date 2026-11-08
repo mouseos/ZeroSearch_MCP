@@ -78,27 +78,25 @@ fn build_card(el: dom::NRef<'_>, kind: &str, base_url: Option<&str>, position: i
             url = None;
         }
     }
-    let mut items: Vec<CardItem> = Vec::new();
-    if ["video", "live", "official_account", "forum", "note"].contains(&kind) {
-        items = extractors::extract_card_items(el, base_url)
-            .into_iter()
-            .map(|(title, url, thumbnail)| CardItem {
-                title: Some(title),
-                url,
-                thumbnail,
-            })
-            .collect();
-    }
+    // Audit W-04: item and body-text extraction used to run only
+    // for a few card kinds, dropping the contents of the others
+    // (weather, dictionary, ai_answer, …). Both extractors are
+    // content-driven (they return nothing when the card carries no
+    // matching anchors), so run them for every kind.
+    let items: Vec<CardItem> = extractors::extract_card_items(el, base_url)
+        .into_iter()
+        .map(|(title, url, thumbnail)| CardItem {
+            title: Some(title),
+            url,
+            thumbnail,
+        })
+        .collect();
     let click_url = urltools::resolve(
         extractors::extract_click_url(el, title.as_deref()).as_deref(),
         base_url,
     );
     let thumbnail = urltools::resolve(extractors::extract_thumbnail(el).as_deref(), base_url);
-    let text = if kind == "baike" || kind == "knowledge_graph" {
-        extractors::extract_card_text(el)
-    } else {
-        None
-    };
+    let text = extractors::extract_card_text(el);
     CardEntry {
         entry_type: "card".to_string(),
         card_kind: Some(kind.to_string()),
@@ -232,12 +230,20 @@ pub fn parse_search_results(html: &str, query: Option<&str>, page_url: Option<&s
                 bump(&mut counts, "related_block");
             }
             _ => {
+                // Audit W-05: run the generic extraction used for
+                // known results so unknown-template results keep
+                // their title / URL / snippet.
+                let (u_url, _src, _fusion) = extractors::extract_external_url(*el);
+                let (u_snippet, _prefix) = extractors::extract_snippet(*el);
                 page.unknown_elements.push(UnknownElement {
                     display_position: int_or_none(dom::attr(*el, "order")),
                     position_in_page: Some(position),
                     tpl: dom::attr(*el, "tpl"),
                     srcid: dom::attr(*el, "srcid"),
                     reason: detail,
+                    title: extractors::extract_title(*el),
+                    url: u_url,
+                    snippet: u_snippet,
                 });
                 bump(&mut counts, "unknown");
             }

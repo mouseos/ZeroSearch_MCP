@@ -62,26 +62,38 @@ impl YahooSearchClient {
         }
 
         let html = self.get_html(&url, REFERER).await?;
-        let data = extract_next_data(&html)?;
+        parse_realtime_page(&html, query, page, limit as i64)
+    }
+}
 
-        let items: Vec<RealtimeItem> = get_path(
-            &data,
-            &["props", "pageProps", "pageData", "timeline", "entry"],
-        )
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(parse_entry).take(limit).collect())
+/// Parse a saved realtime-search page (offline; audit W-10).
+pub fn parse_realtime_page(
+    html: &str,
+    query: &str,
+    page: i64,
+    limit: i64,
+) -> Result<SearchResult<RealtimeItem>> {
+    let page = page.max(1);
+    let limit = clamp_limit(limit, PER_PAGE);
+    let data = extract_next_data(html)?;
+
+    let items: Vec<RealtimeItem> = get_path(
+        &data,
+        &["props", "pageProps", "pageData", "timeline", "entry"],
+    )
+    .and_then(|v| v.as_array())
+    .map(|arr| arr.iter().filter_map(parse_entry).take(limit).collect())
+    .unwrap_or_default();
+
+    let related = get_path(&data, &["props", "pageProps", "pageData", "relatedHashtag"])
+        .map(parse_related_hashtags)
         .unwrap_or_default();
 
-        let related = get_path(&data, &["props", "pageProps", "pageData", "relatedHashtag"])
-            .map(parse_related_hashtags)
-            .unwrap_or_default();
+    let has_next = items.len() as i64 >= PER_PAGE;
 
-        let has_next = items.len() as i64 >= PER_PAGE;
-
-        Ok(SearchResult::new("realtime", query, page, items)
-            .with_next_page(has_next.then_some(page + 1))
-            .with_related(related))
-    }
+    Ok(SearchResult::new("realtime", query, page, items)
+        .with_next_page(has_next.then_some(page + 1))
+        .with_related(related))
 }
 
 fn parse_entry(entry: &Value) -> Option<RealtimeItem> {

@@ -52,13 +52,14 @@ pub fn normalize_vertical(vertical: &str) -> &str {
         "image" | "images" => "image",
         "video" | "videos" => "video",
         "news" => "news",
+        "shopping" | "shop" => "shopping",
         "suggest" | "suggestions" => "suggest",
         _ => "web",
     }
 }
 
 fn is_search_vertical(vertical: &str) -> bool {
-    matches!(vertical, "web" | "image" | "video" | "news")
+    matches!(vertical, "web" | "image" | "video" | "news" | "shopping")
 }
 
 /// Strictly resolve a caller-supplied vertical for URL building: unknown
@@ -69,6 +70,7 @@ fn strict_vertical(vertical: &str) -> Result<&'static str> {
         "image" | "images" => Ok("image"),
         "video" | "videos" => Ok("video"),
         "news" => Ok("news"),
+        "shopping" | "shop" => Ok("shopping"),
         other => Err(anyhow!("unsupported vertical: {other}")),
     }
 }
@@ -106,6 +108,9 @@ fn path_for(vertical: &str) -> &'static str {
         "image" => "/images/search",
         "video" => "/videos/search",
         "news" => "/news/search",
+        // The shopping vertical the app's deep links point at
+        // (`https://www.bing.com/shop/search?q=`, audit W-15).
+        "shopping" => "/shop/search",
         _ => "/search",
     }
 }
@@ -249,7 +254,16 @@ mod tests {
 
     #[test]
     fn unknown_vertical_is_an_error() {
-        assert!(build_search_url("x", "shopping", "", "").is_err());
+        assert!(build_search_url("x", "maps", "", "").is_err());
         assert!(suggest_url("x", "news", "", "").is_err());
+    }
+
+    #[test]
+    fn shopping_url_uses_shop_path() {
+        let url = build_search_url("ノートパソコン", "shopping", "ja-JP", "ja").unwrap();
+        assert!(url.starts_with("https://www.bing.com/shop/search?q="));
+        assert!(url.contains("&mkt=ja-JP&setlang=ja&first=1"));
+        let page2 = build_page_url("x", "shop", 2, "", "").unwrap();
+        assert!(page2.contains("&first=11"));
     }
 }

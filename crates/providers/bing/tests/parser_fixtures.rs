@@ -5,8 +5,8 @@
 //! These assert counts and representative fields of the actual payloads.
 
 use bing_search::{
-    parse_image_results, parse_news_results, parse_suggest_json, parse_video_results,
-    parse_web_results,
+    parse_image_results, parse_news_results, parse_shop_results, parse_suggest_json,
+    parse_video_results, parse_web_results,
 };
 
 const WEB_JSON: &str = include_str!("fixtures/fixture-web-ja.json");
@@ -15,6 +15,29 @@ const VIDEO_HTML: &str = include_str!("fixtures/fixture-video-ja.html");
 const NEWS_HTML: &str = include_str!("fixtures/fixture-news-ja.html");
 const IMAGE_HTML: &str = include_str!("fixtures/fixture-image-ja.html");
 const SUGGEST_JSON: &str = include_str!("fixtures/fixture-suggest-ja.json");
+const SHOP_HTML: &str = include_str!("fixtures/fixture-shop-ja.html");
+
+#[test]
+fn shop_fixture_parses_offer_cards() {
+    // Real shopping page captured live 2026-11-08 (query
+    // "ノートパソコン", audit W-15): 26 offer cards.
+    let page = parse_shop_results(SHOP_HTML, 1, 40).unwrap();
+    assert_eq!(page.items.len(), 26);
+    let first = &page.items[0];
+    assert!(first.title.contains("Thinkbook16"));
+    assert_eq!(first.price_text.as_deref(), Some("¥290,180"));
+    assert_eq!(first.price_value, Some(290180));
+    assert_eq!(first.seller.as_deref(), Some("Lenovo AU"));
+    assert!(first
+        .url
+        .as_deref()
+        .unwrap()
+        .starts_with("https://www.bing.com/shop/entitydetails"));
+    assert!(first.image_url.is_some());
+    assert!(first.offer_id.is_some());
+    // Page 1 links no deeper `first=` offset (see shop.rs docs).
+    assert!(!page.has_next_page);
+}
 
 #[test]
 fn web_fixture_parses_ten_results_with_total_next_page_and_related() {

@@ -34,15 +34,69 @@ static REVIEW_ITEM_RE: LazyLock<Regex> = LazyLock::new(|| {
     ).unwrap()
 });
 
-fn sort_params(s: &str) -> (&'static str, &'static str) {
+/// [S1-36] Canonical sort vocabulary for `rakuma_search_products`.
+/// Aliases (`relevance` for default, `lowest_price` / `highest_price`,
+/// `new`, `popular`) are also accepted by [`sort_params`].
+pub const SEARCH_SORT_VALUES: &[&str] = &["default", "price_asc", "price_desc", "newest", "likes"];
+
+/// All spellings accepted by [`sort_params`], including aliases.
+pub const SEARCH_SORT_SPELLINGS: &[&str] = &[
+    "",
+    "default",
+    "relevance",
+    "price_asc",
+    "lowest_price",
+    "price_desc",
+    "highest_price",
+    "newest",
+    "new",
+    "likes",
+    "popular",
+];
+
+/// [S1-36] Unknown sorts are an explicit error instead of silently
+/// degrading to an unsorted default search.
+fn sort_params(s: &str) -> anyhow::Result<(&'static str, &'static str)> {
     match s.to_lowercase().as_str() {
-        "" | "default" | "relevance" => ("", ""),
-        "price_asc" | "lowest_price" => ("sell_price", "asc"),
-        "price_desc" | "highest_price" => ("sell_price", "desc"),
-        "newest" | "new" => ("created_at", "desc"),
-        "likes" | "popular" => ("like_count", "desc"),
-        _ => ("", ""),
+        "" | "default" | "relevance" => Ok(("", "")),
+        "price_asc" | "lowest_price" => Ok(("sell_price", "asc")),
+        "price_desc" | "highest_price" => Ok(("sell_price", "desc")),
+        "newest" | "new" => Ok(("created_at", "desc")),
+        "likes" | "popular" => Ok(("like_count", "desc")),
+        other => anyhow::bail!(
+            "unknown sort '{other}' for rakuma search; valid sorts: {} (aliases: lowest_price, highest_price, new, popular, relevance)",
+            SEARCH_SORT_VALUES.join(", ")
+        ),
     }
+}
+
+/// [S1-34] Review-page URL for a 1-based page. Page 1 keeps the original
+/// bare URL for every page. Live probing (2026-11-08) settled the
+/// question the earlier `?page=N` form left open: the review page
+/// ignores `?page=` entirely (page 2 was byte-identical) and carries
+/// NO pagination links — it server-renders one long list (400 reviews
+/// observed on a single page). Pagination is therefore done by
+/// [`RakumaClient::get_reviews`] slicing that list client-side; the
+/// `page` argument is retained for signature compatibility only.
+pub fn review_page_url(seller_hash: &str, page: i32) -> String {
+    let _ = page.max(1);
+    format!("{BASE}/shop/{seller_hash}/review")
+}
+
+/// [S1-34] Slice one page out of the review page's full list.
+/// Returns the window for (`page`, `limit`) and the total number of
+/// reviews the page carried. Pages beyond the carried list yield an
+/// empty window — never a repeat of page 1.
+pub fn review_page_window(all: &[Value], page: i32, limit: i32) -> (Vec<Value>, usize) {
+    let page = page.max(1) as usize;
+    let limit = limit.max(1) as usize;
+    let total = all.len();
+    let start = (page - 1) * limit;
+    if start >= total {
+        return (Vec::new(), total);
+    }
+    let end = (start + limit).min(total);
+    (all[start..end].to_vec(), total)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +128,21 @@ pub struct Item {
     pub price: Option<Price>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category_id: Option<String>,
+    /// [S1-35] Category name from the detail JSON-LD `category` field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// [S1-35] Brand name from the detail JSON-LD `brand` field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brand: Option<String>,
+    /// [S1-35] Like count from a schema.org `interactionStatistic`
+    /// LikeAction counter in the JSON-LD, when the page carries one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub likes: Option<i64>,
+    /// [S1-35] Shipping fee (JPY) from `offers.shippingDetails`
+    /// (`OfferShippingDetails.shippingRate.value`) in the JSON-LD,
+    /// when the page carries one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shipping_fee: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub condition: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -150,7 +219,8 @@ impl RakumaClient {
     }
 
     pub async fn search(&self, params: SearchParams) -> Result<SearchResult> {
-        let (sort_key, order) = sort_params(&params.sort);
+        // Validated before any HTTP so an unknown sort fails offline too.
+        let (sort_key, order) = sort_params(&params.sort)?;
         let limit = if params.limit > 0 { params.limit } else { 40 };
         let page = if params.page > 0 { params.page } else { 1 };
 
@@ -231,8 +301,9 @@ impl RakumaClient {
         }
     }
 
-    pub async fn get_reviews(&self, seller_hash: &str, _page: i32, limit: i32) -> Result<Value> {
+    pub async fn get_reviews(&self, seller_hash: &str, page: i32, limit: i32) -> Result<Value> {
         let limit = if limit > 0 { limit } else { 20 };
+        let page = page.max(1);
 
         // Step 1: Fetch shop page for aggregate rating from JSON-LD
         let shop_url = format!("{BASE}/shop/{seller_hash}");
@@ -246,8 +317,11 @@ impl RakumaClient {
 
         let (aggregate_rating, seller_name) = extract_aggregate_rating(&shop_html);
 
-        // Step 2: Fetch review page for individual reviews
-        let review_url = format!("{BASE}/shop/{seller_hash}/review");
+        // Step 2: Fetch the review page and slice the requested page
+        // out of its full list [S1-34]. The page has no server-side
+        // pagination (live-verified 2026-11-08: `?page=` ignored, no
+        // pagination links, 400 reviews carried in one page).
+        let review_url = review_page_url(seller_hash, page);
         let review_resp = self
             .client
             .get(&review_url)
@@ -256,8 +330,10 @@ impl RakumaClient {
             .error_for_status()?;
         let review_html = review_resp.text().await?;
 
-        let reviews = extract_reviews(&review_html, limit);
+        let all = extract_reviews(&review_html, 100_000);
+        let (reviews, total_on_page) = review_page_window(&all, page, limit);
         let count = reviews.len();
+        let has_next_on_page = (page as usize) * (limit as usize) < total_on_page;
 
         Ok(json!({
             "provider": "rakuma",
@@ -265,8 +341,11 @@ impl RakumaClient {
             "seller_hash": seller_hash,
             "seller_name": seller_name.unwrap_or_default(),
             "aggregate_rating": aggregate_rating,
+            "page": page,
             "reviews": reviews,
             "count": count,
+            "total_on_page": total_on_page,
+            "has_next_on_page": has_next_on_page,
         }))
     }
 }
@@ -331,6 +410,65 @@ fn extract_search_items(html: &str) -> (Vec<Item>, Option<i64>) {
     }
 
     (items, total)
+}
+
+/// [S1-35] A schema.org name-bearing field: plain string, `{"name": …}`
+/// object, or an array of either (last entry wins, matching how the
+/// yahoo-flea detail extractor treats brand/category lists).
+fn jsonld_name(v: &Value) -> Option<String> {
+    if let Some(s) = v.as_str().filter(|s| !s.is_empty()) {
+        return Some(s.to_string());
+    }
+    if let Some(obj) = v.as_object() {
+        return obj
+            .get("name")
+            .and_then(|n| n.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from);
+    }
+    if let Some(arr) = v.as_array() {
+        return arr.iter().rev().find_map(jsonld_name);
+    }
+    None
+}
+
+/// [S1-35] Like count from schema.org `interactionStatistic` entries
+/// whose interaction type is a LikeAction.
+fn jsonld_like_count(prod: &Value) -> Option<i64> {
+    let stats = prod.get("interactionStatistic")?;
+    let entries: Vec<&Value> = match stats {
+        Value::Array(arr) => arr.iter().collect(),
+        Value::Object(_) => vec![stats],
+        _ => return None,
+    };
+    for e in entries {
+        let ty = e
+            .get("interactionType")
+            .and_then(|t| {
+                t.as_str()
+                    .or_else(|| t.get("@type").and_then(|v| v.as_str()))
+            })
+            .unwrap_or("");
+        if ty.ends_with("LikeAction") {
+            if let Some(n) = e.get("userInteractionCount").and_then(|c| {
+                c.as_i64()
+                    .or_else(|| c.as_str().and_then(|s| s.parse().ok()))
+            }) {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
+/// [S1-35] Shipping fee from `offers.shippingDetails.shippingRate.value`
+/// (schema.org OfferShippingDetails / MonetaryAmount).
+fn jsonld_shipping_fee(offers: &Value) -> Option<i64> {
+    let rate = offers.get("shippingDetails")?.get("shippingRate")?;
+    let v = rate.get("value")?;
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        .or_else(|| v.as_f64().map(|f| f as i64))
 }
 
 fn extract_detail_item(html: &str, item_hash: &str) -> Option<Item> {
@@ -406,12 +544,22 @@ fn extract_detail_item(html: &str, item_hash: &str) -> Option<Item> {
         None
     };
 
+    // [S1-35] Extra structured fields from the same JSON-LD block.
+    let brand = prod.get("brand").and_then(jsonld_name);
+    let category = prod.get("category").and_then(jsonld_name);
+    let likes = jsonld_like_count(&prod);
+    let shipping_fee = jsonld_shipping_fee(offers);
+
     Some(Item {
         product_id: item_hash.to_string(),
         title: prod["name"].as_str().unwrap_or_default().to_string(),
         url: format!("{ITEM_BASE}/{item_hash}"),
         source: "rakuma".into(),
         price: price_val.map(Price::yen),
+        category,
+        brand,
+        likes,
+        shipping_fee,
         condition,
         availability,
         description,
@@ -488,17 +636,128 @@ mod tests {
 
     #[test]
     fn test_sort_params() {
-        assert_eq!(sort_params(""), ("", ""));
-        assert_eq!(sort_params("price_asc"), ("sell_price", "asc"));
-        assert_eq!(sort_params("newest"), ("created_at", "desc"));
-        assert_eq!(sort_params("likes"), ("like_count", "desc"));
+        assert_eq!(sort_params("").unwrap(), ("", ""));
+        assert_eq!(sort_params("price_asc").unwrap(), ("sell_price", "asc"));
+        assert_eq!(sort_params("newest").unwrap(), ("created_at", "desc"));
+        assert_eq!(sort_params("likes").unwrap(), ("like_count", "desc"));
     }
 
     #[test]
     fn test_sort_params_case_insensitive() {
-        assert_eq!(sort_params("PRICE_ASC"), ("sell_price", "asc"));
-        assert_eq!(sort_params("Price_Desc"), ("sell_price", "desc"));
-        assert_eq!(sort_params("unknown_sort"), ("", ""));
+        assert_eq!(sort_params("PRICE_ASC").unwrap(), ("sell_price", "asc"));
+        assert_eq!(sort_params("Price_Desc").unwrap(), ("sell_price", "desc"));
+    }
+
+    // [S1-36] Unknown sort must error explicitly, naming the vocabulary.
+    #[test]
+    fn test_sort_params_unknown_is_error() {
+        let err = sort_params("unknown_sort").unwrap_err().to_string();
+        assert!(err.contains("unknown sort 'unknown_sort'"), "err: {err}");
+        for v in SEARCH_SORT_VALUES {
+            assert!(err.contains(v), "err must list {v}: {err}");
+        }
+        for s in SEARCH_SORT_SPELLINGS {
+            assert!(sort_params(s).is_ok(), "spelling {s} must be accepted");
+        }
+    }
+
+    // [S1-36] search() must reject an unknown sort before any HTTP.
+    #[tokio::test]
+    async fn test_search_unknown_sort_errors_offline() {
+        let client = RakumaClient::new();
+        let err = client
+            .search(SearchParams {
+                query: "x".into(),
+                sort: "bogus_sort".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unknown sort"), "err: {err}");
+    }
+
+    // [S1-34] The review page URL is page-independent (live-verified:
+    // `?page=` is ignored server-side); pagination slices client-side.
+    #[test]
+    fn test_review_page_url() {
+        let h = "0123456789abcdef0123456789abcdef";
+        let base = "https://fril.jp/shop/0123456789abcdef0123456789abcdef/review";
+        assert_eq!(review_page_url(h, 1), base);
+        assert_eq!(review_page_url(h, 2), base);
+        assert_eq!(review_page_url(h, 0), base);
+        assert_eq!(review_page_url(h, 5), base);
+    }
+
+    // [S1-34]
+    #[test]
+    fn test_review_page_window() {
+        let all: Vec<Value> = (0..12).map(|i| json!({"n": i})).collect();
+        let (w1, t1) = review_page_window(&all, 1, 5);
+        assert_eq!(t1, 12);
+        assert_eq!(w1.len(), 5);
+        assert_eq!(w1[0]["n"], 0);
+        let (w2, _) = review_page_window(&all, 2, 5);
+        assert_eq!(w2.len(), 5);
+        assert_eq!(w2[0]["n"], 5);
+        let (w3, _) = review_page_window(&all, 3, 5);
+        assert_eq!(w3.len(), 2);
+        let (w4, _) = review_page_window(&all, 4, 5);
+        assert!(w4.is_empty(), "beyond the carried list must be empty");
+    }
+
+    // [S1-35] Detail extraction from a JSON-LD fixture carrying the
+    // schema.org brand / category / likes / shipping fields.
+    #[test]
+    fn test_extract_detail_item_jsonld_extras() {
+        let html = r#"<html><head>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Product","name":"テスト商品",
+ "description":"説明文","image":"https://img.fril.jp/img/1/l/sample.jpg",
+ "brand":{"@type":"Brand","name":"テストブランド"},
+ "category":"レディース > バッグ",
+ "interactionStatistic":{"@type":"InteractionCounter",
+   "interactionType":"https://schema.org/LikeAction","userInteractionCount":27},
+ "offers":{"@type":"Offer","price":"4500",
+   "itemCondition":"https://schema.org/UsedCondition",
+   "availability":"https://schema.org/InStock",
+   "shippingDetails":{"@type":"OfferShippingDetails",
+     "shippingRate":{"@type":"MonetaryAmount","value":"210","currency":"JPY"}},
+   "seller":{"@type":"Person","name":"出品者A"}}}
+</script></head><body>
+<a href="https://fril.jp/shop/0123456789abcdef0123456789abcdef">shop</a>
+</body></html>"#;
+        let item = extract_detail_item(html, "abc123").expect("item");
+        assert_eq!(item.brand.as_deref(), Some("テストブランド"));
+        assert_eq!(item.category.as_deref(), Some("レディース > バッグ"));
+        assert_eq!(item.likes, Some(27));
+        assert_eq!(item.shipping_fee, Some(210));
+        assert_eq!(item.condition.as_deref(), Some("中古"));
+        assert_eq!(item.price.map(|p| p.value), Some(4500));
+        // Plain-string brand + array category forms.
+        let html2 = r#"<script type="application/ld+json">
+{"@type":"Product","name":"x","brand":"文字列ブランド",
+ "category":[{"name":"親"},{"name":"子カテゴリ"}],
+ "offers":{"price":100}}
+</script>"#;
+        let item2 = extract_detail_item(html2, "def456").expect("item2");
+        assert_eq!(item2.brand.as_deref(), Some("文字列ブランド"));
+        assert_eq!(item2.category.as_deref(), Some("子カテゴリ"));
+        assert_eq!(item2.likes, None);
+        assert_eq!(item2.shipping_fee, None);
+    }
+
+    // [S1-35] A minimal JSON-LD (the previously supported shape) still
+    // parses and leaves the new fields empty rather than failing.
+    #[test]
+    fn test_extract_detail_item_minimal_jsonld() {
+        let html = r#"<script type="application/ld+json">
+{"@type":"Product","name":"最小商品","offers":{"price":"900"}}
+</script>"#;
+        let item = extract_detail_item(html, "abc999").expect("item");
+        assert_eq!(item.title, "最小商品");
+        assert_eq!(item.brand, None);
+        assert_eq!(item.category, None);
     }
 
     #[tokio::test]
@@ -576,6 +835,134 @@ mod tests {
         assert!(!item.title.is_empty());
         if let Some(price) = &item.price {
             assert_eq!(price.currency, "JPY");
+        }
+    }
+
+    // [S1-35 probe] Print a real detail item so the presence of the
+    // new JSON-LD-derived fields (category/brand/likes/shipping_fee)
+    // on live pages can be checked.
+    #[tokio::test]
+    #[ignore = "live probe: print a detail item's new fields"]
+    async fn test_live_probe_detail_new_fields() {
+        let client = RakumaClient::new();
+        let search = client
+            .search(SearchParams {
+                query: "バッグ".into(),
+                limit: 3,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        for cand in search.items.iter().take(3) {
+            let detail = client.get_item(&cand.product_id).await.unwrap();
+            if let Some(item) = &detail.item {
+                println!(
+                    "PROBE item {} category={:?} brand={:?} likes={:?} shipping_fee={:?}",
+                    item.product_id, item.category, item.brand, item.likes, item.shipping_fee
+                );
+            }
+        }
+    }
+
+    // [S1-34 probe] `?page=N` was ignored live (2026-11-08). Inspect the
+    // review page itself: how many reviews the page-1 HTML carries and
+    // what pagination links it contains.
+    #[tokio::test]
+    #[ignore = "live probe: inspect rakuma review page pagination"]
+    async fn test_live_probe_review_page_pagination() {
+        let client = RakumaClient::new();
+        let search = client
+            .search(SearchParams {
+                query: "バッグ".into(),
+                limit: 3,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let first = &search.items[0];
+        let detail = client.get_item(&first.product_id).await.unwrap();
+        let item = detail.item.expect("item must be present");
+        let seller_hash = item
+            .seller
+            .expect("seller")
+            .seller_hash
+            .expect("seller_hash");
+        let url = review_page_url(&seller_hash, 1);
+        let html = client
+            .client
+            .get(&url)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        let all = extract_reviews(&html, 100_000);
+        println!("PROBE review page url: {url}");
+        println!("PROBE reviews present in page-1 HTML: {}", all.len());
+        let href_re = Regex::new(r#"href="([^"]*(?:review|page)[^"]*)""#).unwrap();
+        let mut seen = std::collections::BTreeSet::new();
+        for caps in href_re.captures_iter(&html) {
+            seen.insert(caps[1].to_string());
+        }
+        for h in seen.iter().take(20) {
+            println!("PROBE href: {h}");
+        }
+        println!("PROBE total pagination-ish hrefs: {}", seen.len());
+    }
+
+    // [S1-34] LIVE CHECK: review page 2 must differ from page 1 when
+    // page 1 is full.
+    #[tokio::test]
+    #[ignore = "live test: verify rakuma reviews page1/page2 differ"]
+    async fn test_live_get_reviews_page2_differs() {
+        let client = RakumaClient::new();
+        let search = client
+            .search(SearchParams {
+                query: "バッグ".into(),
+                limit: 3,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(search.ok);
+        // Not every item's seller carries a seller_hash; take the
+        // first of the top results that does.
+        let mut seller_hash = None;
+        for cand in search.items.iter().take(3) {
+            let detail = client.get_item(&cand.product_id).await.unwrap();
+            if let Some(item) = detail.item {
+                if let Some(hash) = item.seller.and_then(|s| s.seller_hash) {
+                    seller_hash = Some(hash);
+                    break;
+                }
+            }
+        }
+        let seller_hash = seller_hash.expect("a seller_hash from the top results");
+        let p1 = client.get_reviews(&seller_hash, 1, 5).await.unwrap();
+        assert_eq!(p1["page"], 1);
+        let r1 = p1["reviews"].as_array().unwrap();
+        if r1.len() >= 5 {
+            // Page 2 must be the NEXT window of the same list: equal to
+            // reviews[5..10] of a limit-10 page-1 fetch, and different
+            // from page 1 itself.
+            let big = client.get_reviews(&seller_hash, 1, 10).await.unwrap();
+            let p2 = client.get_reviews(&seller_hash, 2, 5).await.unwrap();
+            assert_eq!(p2["page"], 2);
+            assert_ne!(
+                p1["reviews"], p2["reviews"],
+                "page2 reviews identical to page1"
+            );
+            let big_reviews = big["reviews"].as_array().unwrap();
+            if big_reviews.len() >= 10 {
+                assert_eq!(
+                    p2["reviews"],
+                    json!(big_reviews[5..10].to_vec()),
+                    "page2 must be the second window of the page-1 list"
+                );
+            }
         }
     }
 

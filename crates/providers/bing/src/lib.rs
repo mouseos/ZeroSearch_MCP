@@ -67,9 +67,12 @@
 pub mod common;
 pub mod image;
 pub mod news;
+pub mod shop;
 pub mod suggest;
+pub mod trending;
 pub mod urlbuild;
 pub mod video;
+pub mod visual;
 pub mod web;
 
 use anyhow::Result;
@@ -81,10 +84,13 @@ use std::time::Duration;
 pub use common::{clean_text, decode_entities, urlencode, MOBILE_USER_AGENT, USER_AGENT};
 pub use image::{parse_image_results, ImageItem, ImageResults};
 pub use news::{parse_news_results, NewsItem};
+pub use shop::{parse_shop_results, ShopItem, ShopResults};
 pub use suggest::{parse_suggest_json, SuggestResult, Suggestion};
+pub use trending::{parse_trending_topics, trending_url, TrendingTopic};
 pub use urlbuild::{build_page_url, build_search_url, suggest_url, web_api_url};
 pub use video::{parse_video_results, VideoItem, VideoResults};
-pub use web::{parse_web_results, WebItem, WebResults};
+pub use visual::{knowledge_request_json, parse_visual_response, visual_search_url, VisualTag};
+pub use web::{parse_web_results, DeepLink, WebItem, WebResults};
 
 /// Provider identifier used in every result envelope.
 pub const PROVIDER: &str = "bing";
@@ -229,6 +235,33 @@ impl BingSearchClient {
     /// Fetch a page with the mobile user agent (image search).
     pub async fn get_html_mobile(&self, url: &str, referer: &str) -> Result<String> {
         self.get_with(&self.http_mobile, url, referer).await
+    }
+
+    /// POST a multipart form and return the body text (visual
+    /// search). Mirrors the app's pre-auth state: the
+    /// `Authorization` header carries an empty bearer, exactly as
+    /// the app sends before its auth flow completes.
+    pub async fn http_post_multipart(
+        &self,
+        url: &str,
+        form: reqwest::multipart::Form,
+    ) -> Result<String> {
+        let resp = self
+            .http
+            .post(url)
+            .header(REFERER, "https://www.bing.com")
+            .header("Authorization", "Bearer ")
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("connection_error: {e}"))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(common::status_error(status));
+        }
+        resp.text()
+            .await
+            .map_err(|e| anyhow::anyhow!("connection_error: {e}"))
     }
 
     /// Fetch a JSON document (the app's APIs: v7 search, suggestions).

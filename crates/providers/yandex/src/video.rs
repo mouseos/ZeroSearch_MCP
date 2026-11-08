@@ -161,6 +161,10 @@ fn parse_card(block: &str, dups: &Value, rank: i64) -> Option<VideoItem> {
     })
 }
 
+/// Results on a full touch video page; a page that fills it has a
+/// successor (the same rule the web and image verticals use).
+const PER_PAGE: i64 = 20;
+
 impl YandexSearchClient {
     /// Search videos. `page` is 1-based; `limit` is clamped to 20.
     /// Requires the session (established automatically from web page 1).
@@ -171,13 +175,22 @@ impl YandexSearchClient {
         limit: i64,
     ) -> Result<SearchResult<VideoItem>> {
         let page = page.max(1);
-        let limit = clamp_limit(limit, 20);
+        let limit = clamp_limit(limit, PER_PAGE);
         let query = query.trim();
 
         self.ensure_session(query).await?;
         let html = self.get_page(&video_search_url(query, page)).await?;
-        let items = parse_video_results(&html, limit);
-        Ok(SearchResult::new("video", query, page, items))
+        let mut items = parse_video_results(&html, usize::MAX);
+        let total_found = items.len();
+        items.truncate(limit);
+        let mut result = SearchResult::new("video", query, page, items);
+        if total_found >= PER_PAGE as usize {
+            result = result.with_next_page(Some(page + 1));
+        }
+        if page > crate::VERIFIED_MAX_PAGE {
+            result = result.with_note(crate::BEYOND_VERIFIED_NOTE);
+        }
+        Ok(result)
     }
 }
 
@@ -189,7 +202,7 @@ mod tests {
     fn video_url_uses_tabbar_form() {
         assert_eq!(
             video_search_url("test", 1),
-            "https://yandex.ru/video/touch/search?text=test&source=tabbar"
+            "https://yandex.ru/video/touch/search?text=test&source=tabbar&ui=webmobileapp.yandex"
         );
     }
 

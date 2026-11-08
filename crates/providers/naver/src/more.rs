@@ -25,9 +25,14 @@ use serde_json::Value;
 use crate::common::{layout_error, SEARCH_REFERER};
 use crate::NaverSearchClient;
 
-/// Deepest page served through the more-API chain. Each page is one
-/// extra request, so this also bounds request volume per call.
-pub const MAX_PAGE: i64 = 10;
+/// Deepest page served through the more-API chain. The chain
+/// itself ends when the server stops issuing a next-batch URL, so
+/// functionally paging follows the chain as far as it goes; this
+/// constant is only a per-call request-volume safety bound (one
+/// page = one extra request), set high enough not to truncate
+/// realistic result sets (audit W-26; it was 10, which cut off
+/// result sets the server would still have paged through).
+pub const MAX_PAGE: i64 = 100;
 
 /// Unescape the forms in which API URLs appear inside tab pages:
 /// JS-escaped (`\/`, `&`) and HTML-escaped (`&amp;`).

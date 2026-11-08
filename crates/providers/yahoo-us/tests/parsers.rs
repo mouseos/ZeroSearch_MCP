@@ -5,8 +5,8 @@
 
 use yahoo_us_search::{
     news_has_next_page, parse_image_next_offset, parse_image_results, parse_image_total,
-    parse_news_results, parse_suggest_response, parse_video_next_offset, parse_video_results,
-    parse_video_total, parse_web_results, web_has_next_page,
+    parse_news_results, parse_related_queries, parse_suggest_response, parse_video_next_offset,
+    parse_video_results, parse_video_total, parse_web_results, web_has_next_page,
 };
 
 const WEB_P1: &str = include_str!("fixtures/fixture-web.html");
@@ -25,6 +25,19 @@ fn web_fixture_page_one() {
     assert!(items.iter().all(|i| !i.url.contains("r.search.yahoo.com")));
     assert!(items.iter().any(|i| i.url == "https://asw.apple.com/home"));
     assert!(web_has_next_page(WEB_P1));
+}
+
+#[test]
+fn web_fixture_related_queries() {
+    // Audit W-31: the page's AlgoRsItem config carries the related
+    // terms (first relItems group).
+    let related = parse_related_queries(WEB_P1);
+    assert_eq!(related.len(), 8);
+    assert!(related.contains(&"apple music".to_string()));
+    assert!(related.contains(&"apple store".to_string()));
+    // The other captured pages do not embed the config.
+    assert!(parse_related_queries(VIDEO).is_empty());
+    assert!(parse_related_queries(NEWS).is_empty());
 }
 
 #[test]

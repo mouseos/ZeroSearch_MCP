@@ -77,13 +77,19 @@ pub fn parse_web_results(html: &str, limit: usize) -> Result<Vec<WebItem>> {
 }
 
 impl NaverSearchClient {
-    /// Search the web-results view. The tab serves one top-selection
-    /// batch: its own paging links exist, but over plain HTTP every
-    /// page parameter returns that same batch (measured — page 1 and
-    /// page 2 responses are identical), and the page embeds no
-    /// more-API chain like the other tabs. Only page 1 is therefore
-    /// served; deeper pages are an explicit `unsupported_page` error
-    /// rather than a silent repeat of page 1. `limit` is clamped
+    /// Search the web-results view. The view pages through its own
+    /// pagination-bar hrefs (audit W-22): batch N (N ≥ 2) is the
+    /// bar's `page=N+1&start=(N-1)*20+1` URL, and it returns a
+    /// disjoint batch — measured live 2026-11-08 (batch 2 vs batch
+    /// 1: zero URL overlap). An earlier round concluded the batches
+    /// never change because it followed the bar's `page=2&start=1`
+    /// link, which points back at batch 1; that conclusion was
+    /// wrong and is corrected here.
+    ///
+    /// Ranks: page 1 keeps the anchors' `cr_rank_legacy` values.
+    /// Deeper batches carry legacy ranks relative to the view's own
+    /// bookkeeping, so they are renumbered to continue from the
+    /// batch offset (`(page-1)*20 + position`). `limit` is clamped
     /// to 20.
     pub async fn web_search(
         &self,
@@ -92,15 +98,16 @@ impl NaverSearchClient {
         limit: i64,
     ) -> Result<SearchResult<WebItem>> {
         let page = page.max(1);
-        if page > 1 {
-            return Err(anyhow::anyhow!(
-                "unsupported_page: the web tab serves the same top-selection batch for every page over plain HTTP; page {page} is not available"
-            ));
-        }
         let limit = clamp_limit(limit, 20);
-        let url = build_page_url(query, "web", 1)?;
+        let url = build_page_url(query, "web", page)?;
         let html = self.get_html(&url, SEARCH_REFERER).await?;
-        let items = parse_web_results(&html, limit)?;
+        let mut items = parse_web_results(&html, limit)?;
+        if page > 1 {
+            let base = (page - 1) * crate::urlbuild::WEB_PER_PAGE;
+            for (i, item) in items.iter_mut().enumerate() {
+                item.rank = base + i as i64 + 1;
+            }
+        }
         Ok(SearchResult::new("web", query, page, items))
     }
 }

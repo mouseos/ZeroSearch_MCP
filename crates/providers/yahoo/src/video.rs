@@ -47,19 +47,30 @@ impl YahooSearchClient {
 
         let url = format!("{BASE}?p={}&ei=UTF-8&b={offset}", urlencode(query.trim()));
         let html = self.get_html(&url, REFERER).await?;
-        let data = extract_next_data(&html)?;
-
-        let items: Vec<VideoItem> =
-            get_path(&data, &["props", "initialProps", "pageProps", "algos"])
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(parse_video).take(limit).collect())
-                .unwrap_or_default();
-
-        let has_next = items.len() as i64 >= PER_PAGE;
-
-        Ok(SearchResult::new("video", query, page, items)
-            .with_next_page(has_next.then_some(page + 1)))
+        parse_video_page(&html, query, page, limit as i64)
     }
+}
+
+/// Parse a saved video-search page (offline; audit W-10).
+pub fn parse_video_page(
+    html: &str,
+    query: &str,
+    page: i64,
+    limit: i64,
+) -> Result<SearchResult<VideoItem>> {
+    let page = page.max(1);
+    let limit = clamp_limit(limit, PER_PAGE);
+    let data = extract_next_data(html)?;
+
+    let items: Vec<VideoItem> = get_path(&data, &["props", "initialProps", "pageProps", "algos"])
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(parse_video).take(limit).collect())
+        .unwrap_or_default();
+
+    let has_next = items.len() as i64 >= PER_PAGE;
+
+    Ok(SearchResult::new("video", query, page, items)
+        .with_next_page(has_next.then_some(page + 1)))
 }
 
 fn parse_video(algo: &Value) -> Option<VideoItem> {

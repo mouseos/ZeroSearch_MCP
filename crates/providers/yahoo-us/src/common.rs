@@ -140,6 +140,49 @@ pub fn clamp_limit(limit: i64, max: i64) -> usize {
     limit.clamp(1, max) as usize
 }
 
+/// Related searches for a SERP, from the page's own related-search
+/// configuration (audit W-31). Yahoo embeds an `AlgoRsItem` plug-in
+/// config whose `relItems` holds one group of related terms per
+/// result (the same group repeated); the first group is the page's
+/// related-query set. Pages without the config yield an empty list.
+pub fn parse_related_queries(html: &str) -> Vec<String> {
+    let Some(start) = html.find("\"relItems\":") else {
+        return Vec::new();
+    };
+    let rest = &html[start + "\"relItems\":".len()..];
+    // Bracket-match the outer JSON array, then decode it.
+    let bytes = rest.as_bytes();
+    let mut depth = 0i32;
+    let mut end = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(i + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(end) = end else {
+        return Vec::new();
+    };
+    let Ok(groups) = serde_json::from_str::<Vec<Vec<String>>>(&rest[..end]) else {
+        return Vec::new();
+    };
+    groups
+        .into_iter()
+        .next()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| clean_text(&s))
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 /// Concatenated text of an element, cleaned the same way as [`clean_text`]
 /// but starting from already-parsed DOM text (no tags to strip).
 pub fn element_text(el: &scraper::ElementRef) -> String {
@@ -196,6 +239,13 @@ mod tests {
             decode_redirect_url("https://r.search.yahoo.com/foo"),
             "https://r.search.yahoo.com/foo"
         );
+    }
+
+    #[test]
+    fn related_queries_come_from_the_first_relitems_group() {
+        let html = r#"{"relItems":[["apple music","apple store"],["apple music","apple store"]],"x":1}"#;
+        assert_eq!(parse_related_queries(html), ["apple music", "apple store"]);
+        assert!(parse_related_queries("<html></html>").is_empty());
     }
 
     #[test]

@@ -66,6 +66,56 @@ pub fn parse_suggest_body(body: &Value, query: &str, limit: usize) -> SuggestRes
     }
 }
 
+/// Parse a suggest-endings response body (audit W-35). The shape,
+/// verified live in the analysis, is
+/// `[query, top-completion, [[candidate, flag], …], {}]` — element 1
+/// is the single best completion (also the first pair's candidate),
+/// element 2 the candidate list. The envelope's `vertical` is
+/// `suggest_endings` to keep the two suggest systems distinct.
+pub fn parse_suggest_endings_body(body: &Value, query: &str, limit: usize) -> SuggestResult {
+    let mut keywords: Vec<String> = Vec::new();
+    if let Some(top) = body.get(1).and_then(|v| v.as_str()) {
+        let top = clean_text(top);
+        if !top.is_empty() {
+            keywords.push(top);
+        }
+    }
+    if let Some(pairs) = body.get(2).and_then(|v| v.as_array()) {
+        for pair in pairs {
+            if let Some(candidate) = pair
+                .as_array()
+                .and_then(|p| p.first())
+                .and_then(|v| v.as_str())
+            {
+                let candidate = clean_text(candidate);
+                if !candidate.is_empty() && !keywords.contains(&candidate) {
+                    keywords.push(candidate);
+                }
+            }
+        }
+    }
+    let suggestions: Vec<Suggestion> = keywords
+        .into_iter()
+        .take(limit)
+        .map(|keyword| {
+            let search_url = build_search_url(&keyword, "web").unwrap_or_default();
+            Suggestion {
+                keyword,
+                search_url,
+            }
+        })
+        .collect();
+
+    SuggestResult {
+        provider: crate::PROVIDER.to_string(),
+        vertical: "suggest_endings".to_string(),
+        ok: true,
+        query: query.to_string(),
+        count: suggestions.len(),
+        suggestions,
+    }
+}
+
 impl YandexSearchClient {
     /// Get autocomplete suggestions for a (partial) query.
     /// `limit` is clamped to 20. An empty query is an error.
@@ -81,6 +131,24 @@ impl YandexSearchClient {
         let body_text = self.get_page(&url).await?;
         let body: Value = serde_json::from_str(&body_text)?;
         Ok(parse_suggest_body(&body, query, limit))
+    }
+
+    /// Get tail-completion suggestions from the suggest-endings
+    /// endpoint (audit W-35) — a different completion system from
+    /// [`Self::suggest`], with its own response shape.
+    /// `limit` is clamped to 20. An empty query is an error.
+    pub async fn suggest_endings(&self, query: &str, limit: i64) -> Result<SuggestResult> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Err(anyhow!("query must not be empty"));
+        }
+        let limit = clamp_limit(limit, 20);
+
+        self.ensure_session(query).await?;
+        let url = crate::urlbuild::build_suggest_endings_url(query);
+        let body_text = self.get_page(&url).await?;
+        let body: Value = serde_json::from_str(&body_text)?;
+        Ok(parse_suggest_endings_body(&body, query, limit))
     }
 }
 
@@ -99,9 +167,23 @@ mod tests {
         assert_eq!(result.suggestions[0].keyword, "testcenter kz");
         assert_eq!(
             result.suggestions[0].search_url,
-            "https://yandex.ru/search/touch/?text=testcenter%20kz"
+            "https://yandex.ru/search/touch/?text=testcenter%20kz&ui=webmobileapp.yandex"
         );
         assert_eq!(result.suggestions[1].keyword, "test speed");
+    }
+
+    #[test]
+    fn parses_measured_endings_shape() {
+        // The analysis' live capture (round 3, fixture-suggest-endings.json).
+        let body: Value = serde_json::from_str(
+            r#"["test","testcenter kz",[["testcenter kz",0],["test speed",0],["test english",0],["test your english",0]],{}]"#,
+        )
+        .unwrap();
+        let result = parse_suggest_endings_body(&body, "test", 10);
+        assert_eq!(result.vertical, "suggest_endings");
+        assert_eq!(result.count, 4);
+        assert_eq!(result.suggestions[0].keyword, "testcenter kz");
+        assert_eq!(result.suggestions[3].keyword, "test your english");
     }
 
     #[test]

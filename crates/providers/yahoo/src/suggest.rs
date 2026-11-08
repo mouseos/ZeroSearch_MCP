@@ -14,9 +14,24 @@ use std::sync::LazyLock;
 use crate::common::*;
 use crate::YahooSearchClient;
 
+/// The app's suggest endpoint (audit W-08). The Android app calls
+/// `assist-search.yahooapis.jp` with `device=smartphone` and
+/// `.src=ytop`; the response format is identical to the web host's.
+/// `gen` / `yob` are only sent for signed-in users (they carry
+/// profile data), so the anonymous reproduction omits them, as the
+/// native-protocol audit prescribes.
 const ENDPOINT: &str =
-    "https://n-assist-search.yahooapis.jp/SuggestSearchService/V5/webassistSearch";
+    "https://assist-search.yahooapis.jp/SuggestSearchService/V5/webassistSearch";
 const REFERER: &str = "https://search.yahoo.co.jp/";
+
+/// Build the suggest request URL in the app's parameter form.
+pub fn build_suggest_url(appid: &str, query: &str) -> String {
+    format!(
+        "{ENDPOINT}?appid={}&query={}&device=smartphone&.src=ytop",
+        urlencode(appid),
+        urlencode(query)
+    )
+}
 /// Page scraped for the public `appid`; any query works, so keep it trivial.
 const APPID_SOURCE: &str = "https://search.yahoo.co.jp/search?p=a&ei=UTF-8";
 /// Last known-good public appid, used only if scraping fails.
@@ -43,6 +58,13 @@ pub struct SuggestResult {
     pub query: String,
     pub count: usize,
     pub suggestions: Vec<Suggestion>,
+    /// Where the `appid` used for this call came from: `"page"`
+    /// (scraped from Yahoo's public search page) or `"fallback"`
+    /// (the built-in last-known-good constant, audit W-11). The
+    /// fallback is surfaced explicitly instead of silently
+    /// degrading to empty suggestions when it goes stale.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub appid_source: String,
 }
 
 impl YahooSearchClient {
@@ -54,13 +76,9 @@ impl YahooSearchClient {
             return Err(anyhow!("query must not be empty"));
         }
         let limit = clamp_limit(limit, 20);
-        let appid = self.suggest_appid().await;
+        let (appid, appid_source) = self.suggest_appid().await;
 
-        let url = format!(
-            "{ENDPOINT}?appid={}&query={}&output=json&device=pc",
-            urlencode(&appid),
-            urlencode(query)
-        );
+        let url = build_suggest_url(&appid, query);
         let body = self.get_json(&url, REFERER).await?;
 
         let suggestions: Vec<Suggestion> = body
@@ -93,23 +111,29 @@ impl YahooSearchClient {
             query: query.to_string(),
             count: suggestions.len(),
             suggestions,
+            appid_source,
         })
     }
 
-    /// Resolve the public suggest appid, scraping once and caching thereafter.
-    async fn suggest_appid(&self) -> String {
+    /// Resolve the public suggest appid, scraping once and caching
+    /// thereafter. Returns the value and its source (`"page"` or
+    /// `"fallback"`, audit W-11).
+    async fn suggest_appid(&self) -> (String, String) {
         let mut cached = self.suggest_appid.lock().await;
-        if let Some(id) = cached.as_ref() {
-            return id.clone();
+        if let Some(pair) = cached.as_ref() {
+            return pair.clone();
         }
-        let scraped = self
+        let pair = match self
             .get_html(APPID_SOURCE, REFERER)
             .await
             .ok()
             .and_then(|html| extract_appid(&html))
-            .unwrap_or_else(|| FALLBACK_APPID.to_string());
-        *cached = Some(scraped.clone());
-        scraped
+        {
+            Some(id) => (id, "page".to_string()),
+            None => (FALLBACK_APPID.to_string(), "fallback".to_string()),
+        };
+        *cached = Some(pair.clone());
+        pair
     }
 }
 
@@ -134,5 +158,21 @@ mod tests {
     fn extract_appid_rejects_short_values() {
         assert!(extract_appid(r#"{"appid":"short"}"#).is_none());
         assert!(extract_appid("no appid here").is_none());
+    }
+
+    #[test]
+    fn suggest_url_uses_app_parameter_form() {
+        // Audit W-08: app host, device=smartphone, .src=ytop; no
+        // device=pc / output=json, and no gen/yob anonymously.
+        let url = build_suggest_url("dj0zaiZpPVRFU1Q-", "ラーメン");
+        assert!(url.starts_with(
+            "https://assist-search.yahooapis.jp/SuggestSearchService/V5/webassistSearch?"
+        ));
+        assert!(url.contains("device=smartphone"));
+        assert!(url.contains("&.src=ytop"));
+        assert!(!url.contains("device=pc"));
+        assert!(!url.contains("output=json"));
+        assert!(!url.contains("gen="));
+        assert!(!url.contains("yob="));
     }
 }

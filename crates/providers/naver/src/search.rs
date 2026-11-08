@@ -69,6 +69,41 @@ pub struct IntegratedResult {
     pub sections: Vec<IntegratedSection>,
 }
 
+/// Body paragraph for a generic-branch item: climb from the item's
+/// anchor while the ancestor still links only to this item, and
+/// take the first substantial `<p>` text found (audit W-27).
+fn card_snippet(anchor: scraper::ElementRef, own_href: &str) -> Option<String> {
+    let mut node = anchor.parent();
+    for _ in 0..6 {
+        let n = node?;
+        let er = scraper::ElementRef::wrap(n)?;
+        let links_elsewhere = er.select(&A_SEL).any(|a| {
+            let Some(h) = a.value().attr("href") else {
+                return false;
+            };
+            if !h.starts_with("http") || h == own_href {
+                return false;
+            }
+            url::Url::parse(h)
+                .ok()
+                .and_then(|u| u.host_str().map(|host| !UTILITY_HOSTS.contains(&host)))
+                .unwrap_or(false)
+        });
+        if links_elsewhere {
+            return None;
+        }
+        if let Some(text) = er
+            .select(&P_SEL)
+            .map(|p| element_text(p))
+            .find(|t| t.chars().count() >= 20 && !t.contains("네이버가 AI"))
+        {
+            return Some(text);
+        }
+        node = n.parent();
+    }
+    None
+}
+
 fn section_name(section: scraper::ElementRef) -> String {
     if let Some(h) = section
         .select(&H2_SEL)
@@ -154,13 +189,10 @@ pub fn parse_integrated_results(
         } else {
             let mut seen: Vec<String> = Vec::new();
             for a in section.select(&A_SEL) {
-                if items.len() >= per_section_limit {
-                    break;
-                }
                 let Some(href) = a.value().attr("href") else {
                     continue;
                 };
-                if !href.starts_with("http") || seen.contains(&href.to_string()) {
+                if !href.starts_with("http") {
                     continue;
                 }
                 if let Ok(parsed) = url::Url::parse(href) {
@@ -170,15 +202,38 @@ pub fn parse_integrated_results(
                         }
                     }
                 }
-                let title = element_text(a);
-                if title.chars().count() < 4 || UTILITY_TEXTS.contains(&title.as_str()) {
+                let text = element_text(a);
+                // A repeated anchor for an item already collected:
+                // cards link the same URL from the title, the
+                // thumbnail and the body text, so a long body text on
+                // a repeat is the item's snippet (the same grouping
+                // rule the news parser uses; audit W-27).
+                if let Some(pos) = seen.iter().position(|h| h == href) {
+                    let item = &mut items[pos];
+                    if item.snippet.is_none()
+                        && text.chars().count() >= 20
+                        && text != item.title
+                        && !text.contains("네이버가 AI")
+                    {
+                        item.snippet = Some(text);
+                    }
+                    continue;
+                }
+                if items.len() >= per_section_limit {
+                    break;
+                }
+                if text.chars().count() < 4 || UTILITY_TEXTS.contains(&text.as_str()) {
                     continue;
                 }
                 seen.push(href.to_string());
+                // Fallback: a body paragraph inside the item's card
+                // (the web branch's technique), bounded by the rule
+                // that the card holds no other item's link.
+                let snippet = card_snippet(a, href);
                 items.push(IntegratedItem {
-                    title,
+                    title: text,
                     url: href.to_string(),
-                    snippet: None,
+                    snippet,
                 });
             }
         }
@@ -236,6 +291,31 @@ mod tests {
         assert_eq!(sections[0].name, "뉴스");
         assert_eq!(sections[0].items.len(), 1);
         assert_eq!(sections[1].items[0].url, "https://example.com/page");
+    }
+
+    #[test]
+    fn generic_branch_collects_snippets() {
+        // News-style card: the same URL is linked from the title and
+        // from the body text; the body text becomes the snippet.
+        // Blog-style card: the body is a <p> inside the item's card.
+        let html = r#"<html><body>
+            <div class="api_subject_bx"><h2>뉴스</h2>
+              <a href="https://n.news.naver.com/article/001/0000000002">기사 제목입니다</a>
+              <a href="https://n.news.naver.com/article/001/0000000002">이것은 기사의 본문 미리보기 텍스트로 충분히 긴 문장입니다</a>
+            </div>
+            <div class="api_subject_bx"><h2>블로그</h2>
+              <div class="card">
+                <a href="https://blog.naver.com/x/123">블로그 글 제목</a>
+                <p>블로그 본문의 미리보기 문장으로 길이가 충분한 텍스트입니다</p>
+              </div>
+            </div>
+            </body></html>"#;
+        let sections = parse_integrated_results(html, 10).unwrap();
+        assert_eq!(sections.len(), 2);
+        let news_snippet = sections[0].items[0].snippet.as_deref().unwrap();
+        assert!(news_snippet.contains("본문 미리보기"));
+        let blog_snippet = sections[1].items[0].snippet.as_deref().unwrap();
+        assert!(blog_snippet.contains("블로그 본문"));
     }
 
     #[test]

@@ -110,7 +110,10 @@ fn every_vertical_item_type_is_constructible_from_the_root() {
         suggestions: vec![Suggestion {
             keyword: "네이버".to_string(),
             search_url: build_search_url("네이버", "integrated").unwrap(),
+            kind: Some("0".to_string()),
         }],
+        answer: vec![],
+        intend: vec![],
     };
     assert_eq!(suggest.suggestions[0].keyword, "네이버");
 
@@ -131,15 +134,20 @@ fn url_builders_are_root_level() {
     let integrated = build_search_url("테스트", "integrated").unwrap();
     assert!(integrated.starts_with("https://m.search.naver.com/search.naver?where=m"));
 
-    // Only first pages have URLs: tab pages ignore page parameters,
-    // and deeper batches come from the page-issued more-API chain.
-    for v in ["web", "image", "news", "video", "blog"] {
+    // Only first pages have URLs for the tab verticals: tab pages
+    // ignore page parameters, and deeper batches come from the
+    // page-issued more-API chain. The web view is the exception —
+    // it pages through its own bar hrefs (audit W-22).
+    for v in ["image", "news", "video", "blog", "cafe", "kin"] {
         let err = build_page_url("테스트", v, 2).unwrap_err();
         assert!(
             err.to_string().starts_with("unsupported_page:"),
             "{v}: {err}"
         );
     }
+    assert!(build_page_url("테스트", "web", 2)
+        .unwrap()
+        .contains("start=21"));
 
     assert!(suggest_url("네이").contains("ac.search.naver.com"));
 }
@@ -187,6 +195,8 @@ fn verticals_listing_covers_all_searches() {
             "news",
             "video",
             "blog",
+            "cafe",
+            "kin",
             "suggest"
         ]
     );
@@ -196,5 +206,5 @@ fn verticals_listing_covers_all_searches() {
         .iter()
         .filter_map(|entry| entry["id"].as_str())
         .collect();
-    assert_eq!(unsupported, ["cafe", "kin"]);
+    assert_eq!(unsupported, ["ai", "clip"]);
 }

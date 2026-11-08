@@ -137,6 +137,7 @@ fn every_vertical_item_type_is_constructible_from_the_root() {
         suggestions: vec![Suggestion {
             keyword: "app store".to_string(),
             search_url: "https://search.yahoo.com/search?p=app%20store&b=1&pz=7".to_string(),
+            mrk: Some(6),
         }],
     };
     assert_eq!(suggest.suggestions[0].keyword, "app store");

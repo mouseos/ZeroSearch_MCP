@@ -13,6 +13,56 @@ pub const DEFAULT_WEB_TEMPLATE: &str =
     "http://m.baidu.com/s?tn=zbios&pu=sz%401320_480&bd_page_type=1&word=";
 pub const TNCONFIG_VALUE: &str = "1020164n";
 
+/// Results per page in the `pn` offset scheme used by server-issued
+/// page URLs (page 2 is `pn=10`, page 3 is `pn=20`, …), as observed
+/// in the saved `tianqi_pn10.html` / `tianqi_pn20.html` pages.
+pub const PN_PER_PAGE: i64 = 10;
+
+/// Build the search URL for a 1-based `page` number directly
+/// (audit W-06). Page 1 is the plain initial URL; deeper pages add
+/// `pn=(page-1)*10`, the same offset the server-issued next-page
+/// URLs carry. Returns `None` for `page < 1`.
+pub fn build_search_url_for_page(query: &str, page: i64, now_ms: i64) -> Option<String> {
+    if page < 1 {
+        return None;
+    }
+    let url = build_search_url(query, now_ms);
+    if page == 1 {
+        return Some(url);
+    }
+    Some(add_param(
+        &url,
+        "pn",
+        Some(&((page - 1) * PN_PER_PAGE).to_string()),
+    ))
+}
+
+/// Vertical (tab) search kinds the app exposes through its
+/// `sf/vsearch` URL template, mapped to the template's `pd` value
+/// (APK bundled configuration / DEX strings; see
+/// `baidu-search-analysis/native-protocol-audit.md` §4).
+pub fn vertical_pd(vertical: &str) -> Option<&'static str> {
+    Some(match vertical {
+        "video" => "video",
+        "image" => "image_content",
+        "realtime" => "realtime",
+        "wenda" => "wenda_tab",
+        _ => return None,
+    })
+}
+
+/// Build a vertical search URL:
+/// `https://m.baidu.com/sf/vsearch?tn=vsearch&pd=<pd>&word=<query>`
+/// (audit W-02). Returns `None` for an unknown vertical name.
+pub fn build_vertical_search_url(vertical: &str, query: &str) -> Option<String> {
+    let pd = vertical_pd(vertical)?;
+    Some(format!(
+        "https://m.baidu.com/sf/vsearch?tn=vsearch&pd={}&word={}",
+        pd,
+        java_urlencode(query)
+    ))
+}
+
 /// java.net.URLEncoder.encode(s, "UTF-8") semantics.
 pub fn java_urlencode(s: &str) -> String {
     let mut out = String::new();
@@ -214,6 +264,38 @@ mod tests {
             build_t_samp(),
             "tcspeedup_0-fixhttpdns_0-load_async_k_0-Prefetch_NA_101"
         );
+    }
+
+    #[test]
+    fn page_number_urls_use_pn_offsets() {
+        let p1 = build_search_url_for_page("天气", 1, 1700000000000).unwrap();
+        assert_eq!(p1, build_search_url("天气", 1700000000000));
+        assert!(!p1.contains("pn="));
+        let p3 = build_search_url_for_page("天气", 3, 1700000000000).unwrap();
+        assert!(p3.ends_with("&pn=20"), "{}", p3);
+        assert_eq!(build_search_url_for_page("天气", 0, 1700000000000), None);
+        assert_eq!(build_search_url_for_page("天气", -2, 1700000000000), None);
+    }
+
+    #[test]
+    fn vertical_urls_match_app_template() {
+        assert_eq!(
+            build_vertical_search_url("video", "猫 视频").as_deref(),
+            Some("https://m.baidu.com/sf/vsearch?tn=vsearch&pd=video&word=%E7%8C%AB+%E8%A7%86%E9%A2%91")
+        );
+        assert_eq!(
+            build_vertical_search_url("image", "cat").as_deref(),
+            Some("https://m.baidu.com/sf/vsearch?tn=vsearch&pd=image_content&word=cat")
+        );
+        assert_eq!(
+            build_vertical_search_url("realtime", "news").as_deref(),
+            Some("https://m.baidu.com/sf/vsearch?tn=vsearch&pd=realtime&word=news")
+        );
+        assert_eq!(
+            build_vertical_search_url("wenda", "why").as_deref(),
+            Some("https://m.baidu.com/sf/vsearch?tn=vsearch&pd=wenda_tab&word=why")
+        );
+        assert_eq!(build_vertical_search_url("maps", "x"), None);
     }
 
     #[test]

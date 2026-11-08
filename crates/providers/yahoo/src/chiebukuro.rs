@@ -65,47 +65,59 @@ impl YahooSearchClient {
         }
 
         let html = self.get_html(&url, REFERER).await?;
-        let props = extract_window_props(&html)?;
-
-        let items: Vec<ChiebukuroItem> = get_path(&props, &["listSearchResults", "listContents"])
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(parse_question).take(limit).collect())
-            .unwrap_or_default();
-
-        let pagination = props.get("pagination").cloned().unwrap_or(Value::Null);
-        let total_hits = get_i64(&pagination, "totalHits");
-        let has_next = match (
-            get_i64(&pagination, "currentPage"),
-            get_i64(&pagination, "totalNumberOfPages"),
-        ) {
-            (Some(current), Some(total)) => current < total,
-            // Fall back to the "next page" link the page renders for itself.
-            _ => get_path(&props, &["template", "nextLink"])
-                .map(|v| !v.is_null())
-                .unwrap_or(false),
-        };
-
-        let related = get_path(&props, &["listKeywords", "items"])
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|k| {
-                        k.as_str()
-                            .map(clean_text)
-                            .or_else(|| get_str(k, "keyword"))
-                            .or_else(|| get_str(k, "text"))
-                            .or_else(|| get_str(k, "name"))
-                    })
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        Ok(SearchResult::new("chiebukuro", query, page, items)
-            .with_total(total_hits)
-            .with_next_page(has_next.then_some(page + 1))
-            .with_related(related))
+        parse_chiebukuro_page(&html, query, page, limit as i64)
     }
+}
+
+/// Parse a saved chiebukuro-search page (offline; audit W-10).
+pub fn parse_chiebukuro_page(
+    html: &str,
+    query: &str,
+    page: i64,
+    limit: i64,
+) -> Result<SearchResult<ChiebukuroItem>> {
+    let page = page.max(1);
+    let limit = clamp_limit(limit, PER_PAGE);
+    let props = extract_window_props(html)?;
+
+    let items: Vec<ChiebukuroItem> = get_path(&props, &["listSearchResults", "listContents"])
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(parse_question).take(limit).collect())
+        .unwrap_or_default();
+
+    let pagination = props.get("pagination").cloned().unwrap_or(Value::Null);
+    let total_hits = get_i64(&pagination, "totalHits");
+    let has_next = match (
+        get_i64(&pagination, "currentPage"),
+        get_i64(&pagination, "totalNumberOfPages"),
+    ) {
+        (Some(current), Some(total)) => current < total,
+        // Fall back to the "next page" link the page renders for itself.
+        _ => get_path(&props, &["template", "nextLink"])
+            .map(|v| !v.is_null())
+            .unwrap_or(false),
+    };
+
+    let related = get_path(&props, &["listKeywords", "items"])
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|k| {
+                    k.as_str()
+                        .map(clean_text)
+                        .or_else(|| get_str(k, "keyword"))
+                        .or_else(|| get_str(k, "text"))
+                        .or_else(|| get_str(k, "name"))
+                })
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(SearchResult::new("chiebukuro", query, page, items)
+        .with_total(total_hits)
+        .with_next_page(has_next.then_some(page + 1))
+        .with_related(related))
 }
 
 fn parse_question(q: &Value) -> Option<ChiebukuroItem> {

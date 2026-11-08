@@ -29,6 +29,7 @@ fn main() {
         url: "https://example.jp/recipes/1".to_string(),
         description: Some("手順を写真付きで紹介".to_string()),
         site: Some("example.jp".to_string()),
+        entry_type: None,
     };
     let result = SearchResult::new("web", "味噌ラーメン 作り方", 1, vec![item])
         .with_total(Some(4_210_000))

@@ -86,7 +86,8 @@ impl YahooUsSearchClient {
 
         Ok(SearchResult::new("video", query, page, items)
             .with_total(total)
-            .with_next_page(has_next.then_some(page + 1)))
+            .with_next_page(has_next.then_some(page + 1))
+            .with_related(parse_related_queries(&html)))
     }
 }
 

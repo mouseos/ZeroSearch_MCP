@@ -11,15 +11,11 @@ const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 const APP_KEY: &str = "12574478";
 const PDP_WEB_API: &str = "mtop.aliexpress.pdp.pc.query";
 const PDP_WEB_API_VERSION: &str = "1.0";
-#[allow(dead_code)]
 const ANDROID_PDP_MAIN_API: &str = "mtop.aliexpress.pdp.main.query";
 const ANDROID_PDP_BATCH_API: &str = "mtop.aliexpress.pdp.main.batchQueryCache";
 const ANDROID_PDP_API_VERSION: &str = "1.0";
-#[allow(dead_code)]
 const ANDROID_SKU_QUERY_API: &str = "mtop.aliexpress.pdp.sku.query";
-#[allow(dead_code)]
 const ANDROID_SKU_ADJUST_API: &str = "mtop.aliexpress.pdp.sku.adjust";
-#[allow(dead_code)]
 const ANDROID_PDP_ADJUST_API: &str = "mtop.aliexpress.pdp.main.adjust";
 const SEARCH_API: &str = "mtop.relationrecommend.aliexpressrecommend.recommend";
 const SEARCH_API_VERSION: &str = "1.0";
@@ -28,12 +24,20 @@ const SUGGEST_ACS_HOST: &str = "recom-acs.aliexpress.com";
 const SUGGEST_APP_ID: i32 = 18390;
 const STORE_PRODUCTS_API: &str = "mtop.aliexpress.store.products.search.wysisyg";
 const STORE_API_VERSION: &str = "1.0";
+// Store group / module APIs (api-registry #9/#10, STATIC_APK captures
+// via the Python builders). Request shapes are statically known; live
+// / anonymous usability is NOT yet verified.
+const STORE_GROUP_API: &str = "mtop.ae.shop.search.product.groupType";
+const STORE_MODULE_API: &str = "mtop.alibaba.alisite.ae.server.ModuleAsyncService";
 const REVIEW_API: &str = "mtop.aliexpress.review.pc.list";
 const REVIEW_API_VERSION: &str = "1.0";
-// APK suggestion API (AE-RUST-017): a distinct API from the recommend
-// reuse below. Only used when SHOPPING_MCP_AE_SUGGEST_METHOD=apk.
-const SUGGEST_APK_API: &str = "mtop.aliexpress.international.search.mobile.suggestion";
-const SUGGEST_APK_API_VERSION: &str = "1.0";
+// NOTE (S1-5): the APK suggestion API
+// (mtop.aliexpress.international.search.mobile.suggestion) was measured
+// uninvocable through the public H5 gateway
+// (FAIL_SYS_HSF_INVOKE_ERROR; known-limitations.md). The former
+// SHOPPING_MCP_AE_SUGGEST_METHOD=apk opt-in branch is removed: the
+// recommend reuse below is the only suggestion route, with no
+// environment-variable dependency.
 
 // App version bundle for the analysed APK 8.164.1 (AE-RUST-010): the
 // version-tied search constants live in exactly one place so a future
@@ -119,6 +123,100 @@ fn generate_device_id() -> String {
     let a = uuid::Uuid::new_v4().simple().to_string();
     let b = uuid::Uuid::new_v4().simple().to_string();
     format!("{}/v4DA{}", &a[..24], &b[..8])
+}
+
+/// Search filter options (S1-1): price range and filter switches for
+/// [`AliExpressClient::search_products_with_options`]. Prices are
+/// passed through verbatim as the wire strings the captured fields
+/// expect (`pr` / `pageMinPrice`); switches are bare switch names or
+/// already-prefixed `filterCode:<name>` values (normalised by
+/// `build_search_params`). `Default` sends no price/switch fields at
+/// all, exactly like the historical public search path.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SearchOptions {
+    pub min_price: Option<String>,
+    pub max_price: Option<String>,
+    pub switches: Vec<String>,
+}
+
+impl SearchOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn with_min_price(mut self, min_price: impl Into<String>) -> Self {
+        self.min_price = Some(min_price.into());
+        self
+    }
+    pub fn with_max_price(mut self, max_price: impl Into<String>) -> Self {
+        self.max_price = Some(max_price.into());
+        self
+    }
+    pub fn with_switches<I, S>(mut self, switches: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.switches = switches.into_iter().map(Into::into).collect();
+        self
+    }
+}
+
+/// Review list options (S1-2): the review API's `filter` / `sort`
+/// parameters. Values are passed through verbatim (the sources do not
+/// enumerate a fixed vocabulary); `Default` preserves the historical
+/// fixed values `all` / `complex_default`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewOptions {
+    pub filter: String,
+    pub sort: String,
+}
+
+impl Default for ReviewOptions {
+    fn default() -> Self {
+        Self {
+            filter: "all".to_string(),
+            sort: "complex_default".to_string(),
+        }
+    }
+}
+
+impl ReviewOptions {
+    pub fn new(filter: impl Into<String>, sort: impl Into<String>) -> Self {
+        Self {
+            filter: filter.into(),
+            sort: sort.into(),
+        }
+    }
+}
+
+/// SKU selection options (S1-3) shared by the sku.query / sku.adjust /
+/// pdp main.adjust builders, mirroring the Python `_sku_payload`
+/// fields (`quantity`, `pdpNPI`, `pdp_ext_f`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkuSelectionOptions {
+    pub quantity: i32,
+    pub pdp_npi: String,
+    pub pdp_ext_f: String,
+}
+
+impl Default for SkuSelectionOptions {
+    fn default() -> Self {
+        Self {
+            quantity: 1,
+            pdp_npi: String::new(),
+            pdp_ext_f: String::new(),
+        }
+    }
+}
+
+/// One offline-built MTop request: API name, version and the exact
+/// `data` JSON string that would be signed and sent. Builders return
+/// this so request shapes can be unit-tested without any network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtopRequestData {
+    pub api: &'static str,
+    pub version: &'static str,
+    pub data: String,
 }
 
 pub struct AliExpressClient {
@@ -207,6 +305,35 @@ impl AliExpressClient {
         ship_to: &str,
         sort: &str,
     ) -> Value {
+        self.search_products_with_options(
+            query,
+            page,
+            limit,
+            locale,
+            currency,
+            ship_to,
+            sort,
+            &SearchOptions::default(),
+        )
+        .await
+    }
+
+    /// Search with price-range / filter-switch options (S1-1). The
+    /// options reach the wire through `build_search_params`
+    /// (`pr` / `pageMinPrice` / `selectedSwitches`); with
+    /// `SearchOptions::default()` no such fields are sent.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn search_products_with_options(
+        &self,
+        query: &str,
+        page: i32,
+        limit: i32,
+        locale: &str,
+        currency: &str,
+        ship_to: &str,
+        sort: &str,
+        options: &SearchOptions,
+    ) -> Value {
         if query.trim().is_empty() {
             return json!({"provider": "aliexpress", "ok": false, "error": {"message": "query must not be empty"}});
         }
@@ -233,6 +360,7 @@ impl AliExpressClient {
         } else {
             None
         };
+        let switch_refs: Vec<&str> = options.switches.iter().map(|s| s.as_str()).collect();
         let search_params = build_search_params(
             query,
             page,
@@ -244,18 +372,11 @@ impl AliExpressClient {
             sort,
             pv_feature.as_deref(),
             pre_page.as_deref(),
-            None,
-            None,
-            &[],
+            options.min_price.as_deref(),
+            options.max_price.as_deref(),
+            &switch_refs,
         );
-        let region = search_region_payload(locale, currency, ship_to);
-        let mut data_obj = region;
-        data_obj.insert("appId".to_string(), json!(SEARCH_APP_ID));
-        data_obj.insert(
-            "params".to_string(),
-            json!(serde_json::to_string(&search_params).unwrap()),
-        );
-        let data = serde_json::to_string(&data_obj).unwrap();
+        let data = build_search_data(locale, currency, ship_to, &search_params);
         let referer = format!("https://{}/", host);
 
         match self
@@ -318,6 +439,9 @@ impl AliExpressClient {
                     "page": page,
                     "page_size": page_size,
                     "sort": sort,
+                    "min_price": options.min_price,
+                    "max_price": options.max_price,
+                    "switches": options.switches,
                     "locale": locale,
                     "currency": currency,
                     "ship_to": ship_to,
@@ -482,43 +606,11 @@ impl AliExpressClient {
             Err(e) => route_errors.push(format!("direct_mtop_android_pdp_main: transport: {}", e)),
         }
 
-        // Route 3: web PDP
-        let acs_host = if host.ends_with(".us") {
-            "acs.aliexpress.us"
-        } else {
-            "acs.aliexpress.com"
-        };
-        let site = site_for_locale(locale);
-        let ext_params = json!({
-            "site": site,
-            "crawler": false,
-            "signedIn": false,
-            "host": host,
-        });
-        let data_obj = json!({
-            "productId": product_id,
-            "_lang": locale,
-            "_currency": currency,
-            "country": ship_to,
-            "province": "",
-            "city": "",
-            "channel": null,
-            "pdp_ext_f": null,
-            "pdpNPI": null,
-            "sourceType": null,
-            "clientType": "pc",
-            "ext": serde_json::to_string(&ext_params).unwrap(),
-        });
-        let data = serde_json::to_string(&data_obj).unwrap();
-
+        // Route 3: web PDP (request built by build_web_pdp_data and
+        // executed by call_web_pdp so the route is directly testable,
+        // S1-6).
         match self
-            .signed_mtop_request_with_retry(
-                acs_host,
-                PDP_WEB_API,
-                PDP_WEB_API_VERSION,
-                &data,
-                &source_url,
-            )
+            .call_web_pdp(&product_id, locale, currency, ship_to, &source_url)
             .await
         {
             Ok(call) => {
@@ -583,93 +675,28 @@ impl AliExpressClient {
             return json!({"provider": "aliexpress", "ok": false, "error": {"message": "keyword must not be empty"}});
         }
         let limit = limit.clamp(1, 30);
-        let language = locale.split('_').next().unwrap_or("en").to_lowercase();
-        let ship_to = locale.split('_').nth(1).unwrap_or("US").to_uppercase();
         let host = host_for_locale(locale);
         let referer = format!("https://{}/", host);
         // NOTE (AE-RUST-009): no region cookies are forced here — the
         // old code hard-coded JPY for every locale. The recommend
         // request carries the caller's locale-derived country itself.
 
-        // AE-RUST-017/018: the DEFAULT method is the recommend reuse
-        // (the search recommend API on recom-acs with appId 18390),
-        // which is the measured-working route in the Python SDK. It
-        // is NOT the APK suggestion API and is not named as such.
-        // Opt-in: SHOPPING_MCP_AE_SUGGEST_METHOD=apk performs exactly
-        // one attempt against the APK suggestion API
-        // (mtop.aliexpress.international.search.mobile.suggestion,
-        // fields keyWord/_lang) and surfaces its failure — measured
-        // to be uninvocable via the public H5 gateway
-        // (FAIL_SYS_HSF_INVOKE_ERROR); it never falls back.
-        let method =
-            env::var("SHOPPING_MCP_AE_SUGGEST_METHOD").unwrap_or_else(|_| "recommend".to_string());
-        if method == "apk" {
-            let data = json!({
-                "keyWord": keyword.trim(),
-                "_lang": locale,
-            });
-            let data_str = serde_json::to_string(&data).unwrap();
-            return match self
-                .signed_mtop_request(
-                    "acs.aliexpress.com",
-                    SUGGEST_APK_API,
-                    SUGGEST_APK_API_VERSION,
-                    &data_str,
-                    &referer,
-                )
-                .await
-            {
-                Ok(call) => {
-                    if call.category != "success" {
-                        let mut out = mtop_failure_json("suggest", &call);
-                        out["keyword"] = json!(keyword);
-                        out["locale"] = json!(locale);
-                        out["method"] = json!("apk");
-                        return out;
-                    }
-                    let (mut suggestions, shape) = parse_suggestions(&call.response);
-                    suggestions.truncate(limit as usize);
-                    json!({
-                        "provider": "aliexpress",
-                        "ok": true,
-                        "category": call.category,
-                        "keyword": keyword,
-                        "locale": locale,
-                        "method": "apk",
-                        "shape": shape,
-                        "suggestions": suggestions,
-                        "ret": call.response.get("ret"),
-                        "trace_id": call.response.get("traceId"),
-                        "http_status": call.http_status,
-                        "attempts": call.attempts,
-                    })
-                }
-                Err(e) => json!({
-                    "provider": "aliexpress",
-                    "ok": false,
-                    "error": {"message": e.to_string()},
-                    "method": "apk",
-                }),
-            };
-        }
-
-        let params_inner = json!({
-            "query": keyword.trim(),
-            "language": language,
-            "shipToCountry": ship_to,
-        });
-        let data = json!({
-            "appId": SUGGEST_APP_ID,
-            "params": serde_json::to_string(&params_inner).unwrap(),
-        });
-        let data_str = serde_json::to_string(&data).unwrap();
+        // AE-RUST-017/018 + S1-5: the ONLY method is the recommend
+        // reuse (the search recommend API on recom-acs with appId
+        // 18390), the measured-working route. It is NOT the APK
+        // suggestion API: that API was measured uninvocable through
+        // the public H5 gateway (FAIL_SYS_HSF_INVOKE_ERROR), so the
+        // former SHOPPING_MCP_AE_SUGGEST_METHOD=apk environment-variable
+        // branch is removed entirely — suggestions complete with no
+        // environment configuration at all.
+        let request = build_suggest_recommend_request(keyword, locale);
 
         match self
             .signed_mtop_request_with_retry(
-                SUGGEST_ACS_HOST,
-                SEARCH_API,
-                SEARCH_API_VERSION,
-                &data_str,
+                request.acs_host,
+                request.api,
+                request.version,
+                &request.data,
                 &referer,
             )
             .await
@@ -711,6 +738,21 @@ impl AliExpressClient {
     }
 
     pub async fn get_reviews(&self, product: &str, page: i32, limit: i32, locale: &str) -> Value {
+        self.get_reviews_with_options(product, page, limit, locale, &ReviewOptions::default())
+            .await
+    }
+
+    /// Reviews with caller-chosen `filter` / `sort` (S1-2). With
+    /// `ReviewOptions::default()` the wire values are the historical
+    /// fixed `all` / `complex_default`.
+    pub async fn get_reviews_with_options(
+        &self,
+        product: &str,
+        page: i32,
+        limit: i32,
+        locale: &str,
+        options: &ReviewOptions,
+    ) -> Value {
         let product_id = match extract_product_id(product) {
             Some(id) => id,
             None => {
@@ -730,17 +772,7 @@ impl AliExpressClient {
         let ship_to = locale.split('_').nth(1).unwrap_or("US").to_uppercase();
         self.set_region_cookies(&host, locale, "", &ship_to).await;
         let source_url = format!("https://{}/item/{}.html", host, product_id);
-        let data_obj = json!({
-            "productId": product_id,
-            "page": page,
-            "pageSize": limit,
-            "_lang": locale,
-            "filter": "all",
-            "sort": "complex_default",
-            "country": ship_to,
-            "clientType": "web",
-        });
-        let data = serde_json::to_string(&data_obj).unwrap();
+        let data = build_reviews_data(&product_id, page, limit, locale, &ship_to, options);
         let acs_host = if host.ends_with(".us") {
             "acs.aliexpress.us"
         } else {
@@ -778,6 +810,8 @@ impl AliExpressClient {
                     "product_id": product_id,
                     "page": page,
                     "limit": limit,
+                    "filter": options.filter,
+                    "sort": options.sort,
                     "total": total,
                     "total_pages": total_pages,
                     "reviews": reviews,
@@ -899,6 +933,306 @@ impl AliExpressClient {
         }
     }
 
+    // ------------------------------------------------------------------
+    // S1-3 client methods (SKU query/adjust, PDP adjust, store group,
+    // store module). Request shapes are statically fixed by the
+    // builders above (STATIC_APK); anonymous usability is UNVERIFIED
+    // for all of them (api-registry #5/#6/#7/#9/#10: 匿名=未確認,
+    // 実HTTP=未実施), so every result carries "live_verified": false
+    // and the protocol classification is surfaced verbatim. Live
+    // checks are the #[ignore] tests at the bottom of this file,
+    // run centrally by the parent.
+    // ------------------------------------------------------------------
+
+    /// Shared SKU-endpoint plumbing: local validation (no request is
+    /// sent for an unparseable product or an empty sku id), region
+    /// cookies, one signed call, and a result that keeps the raw
+    /// `data` plus any SKU combinations the shared extractor finds.
+    #[allow(clippy::too_many_arguments)]
+    async fn call_sku_endpoint(
+        &self,
+        context: &str,
+        request: &MtopRequestData,
+        product: &str,
+        sku_id: &str,
+        locale: &str,
+        currency: &str,
+        ship_to: &str,
+    ) -> Value {
+        let product_id = match extract_product_id(product) {
+            Some(id) => id,
+            None => {
+                return json!({
+                    "provider": "aliexpress",
+                    "ok": false,
+                    "error": {"message": format!("Could not find an AliExpress product id in: {}", product)},
+                });
+            }
+        };
+        if sku_id.trim().is_empty() {
+            return json!({
+                "provider": "aliexpress",
+                "ok": false,
+                "error": {"message": "sku_id must not be empty", "category": "request_invalid"},
+                "category": "request_invalid",
+            });
+        }
+        let host = host_for_locale(locale);
+        self.set_region_cookies(&host, locale, currency, ship_to)
+            .await;
+        let referer = format!("https://{}/item/{}.html", host, product_id);
+        match self
+            .signed_mtop_request_with_retry(
+                "acs.aliexpress.com",
+                request.api,
+                request.version,
+                &request.data,
+                &referer,
+            )
+            .await
+        {
+            Ok(call) => {
+                if call.category != "success" {
+                    let mut out = mtop_failure_json(context, &call);
+                    out["product_id"] = json!(product_id);
+                    out["sku_id"] = json!(sku_id);
+                    out["api"] = json!(request.api);
+                    out["live_verified"] = json!(false);
+                    return out;
+                }
+                let data = call.response.get("data").cloned().unwrap_or(json!({}));
+                json!({
+                    "provider": "aliexpress",
+                    "ok": true,
+                    "category": call.category,
+                    "product_id": product_id,
+                    "sku_id": sku_id,
+                    "api": request.api,
+                    "live_verified": false,
+                    "data": data,
+                    "sku_combinations": extract_sku_combinations(&call.response),
+                    "ret": call.response.get("ret"),
+                    "trace_id": call.response.get("traceId"),
+                    "http_status": call.http_status,
+                    "attempts": call.attempts,
+                })
+            }
+            Err(e) => {
+                json!({"provider": "aliexpress", "ok": false, "error": {"message": e.to_string()}})
+            }
+        }
+    }
+
+    /// SKU query (api-registry #5): price/stock for one selected SKU.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn query_sku(
+        &self,
+        product: &str,
+        sku_id: &str,
+        locale: &str,
+        currency: &str,
+        ship_to: &str,
+        options: &SkuSelectionOptions,
+    ) -> Value {
+        // The payload's productId is the extracted id, so a product
+        // URL works as well as a bare id.
+        let product_id = extract_product_id(product).unwrap_or_else(|| product.to_string());
+        self.call_sku_endpoint(
+            "sku_query",
+            &build_sku_query_request(&product_id, sku_id, locale, currency, ship_to, options),
+            product,
+            sku_id,
+            locale,
+            currency,
+            ship_to,
+        )
+        .await
+    }
+
+    /// SKU adjust (api-registry #6): adjusted SKU data after a
+    /// selection change.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn adjust_sku(
+        &self,
+        product: &str,
+        sku_id: &str,
+        locale: &str,
+        currency: &str,
+        ship_to: &str,
+        options: &SkuSelectionOptions,
+    ) -> Value {
+        let product_id = extract_product_id(product).unwrap_or_else(|| product.to_string());
+        self.call_sku_endpoint(
+            "sku_adjust",
+            &build_sku_adjust_request(&product_id, sku_id, locale, currency, ship_to, options),
+            product,
+            sku_id,
+            locale,
+            currency,
+            ship_to,
+        )
+        .await
+    }
+
+    /// PDP main adjust (api-registry #7): refreshed PDP data after a
+    /// SKU selection change.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn adjust_pdp(
+        &self,
+        product: &str,
+        sku_id: &str,
+        locale: &str,
+        currency: &str,
+        ship_to: &str,
+        options: &SkuSelectionOptions,
+    ) -> Value {
+        let product_id = extract_product_id(product).unwrap_or_else(|| product.to_string());
+        self.call_sku_endpoint(
+            "pdp_adjust",
+            &build_pdp_adjust_request(&product_id, sku_id, locale, currency, ship_to, options),
+            product,
+            sku_id,
+            locale,
+            currency,
+            ship_to,
+        )
+        .await
+    }
+
+    /// Store product groups (api-registry #9). The response shape has
+    /// no confirmed parser in the sources, so the raw `data` is kept
+    /// and product cards are additionally extracted with the shared
+    /// search-card normaliser when present.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn get_store_groups(
+        &self,
+        store_id: &str,
+        group_type: &str,
+        seller_id: &str,
+        locale: &str,
+        currency: &str,
+        ship_to: &str,
+    ) -> Value {
+        if store_id.trim().is_empty() {
+            return json!({"provider": "aliexpress", "ok": false, "error": {"message": "store_id must not be empty", "category": "request_invalid"}, "category": "request_invalid"});
+        }
+        let host = host_for_locale(locale);
+        self.set_region_cookies(&host, locale, currency, ship_to)
+            .await;
+        let referer = format!("https://{}/store/{}", host, store_id);
+        let seller = if seller_id.trim().is_empty() {
+            None
+        } else {
+            Some(seller_id)
+        };
+        let request =
+            build_store_group_request(store_id, group_type, seller, locale, currency, ship_to);
+        match self
+            .signed_mtop_request_with_retry(
+                "acs.aliexpress.com",
+                request.api,
+                request.version,
+                &request.data,
+                &referer,
+            )
+            .await
+        {
+            Ok(call) => {
+                if call.category != "success" {
+                    let mut out = mtop_failure_json("store_group", &call);
+                    out["store_id"] = json!(store_id);
+                    out["api"] = json!(request.api);
+                    out["live_verified"] = json!(false);
+                    return out;
+                }
+                let data = call.response.get("data").cloned().unwrap_or(json!({}));
+                let items = normalize_search_items(&data, &referer);
+                json!({
+                    "provider": "aliexpress",
+                    "ok": true,
+                    "category": call.category,
+                    "store_id": store_id,
+                    "api": request.api,
+                    "live_verified": false,
+                    "data": data,
+                    "items": items,
+                    "ret": call.response.get("ret"),
+                    "trace_id": call.response.get("traceId"),
+                    "http_status": call.http_status,
+                    "attempts": call.attempts,
+                })
+            }
+            Err(e) => {
+                json!({"provider": "aliexpress", "ok": false, "error": {"message": e.to_string()}})
+            }
+        }
+    }
+
+    /// Store async module (api-registry #10). No confirmed response
+    /// parser exists in the sources; the raw `data` is returned.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn get_store_module(
+        &self,
+        store_id: &str,
+        component_key: &str,
+        seller_id: &str,
+        locale: &str,
+        currency: &str,
+        ship_to: &str,
+    ) -> Value {
+        if store_id.trim().is_empty() {
+            return json!({"provider": "aliexpress", "ok": false, "error": {"message": "store_id must not be empty", "category": "request_invalid"}, "category": "request_invalid"});
+        }
+        let host = host_for_locale(locale);
+        self.set_region_cookies(&host, locale, currency, ship_to)
+            .await;
+        let referer = format!("https://{}/store/{}", host, store_id);
+        let seller = if seller_id.trim().is_empty() {
+            None
+        } else {
+            Some(seller_id)
+        };
+        let request =
+            build_store_module_request(store_id, component_key, seller, locale, currency, ship_to);
+        match self
+            .signed_mtop_request_with_retry(
+                "acs.aliexpress.com",
+                request.api,
+                request.version,
+                &request.data,
+                &referer,
+            )
+            .await
+        {
+            Ok(call) => {
+                if call.category != "success" {
+                    let mut out = mtop_failure_json("store_module", &call);
+                    out["store_id"] = json!(store_id);
+                    out["api"] = json!(request.api);
+                    out["live_verified"] = json!(false);
+                    return out;
+                }
+                let data = call.response.get("data").cloned().unwrap_or(json!({}));
+                json!({
+                    "provider": "aliexpress",
+                    "ok": true,
+                    "category": call.category,
+                    "store_id": store_id,
+                    "api": request.api,
+                    "live_verified": false,
+                    "data": data,
+                    "ret": call.response.get("ret"),
+                    "trace_id": call.response.get("traceId"),
+                    "http_status": call.http_status,
+                    "attempts": call.attempts,
+                })
+            }
+            Err(e) => {
+                json!({"provider": "aliexpress", "ok": false, "error": {"message": e.to_string()}})
+            }
+        }
+    }
+
     async fn call_android_pdp_batch(
         &self,
         product_id: &str,
@@ -907,25 +1241,7 @@ impl AliExpressClient {
         ship_to: &str,
         referer: &str,
     ) -> Result<MtopCall> {
-        let mut data_obj = search_region_payload(locale, currency, ship_to);
-        data_obj.insert("quantity".to_string(), json!("1"));
-        data_obj.insert("productIdList".to_string(), json!(product_id));
-        data_obj.insert("channel".to_string(), json!("index"));
-        data_obj.insert("isPreload".to_string(), json!("true"));
-        data_obj.insert("clientType".to_string(), json!("android"));
-        data_obj.insert("pdpNpiList".to_string(), json!("[]"));
-        let ext = json!({
-            "newPdp": true,
-            "galaxyDetail": true,
-            "skuOptimize": "true",
-            "wideAspectRatioDevice": "false",
-            "devicePerformance": "medium",
-        });
-        data_obj.insert(
-            "ext".to_string(),
-            json!(serde_json::to_string(&ext).unwrap()),
-        );
-        let data = serde_json::to_string(&data_obj).unwrap();
+        let data = build_android_pdp_batch_data(product_id, locale, currency, ship_to);
         self.signed_mtop_request_with_retry(
             "acs.aliexpress.com",
             ANDROID_PDP_BATCH_API,
@@ -944,51 +1260,39 @@ impl AliExpressClient {
         ship_to: &str,
         referer: &str,
     ) -> Result<MtopCall> {
-        let mut data_obj = search_region_payload(locale, currency, ship_to);
-        data_obj.insert("preselectLogisticsCompany".into(), json!(""));
-        data_obj.insert("pdp_ext_f".into(), json!(""));
-        data_obj.insert("channel".into(), json!("unknown"));
-        data_obj.insert("source".into(), json!(""));
-        data_obj.insert("needReal".into(), json!("true"));
-        data_obj.insert("promotionId".into(), json!(""));
-        data_obj.insert("clientType".into(), json!("android"));
-        data_obj.insert("extRequestParams".into(), json!(""));
-        data_obj.insert("preselectSkuId".into(), json!(""));
-        data_obj.insert("compareFields".into(), json!(""));
-        data_obj.insert("pdpNPI".into(), json!(""));
-        let ext = json!({
-            "cacheType": "local",
-            "devicePerformance": "medium",
-            "galaxyDetail": "true",
-            "longImageExp": true,
-            "newPdp": "true",
-            "noCache": "true",
-            "skuOptimize": "true",
-            "wideAspectRatioDevice": "false",
-            "workingDayViewCount": 0,
-        });
-        data_obj.insert("ext".into(), json!(serde_json::to_string(&ext).unwrap()));
-        data_obj.insert("productId".into(), json!(product_id));
-        let place_order = json!({"channel": "unknown"});
-        data_obj.insert(
-            "placeOrderParam".into(),
-            json!(serde_json::to_string(&place_order).unwrap()),
-        );
-        // AE-RUST-009: timeZone is a caller/locale value, not a
-        // hard-coded "JST"; no value is confirmed for non-JP locales,
-        // so it defaults to empty (Python build_product_main_request).
-        data_obj.insert("timeZone".into(), json!(""));
-        data_obj.insert("originalUrl".into(), json!(referer));
-        data_obj.insert("socialShareParamJson".into(), json!("{}"));
-        data_obj.insert("openStream".into(), json!("true"));
-        data_obj.insert("isTrafficSessionValid".into(), json!("false"));
-        data_obj.insert("preselectLogisticsGroup".into(), json!(""));
-        data_obj.insert("sourceType".into(), json!(""));
-        let data = serde_json::to_string(&data_obj).unwrap();
+        let data = build_android_pdp_main_data(product_id, locale, currency, ship_to, referer);
         self.signed_mtop_request_with_retry(
             "acs.aliexpress.com",
             ANDROID_PDP_MAIN_API,
             ANDROID_PDP_API_VERSION,
+            &data,
+            referer,
+        )
+        .await
+    }
+
+    /// Route 3 call (S1-6): web PDP pc.query, factored out of
+    /// `get_product` so the route can be exercised directly (its live
+    /// test calls exactly this).
+    async fn call_web_pdp(
+        &self,
+        product_id: &str,
+        locale: &str,
+        currency: &str,
+        ship_to: &str,
+        referer: &str,
+    ) -> Result<MtopCall> {
+        let host = host_for_locale(locale);
+        let acs_host = if host.ends_with(".us") {
+            "acs.aliexpress.us"
+        } else {
+            "acs.aliexpress.com"
+        };
+        let data = build_web_pdp_data(product_id, locale, currency, ship_to);
+        self.signed_mtop_request_with_retry(
+            acs_host,
+            PDP_WEB_API,
+            PDP_WEB_API_VERSION,
             &data,
             referer,
         )
@@ -1545,6 +1849,20 @@ fn search_region_payload(
     m
 }
 
+/// The full wire `data` string for a search request (S1-1): region
+/// payload + `appId` + the JSON-stringified search params. Pure, so
+/// tests can assert the exact wire JSON (including the stringified
+/// `pr` / `pageMinPrice` / `selectedSwitches` inside `params`).
+fn build_search_data(locale: &str, currency: &str, ship_to: &str, search_params: &Value) -> String {
+    let mut data_obj = search_region_payload(locale, currency, ship_to);
+    data_obj.insert("appId".to_string(), json!(SEARCH_APP_ID));
+    data_obj.insert(
+        "params".to_string(),
+        json!(serde_json::to_string(search_params).unwrap()),
+    );
+    serde_json::to_string(&data_obj).unwrap()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_search_params(
     query: &str,
@@ -1625,9 +1943,12 @@ fn build_search_params(
     // builder. selectedSwitches values come from the analysis doc's
     // captured switch list ("filterCode:<name>"); the price fields
     // pr / pageMinPrice follow the captured field names and are sent
-    // only when the caller explicitly passes a price (the MCP tool
-    // signature carries no price/switch arguments, so the public
-    // search path passes none — exactly the Python defaults).
+    // only when the caller explicitly passes a price. S1-1: the
+    // provider's public search path now exposes them through
+    // SearchOptions (search_products_with_options); the plain
+    // search_products passes SearchOptions::default() = none. Wiring
+    // them into the MCP tool signature is a server-side patch (see
+    // notes-ae.md).
     let switch_list: Vec<String> = switches
         .iter()
         .map(|s| s.trim())
@@ -1656,6 +1977,353 @@ fn build_search_params(
         }
     }
     params
+}
+
+/// The full wire `data` string for a review list request (S1-2).
+/// `filter` / `sort` come from [`ReviewOptions`]; empty values fall
+/// back to the historical defaults so the wire shape never carries an
+/// empty filter/sort.
+pub fn build_reviews_data(
+    product_id: &str,
+    page: i32,
+    page_size: i32,
+    locale: &str,
+    country: &str,
+    options: &ReviewOptions,
+) -> String {
+    let filter = if options.filter.trim().is_empty() {
+        "all"
+    } else {
+        options.filter.trim()
+    };
+    let sort = if options.sort.trim().is_empty() {
+        "complex_default"
+    } else {
+        options.sort.trim()
+    };
+    let data_obj = json!({
+        "productId": product_id,
+        "page": page,
+        "pageSize": page_size,
+        "_lang": locale,
+        "filter": filter,
+        "sort": sort,
+        "country": country,
+        "clientType": "web",
+    });
+    serde_json::to_string(&data_obj).unwrap()
+}
+
+/// The recommend-reuse suggestion request (S1-5): the search
+/// (recommend) API on `recom-acs.aliexpress.com` with `appId` 18390
+/// and JSON-stringified `{query, language, shipToCountry}` params.
+/// This is the measured-working route and — since the APK suggestion
+/// API cannot be invoked through the H5 gateway — the ONLY route:
+/// no environment variable selects anything else.
+pub struct SuggestRequest {
+    pub acs_host: &'static str,
+    pub api: &'static str,
+    pub version: &'static str,
+    pub data: String,
+}
+
+pub fn build_suggest_recommend_request(keyword: &str, locale: &str) -> SuggestRequest {
+    let language = locale.split('_').next().unwrap_or("en").to_lowercase();
+    let ship_to = locale.split('_').nth(1).unwrap_or("US").to_uppercase();
+    let params_inner = json!({
+        "query": keyword.trim(),
+        "language": language,
+        "shipToCountry": ship_to,
+    });
+    let data = json!({
+        "appId": SUGGEST_APP_ID,
+        "params": serde_json::to_string(&params_inner).unwrap(),
+    });
+    SuggestRequest {
+        acs_host: SUGGEST_ACS_HOST,
+        api: SEARCH_API,
+        version: SEARCH_API_VERSION,
+        data: serde_json::to_string(&data).unwrap(),
+    }
+}
+
+/// Route 1 request data (S1-6): Android PDP batchQueryCache.
+pub fn build_android_pdp_batch_data(
+    product_id: &str,
+    locale: &str,
+    currency: &str,
+    ship_to: &str,
+) -> String {
+    let mut data_obj = search_region_payload(locale, currency, ship_to);
+    data_obj.insert("quantity".to_string(), json!("1"));
+    data_obj.insert("productIdList".to_string(), json!(product_id));
+    data_obj.insert("channel".to_string(), json!("index"));
+    data_obj.insert("isPreload".to_string(), json!("true"));
+    data_obj.insert("clientType".to_string(), json!("android"));
+    data_obj.insert("pdpNpiList".to_string(), json!("[]"));
+    let ext = json!({
+        "newPdp": true,
+        "galaxyDetail": true,
+        "skuOptimize": "true",
+        "wideAspectRatioDevice": "false",
+        "devicePerformance": "medium",
+    });
+    data_obj.insert(
+        "ext".to_string(),
+        json!(serde_json::to_string(&ext).unwrap()),
+    );
+    serde_json::to_string(&data_obj).unwrap()
+}
+
+/// Route 2 request data (S1-6): Android PDP main.query.
+pub fn build_android_pdp_main_data(
+    product_id: &str,
+    locale: &str,
+    currency: &str,
+    ship_to: &str,
+    referer: &str,
+) -> String {
+    let mut data_obj = search_region_payload(locale, currency, ship_to);
+    data_obj.insert("preselectLogisticsCompany".into(), json!(""));
+    data_obj.insert("pdp_ext_f".into(), json!(""));
+    data_obj.insert("channel".into(), json!("unknown"));
+    data_obj.insert("source".into(), json!(""));
+    data_obj.insert("needReal".into(), json!("true"));
+    data_obj.insert("promotionId".into(), json!(""));
+    data_obj.insert("clientType".into(), json!("android"));
+    data_obj.insert("extRequestParams".into(), json!(""));
+    data_obj.insert("preselectSkuId".into(), json!(""));
+    data_obj.insert("compareFields".into(), json!(""));
+    data_obj.insert("pdpNPI".into(), json!(""));
+    let ext = json!({
+        "cacheType": "local",
+        "devicePerformance": "medium",
+        "galaxyDetail": "true",
+        "longImageExp": true,
+        "newPdp": "true",
+        "noCache": "true",
+        "skuOptimize": "true",
+        "wideAspectRatioDevice": "false",
+        "workingDayViewCount": 0,
+    });
+    data_obj.insert("ext".into(), json!(serde_json::to_string(&ext).unwrap()));
+    data_obj.insert("productId".into(), json!(product_id));
+    let place_order = json!({"channel": "unknown"});
+    data_obj.insert(
+        "placeOrderParam".into(),
+        json!(serde_json::to_string(&place_order).unwrap()),
+    );
+    // AE-RUST-009: timeZone is a caller/locale value, not a
+    // hard-coded "JST"; no value is confirmed for non-JP locales,
+    // so it defaults to empty (Python build_product_main_request).
+    data_obj.insert("timeZone".into(), json!(""));
+    data_obj.insert("originalUrl".into(), json!(referer));
+    data_obj.insert("socialShareParamJson".into(), json!("{}"));
+    data_obj.insert("openStream".into(), json!("true"));
+    data_obj.insert("isTrafficSessionValid".into(), json!("false"));
+    data_obj.insert("preselectLogisticsGroup".into(), json!(""));
+    data_obj.insert("sourceType".into(), json!(""));
+    serde_json::to_string(&data_obj).unwrap()
+}
+
+/// Route 3 request data (S1-6): web PDP pc.query.
+pub fn build_web_pdp_data(product_id: &str, locale: &str, currency: &str, ship_to: &str) -> String {
+    let host = host_for_locale(locale);
+    let site = site_for_locale(locale);
+    let ext_params = json!({
+        "site": site,
+        "crawler": false,
+        "signedIn": false,
+        "host": host,
+    });
+    let data_obj = json!({
+        "productId": product_id,
+        "_lang": locale,
+        "_currency": currency,
+        "country": ship_to,
+        "province": "",
+        "city": "",
+        "channel": null,
+        "pdp_ext_f": null,
+        "pdpNPI": null,
+        "sourceType": null,
+        "clientType": "pc",
+        "ext": serde_json::to_string(&ext_params).unwrap(),
+    });
+    serde_json::to_string(&data_obj).unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// S1-3 builders: SKU query/adjust, PDP adjust, store group, store module.
+// Request shapes port the Python SDK builders (aliexpress_search/builders.py,
+// STATIC_APK provenance). Anonymous usability and live behaviour are NOT
+// verified for any of them; the client methods surface the protocol
+// classification verbatim and mark "live_verified": false.
+// ---------------------------------------------------------------------------
+
+fn sku_payload(
+    product_id: &str,
+    sku_id: &str,
+    locale: &str,
+    currency: &str,
+    ship_to: &str,
+    options: &SkuSelectionOptions,
+) -> serde_json::Map<String, Value> {
+    let mut data = search_region_payload(locale, currency, ship_to);
+    data.insert("productId".to_string(), json!(product_id));
+    data.insert("localSelectedSkuId".to_string(), json!(sku_id));
+    data.insert("pdpNPI".to_string(), json!(options.pdp_npi));
+    data.insert("pdp_ext_f".to_string(), json!(options.pdp_ext_f));
+    data.insert(
+        "quantity".to_string(),
+        json!(options.quantity.max(1).to_string()),
+    );
+    data.insert("clientType".to_string(), json!("android"));
+    data
+}
+
+/// `mtop.aliexpress.pdp.sku.query` request (api-registry #5).
+pub fn build_sku_query_request(
+    product_id: &str,
+    sku_id: &str,
+    locale: &str,
+    currency: &str,
+    ship_to: &str,
+    options: &SkuSelectionOptions,
+) -> MtopRequestData {
+    MtopRequestData {
+        api: ANDROID_SKU_QUERY_API,
+        version: ANDROID_PDP_API_VERSION,
+        data: serde_json::to_string(&sku_payload(
+            product_id, sku_id, locale, currency, ship_to, options,
+        ))
+        .unwrap(),
+    }
+}
+
+/// `mtop.aliexpress.pdp.sku.adjust` request (api-registry #6): the
+/// SKU payload plus the request-tracking fields the analysis doc
+/// describes for the captured call (the tracking object's exact shape
+/// is INFERENCE from that wording, as in the Python builder).
+pub fn build_sku_adjust_request(
+    product_id: &str,
+    sku_id: &str,
+    locale: &str,
+    currency: &str,
+    ship_to: &str,
+    options: &SkuSelectionOptions,
+) -> MtopRequestData {
+    let mut data = sku_payload(product_id, sku_id, locale, currency, ship_to, options);
+    data.insert(
+        "requestTracking".to_string(),
+        json!(serde_json::to_string(&json!({"source": "pdp", "action": "sku_adjust"})).unwrap()),
+    );
+    data.insert("isTrafficSessionValid".to_string(), json!("false"));
+    MtopRequestData {
+        api: ANDROID_SKU_ADJUST_API,
+        version: ANDROID_PDP_API_VERSION,
+        data: serde_json::to_string(&data).unwrap(),
+    }
+}
+
+/// `mtop.aliexpress.pdp.main.adjust` request (api-registry #7):
+/// refreshes PDP data after a `localSelectedSkuId` change.
+pub fn build_pdp_adjust_request(
+    product_id: &str,
+    sku_id: &str,
+    locale: &str,
+    currency: &str,
+    ship_to: &str,
+    options: &SkuSelectionOptions,
+) -> MtopRequestData {
+    MtopRequestData {
+        api: ANDROID_PDP_ADJUST_API,
+        version: ANDROID_PDP_API_VERSION,
+        data: serde_json::to_string(&sku_payload(
+            product_id, sku_id, locale, currency, ship_to, options,
+        ))
+        .unwrap(),
+    }
+}
+
+/// `mtop.ae.shop.search.product.groupType` request (api-registry #9).
+/// Observed `groupType` values: `shop_wireless_compare_items` and
+/// `shop_wireless_bundle_items`; an empty `group_type` falls back to
+/// the former. `seller_id` is included only when non-empty (the
+/// Python builder omits it otherwise).
+pub fn build_store_group_request(
+    store_id: &str,
+    group_type: &str,
+    seller_id: Option<&str>,
+    locale: &str,
+    currency: &str,
+    ship_to: &str,
+) -> MtopRequestData {
+    let group_type = if group_type.trim().is_empty() {
+        "shop_wireless_compare_items"
+    } else {
+        group_type.trim()
+    };
+    let mut data = search_region_payload(locale, currency, ship_to);
+    data.insert("storeId".to_string(), json!(store_id));
+    // The live server additionally requires `storeNumber`
+    // (FAIL_SYS_BIZPARAM_MISSED::缺少业务参数storeNumber, live
+    // 2026-11-08); the STATIC_APK-derived shape only carried storeId.
+    data.insert("storeNumber".to_string(), json!(store_id));
+    // Likewise `lang` is required live (FAIL_SYS_BIZPARAM_MISSED::
+    // 缺少业务参数lang, live 2026-11-08); the region payload only
+    // carries `_lang`.
+    data.insert("lang".to_string(), json!(locale));
+    data.insert("groupType".to_string(), json!(group_type));
+    data.insert("country".to_string(), json!(ship_to));
+    data.insert("currency".to_string(), json!(currency));
+    if let Some(seller) = seller_id.filter(|s| !s.trim().is_empty()) {
+        data.insert("sellerId".to_string(), json!(seller));
+    }
+    MtopRequestData {
+        api: STORE_GROUP_API,
+        version: STORE_API_VERSION,
+        data: serde_json::to_string(&data).unwrap(),
+    }
+}
+
+/// `mtop.alibaba.alisite.ae.server.ModuleAsyncService` request
+/// (api-registry #10). The observed `componentKey` is
+/// `promotePruductList` — spelling as captured, including its typo;
+/// an empty `component_key` falls back to it.
+pub fn build_store_module_request(
+    store_id: &str,
+    component_key: &str,
+    seller_id: Option<&str>,
+    locale: &str,
+    currency: &str,
+    ship_to: &str,
+) -> MtopRequestData {
+    let component_key = if component_key.trim().is_empty() {
+        "promotePruductList"
+    } else {
+        component_key.trim()
+    };
+    let mut data = search_region_payload(locale, currency, ship_to);
+    data.insert("storeId".to_string(), json!(store_id));
+    // The live server requires the module request wrapped in a
+    // `params` JSON string (FAIL_SYS_BIZPARAM_MISSED::缺少业务参数
+    // params, live 2026-11-08). The STATIC_APK shape carried the
+    // fields at top level; keep them there and also send the wrapped
+    // form built from the same map (filled in below).
+    data.insert("componentKey".to_string(), json!(component_key));
+    data.insert("country".to_string(), json!(ship_to));
+    data.insert("currency".to_string(), json!(currency));
+    if let Some(seller) = seller_id.filter(|s| !s.trim().is_empty()) {
+        data.insert("sellerId".to_string(), json!(seller));
+    }
+    let params = serde_json::to_string(&data).unwrap_or_default();
+    data.insert("params".to_string(), json!(params));
+    MtopRequestData {
+        api: STORE_MODULE_API,
+        version: STORE_API_VERSION,
+        data: serde_json::to_string(&data).unwrap(),
+    }
 }
 
 fn normalize_search_items(data: &Value, source_url: &str) -> Vec<Value> {
@@ -1889,6 +2557,7 @@ fn normalize_pdp_result(
         .unwrap_or(json!({}));
 
     let sku_variants = extract_web_sku_variants(result);
+    let sku_combinations = extract_sku_combinations(result);
 
     // AE-RUST-016: the web route must surface a price when the
     // payload has one (PRICE / PRODUCT_PRICE / PRICE_CARD_PC
@@ -1973,6 +2642,9 @@ fn normalize_pdp_result(
     if !sku_variants.is_empty() {
         out["sku_variants"] = json!(sku_variants);
     }
+    if !sku_combinations.is_empty() {
+        out["sku_combinations"] = json!(sku_combinations);
+    }
     out
 }
 
@@ -2041,7 +2713,10 @@ fn extract_sku_variants(result: &Value) -> Vec<Value> {
         None => return vec![],
     };
     for (key, block) in data_obj {
-        if !key.contains("sku") {
+        // S1-4: container-key match is case-insensitive (the Python
+        // parser lower-cases the key; the old Rust check missed
+        // upper-case containers such as "SKU_1").
+        if !key.to_ascii_lowercase().contains("sku") {
             continue;
         }
         if let Some(fields) = block.get("fields") {
@@ -2054,6 +2729,116 @@ fn extract_sku_variants(result: &Value) -> Vec<Value> {
         }
     }
     vec![]
+}
+
+/// Extract per-SKU combinations (sku id + price + stock) from the
+/// `skuMap` / `skuList` / `skuInfos` / `skuInfoList` containers, a
+/// port of the Python parser's `_sku_variants` (scan depth ≤ 3).
+///
+/// S1-4 status: these container names come from the Python parser's
+/// assumptions, NOT from a measured payload — no raw PDP response is
+/// saved locally (see notes-ae.md), so this extractor is verified
+/// only against synthetic shapes. When a payload carries no such
+/// container the result is empty; nothing is invented.
+pub fn extract_sku_combinations(payload: &Value) -> Vec<Value> {
+    fn scan(node: &Value, depth: usize, containers: &mut Vec<Value>) {
+        if depth > 3 {
+            return;
+        }
+        match node {
+            Value::Object(map) => {
+                for key in ["skuMap", "skuList", "skuInfos", "skuInfoList"] {
+                    if let Some(v) = map.get(key) {
+                        if v.is_array() || v.is_object() {
+                            containers.push(v.clone());
+                        }
+                    }
+                }
+                for v in map.values() {
+                    if v.is_object() || v.is_array() {
+                        scan(v, depth + 1, containers);
+                    }
+                }
+            }
+            Value::Array(arr) => {
+                for v in arr {
+                    scan(v, depth + 1, containers);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut containers: Vec<Value> = Vec::new();
+    scan(payload, 0, &mut containers);
+    let mut variants: Vec<Value> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for container in &containers {
+        let entries: Vec<&Value> = match container {
+            Value::Array(arr) => arr.iter().collect(),
+            Value::Object(map) => map.values().collect(),
+            _ => Vec::new(),
+        };
+        for entry in entries {
+            let obj = match entry.as_object() {
+                Some(o) => o,
+                None => continue,
+            };
+            let sku_id = json_value_to_string(obj.get("skuId").or_else(|| obj.get("id")));
+            if !sku_id.is_empty() {
+                if seen.contains(&sku_id) {
+                    continue;
+                }
+                seen.insert(sku_id.clone());
+            }
+            let mut price_detail = None;
+            for key in ["skuPrice", "price", "salePrice"] {
+                if let Some(v) = obj.get(key) {
+                    if let Some(p) = build_price(v, None) {
+                        price_detail = Some(p);
+                        break;
+                    }
+                }
+            }
+            let mut stock = None;
+            for key in ["stock", "inventory", "quantity", "skuStock"] {
+                if let Some(q) = to_int(obj.get(key)) {
+                    stock = Some(json!({"quantity": q, "available": q > 0}));
+                    break;
+                }
+            }
+            if stock.is_none() {
+                if let Some(avail) =
+                    to_bool(obj.get("available").or_else(|| obj.get("inStock")), None)
+                {
+                    stock = Some(json!({"available": avail}));
+                }
+            }
+            let mut variant = json!({
+                "sku_id": sku_id,
+                "price_detail": price_detail,
+                "raw": entry.clone(),
+            });
+            if let Some(s) = stock {
+                variant["stock"] = s;
+            }
+            if let Some(attr) = obj.get("skuAttr").and_then(|v| v.as_str()) {
+                variant["sku_attr"] = json!(attr);
+            }
+            if let Some(props) = obj.get("properties") {
+                if props.is_object() {
+                    variant["properties"] = props.clone();
+                }
+            }
+            if let Some(img) = obj.get("image").and_then(|v| v.as_str()) {
+                let normalized = normalize_url(img, "https://www.aliexpress.com/");
+                if !normalized.is_empty() {
+                    variant["image"] = json!(normalized);
+                }
+            }
+            variants.push(variant);
+        }
+    }
+    variants
 }
 
 fn normalize_android_pdp_result(
@@ -2151,6 +2936,7 @@ fn normalize_android_pdp_result(
     }
 
     let sku_variants = extract_sku_variants(result);
+    let sku_combinations = extract_sku_combinations(result);
     let (specs, desc_url) = extract_specs_and_desc(result);
 
     if title.trim().is_empty() {
@@ -2187,6 +2973,9 @@ fn normalize_android_pdp_result(
     });
     if !sku_variants.is_empty() {
         out["sku_variants"] = json!(sku_variants);
+    }
+    if !sku_combinations.is_empty() {
+        out["sku_combinations"] = json!(sku_combinations);
     }
     if !specs.is_empty() {
         out["specifications"] = json!(specs);
@@ -3876,6 +4665,556 @@ mod tests {
         assert!(!mtop_success(&json!({})));
     }
 
+    // ---- S1-1: search price range / switches reach the wire ----
+
+    #[test]
+    fn test_s1_1_build_search_params_price_range_and_switches() {
+        let params = build_search_params(
+            "shoes",
+            1,
+            20,
+            "en_US",
+            "USD",
+            "US",
+            "dev",
+            "",
+            None,
+            None,
+            Some("10"),
+            Some("50"),
+            &["freeShipping", "filterCode:choice"],
+        );
+        assert_eq!(params["pr"], "10,50");
+        assert_eq!(params["pageMinPrice"], "10");
+        // Bare names are normalised to filterCode:<name>; an already
+        // prefixed value is kept verbatim.
+        assert_eq!(
+            params["selectedSwitches"],
+            "filterCode:freeShipping,filterCode:choice"
+        );
+    }
+
+    #[test]
+    fn test_s1_1_build_search_params_min_only_and_max_only() {
+        let params = build_search_params(
+            "shoes",
+            1,
+            20,
+            "en_US",
+            "USD",
+            "US",
+            "dev",
+            "",
+            None,
+            None,
+            Some("10"),
+            None,
+            &[],
+        );
+        assert_eq!(params["pr"], "10");
+        assert_eq!(params["pageMinPrice"], "10");
+        assert!(params.get("selectedSwitches").is_none());
+
+        let params = build_search_params(
+            "shoes",
+            1,
+            20,
+            "en_US",
+            "USD",
+            "US",
+            "dev",
+            "",
+            None,
+            None,
+            None,
+            Some("50"),
+            &[],
+        );
+        assert_eq!(params["pr"], ",50");
+        assert!(params.get("pageMinPrice").is_none());
+    }
+
+    #[test]
+    fn test_s1_1_search_options_wire_json() {
+        // The full wire `data` string: the stringified inner params
+        // must carry pr / pageMinPrice / selectedSwitches.
+        let options = SearchOptions::new()
+            .with_min_price("1000")
+            .with_max_price("5000")
+            .with_switches(["choice"]);
+        let switch_refs: Vec<&str> = options.switches.iter().map(|s| s.as_str()).collect();
+        let params = build_search_params(
+            "shoes",
+            1,
+            20,
+            "ja_JP",
+            "JPY",
+            "JP",
+            "dev",
+            "",
+            None,
+            None,
+            options.min_price.as_deref(),
+            options.max_price.as_deref(),
+            &switch_refs,
+        );
+        let data = build_search_data("ja_JP", "JPY", "JP", &params);
+        let outer: Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(outer["appId"], "999");
+        let inner: Value = serde_json::from_str(outer["params"].as_str().unwrap()).unwrap();
+        assert_eq!(inner["pr"], "1000,5000");
+        assert_eq!(inner["pageMinPrice"], "1000");
+        assert_eq!(inner["selectedSwitches"], "filterCode:choice");
+
+        // Default options: none of the filter fields reach the wire.
+        let options = SearchOptions::default();
+        assert_eq!(options, SearchOptions::new());
+        let params = build_search_params(
+            "shoes",
+            1,
+            20,
+            "ja_JP",
+            "JPY",
+            "JP",
+            "dev",
+            "",
+            None,
+            None,
+            options.min_price.as_deref(),
+            options.max_price.as_deref(),
+            &[],
+        );
+        assert!(params.get("pr").is_none());
+        assert!(params.get("pageMinPrice").is_none());
+        assert!(params.get("selectedSwitches").is_none());
+    }
+
+    // ---- S1-2: review filter/sort are caller-chosen ----
+
+    #[test]
+    fn test_s1_2_reviews_data_defaults() {
+        let data = build_reviews_data(
+            "1005001234567890",
+            2,
+            20,
+            "en_US",
+            "US",
+            &ReviewOptions::default(),
+        );
+        let v: Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(v["productId"], "1005001234567890");
+        assert_eq!(v["page"], 2);
+        assert_eq!(v["pageSize"], 20);
+        assert_eq!(v["filter"], "all");
+        assert_eq!(v["sort"], "complex_default");
+        assert_eq!(v["country"], "US");
+        assert_eq!(v["clientType"], "web");
+    }
+
+    #[test]
+    fn test_s1_2_reviews_data_custom_filter_sort() {
+        // Values pass through verbatim (opaque pass-through; the
+        // sources do not enumerate a fixed vocabulary).
+        let options = ReviewOptions::new("with_photos", "latest_first");
+        let data = build_reviews_data("1005001234567890", 1, 10, "ja_JP", "JP", &options);
+        let v: Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(v["filter"], "with_photos");
+        assert_eq!(v["sort"], "latest_first");
+        // Empty values fall back to the historical defaults.
+        let options = ReviewOptions::new("", "");
+        let data = build_reviews_data("1005001234567890", 1, 10, "ja_JP", "JP", &options);
+        let v: Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(v["filter"], "all");
+        assert_eq!(v["sort"], "complex_default");
+    }
+
+    // ---- S1-5: suggest is recommend-only, no env dependency ----
+
+    #[test]
+    fn test_s1_5_suggest_request_is_recommend_only() {
+        let req = build_suggest_recommend_request("bluetooth", "ja_JP");
+        assert_eq!(req.acs_host, "recom-acs.aliexpress.com");
+        assert_eq!(req.api, SEARCH_API);
+        assert_eq!(req.version, SEARCH_API_VERSION);
+        let data: Value = serde_json::from_str(&req.data).unwrap();
+        assert_eq!(data["appId"], 18390);
+        let inner: Value = serde_json::from_str(data["params"].as_str().unwrap()).unwrap();
+        assert_eq!(inner["query"], "bluetooth");
+        assert_eq!(inner["language"], "ja");
+        assert_eq!(inner["shipToCountry"], "JP");
+    }
+
+    #[test]
+    fn test_s1_5_suggest_request_ignores_env_method() {
+        // Even with the removed opt-in variable set, the built
+        // request is the recommend route — nothing reads it anymore.
+        std::env::set_var("SHOPPING_MCP_AE_SUGGEST_METHOD", "apk");
+        let req = build_suggest_recommend_request("bluetooth", "ja_JP");
+        std::env::remove_var("SHOPPING_MCP_AE_SUGGEST_METHOD");
+        assert_eq!(req.api, SEARCH_API);
+        assert_eq!(req.acs_host, SUGGEST_ACS_HOST);
+        let data: Value = serde_json::from_str(&req.data).unwrap();
+        assert!(data.get("keyWord").is_none(), "APK shape must not be built");
+    }
+
+    // ---- S1-3: SKU / store-group / store-module builders ----
+
+    #[test]
+    fn test_s1_3_sku_query_request_shape() {
+        let options = SkuSelectionOptions {
+            quantity: 2,
+            pdp_npi: "npi1".to_string(),
+            pdp_ext_f: "ext1".to_string(),
+        };
+        let req = build_sku_query_request(
+            "1005001234567890",
+            "12000039941218597",
+            "ja_JP",
+            "JPY",
+            "JP",
+            &options,
+        );
+        assert_eq!(req.api, "mtop.aliexpress.pdp.sku.query");
+        assert_eq!(req.version, "1.0");
+        let data: Value = serde_json::from_str(&req.data).unwrap();
+        assert_eq!(data["productId"], "1005001234567890");
+        assert_eq!(data["localSelectedSkuId"], "12000039941218597");
+        assert_eq!(data["quantity"], "2");
+        assert_eq!(data["pdpNPI"], "npi1");
+        assert_eq!(data["pdp_ext_f"], "ext1");
+        assert_eq!(data["clientType"], "android");
+        assert_eq!(data["_lang"], "ja_JP");
+        assert_eq!(data["_currency"], "JPY");
+    }
+
+    #[test]
+    fn test_s1_3_sku_adjust_request_shape() {
+        let req = build_sku_adjust_request(
+            "1005001234567890",
+            "12000039941218597",
+            "en_US",
+            "USD",
+            "US",
+            &SkuSelectionOptions::default(),
+        );
+        assert_eq!(req.api, "mtop.aliexpress.pdp.sku.adjust");
+        let data: Value = serde_json::from_str(&req.data).unwrap();
+        assert_eq!(data["localSelectedSkuId"], "12000039941218597");
+        assert_eq!(data["quantity"], "1");
+        assert_eq!(data["isTrafficSessionValid"], "false");
+        let tracking: Value =
+            serde_json::from_str(data["requestTracking"].as_str().unwrap()).unwrap();
+        assert_eq!(tracking["source"], "pdp");
+        assert_eq!(tracking["action"], "sku_adjust");
+    }
+
+    #[test]
+    fn test_s1_3_pdp_adjust_request_shape() {
+        let req = build_pdp_adjust_request(
+            "1005001234567890",
+            "12000039941218597",
+            "en_US",
+            "USD",
+            "US",
+            &SkuSelectionOptions::default(),
+        );
+        assert_eq!(req.api, "mtop.aliexpress.pdp.main.adjust");
+        let data: Value = serde_json::from_str(&req.data).unwrap();
+        assert_eq!(data["productId"], "1005001234567890");
+        assert_eq!(data["localSelectedSkuId"], "12000039941218597");
+        assert_eq!(data["clientType"], "android");
+        // Unlike sku.adjust, no tracking fields.
+        assert!(data.get("requestTracking").is_none());
+        assert!(data.get("isTrafficSessionValid").is_none());
+    }
+
+    #[test]
+    fn test_s1_3_store_group_request_shape() {
+        let req = build_store_group_request("911234567", "", None, "en_US", "USD", "US");
+        assert_eq!(req.api, "mtop.ae.shop.search.product.groupType");
+        let data: Value = serde_json::from_str(&req.data).unwrap();
+        assert_eq!(data["storeId"], "911234567");
+        assert_eq!(data["groupType"], "shop_wireless_compare_items");
+        assert_eq!(data["country"], "US");
+        assert_eq!(data["currency"], "USD");
+        assert!(data.get("sellerId").is_none());
+
+        let req = build_store_group_request(
+            "911234567",
+            "shop_wireless_bundle_items",
+            Some("238001122"),
+            "en_US",
+            "USD",
+            "US",
+        );
+        let data: Value = serde_json::from_str(&req.data).unwrap();
+        assert_eq!(data["groupType"], "shop_wireless_bundle_items");
+        assert_eq!(data["sellerId"], "238001122");
+    }
+
+    #[test]
+    fn test_s1_3_store_module_request_shape() {
+        let req = build_store_module_request("911234567", "", None, "en_US", "USD", "US");
+        assert_eq!(req.api, "mtop.alibaba.alisite.ae.server.ModuleAsyncService");
+        let data: Value = serde_json::from_str(&req.data).unwrap();
+        assert_eq!(data["storeId"], "911234567");
+        // Captured spelling, typo included.
+        assert_eq!(data["componentKey"], "promotePruductList");
+        assert!(data.get("sellerId").is_none());
+
+        let req = build_store_module_request(
+            "911234567",
+            "customKey",
+            Some("238001122"),
+            "en_US",
+            "USD",
+            "US",
+        );
+        let data: Value = serde_json::from_str(&req.data).unwrap();
+        assert_eq!(data["componentKey"], "customKey");
+        assert_eq!(data["sellerId"], "238001122");
+    }
+
+    #[tokio::test]
+    async fn test_s1_3_sku_endpoints_reject_empty_sku_locally() {
+        // Local validation: no request is sent for an empty sku id.
+        let client = AliExpressClient::new();
+        for result in [
+            client
+                .query_sku(
+                    "1005001234567890",
+                    "",
+                    "en_US",
+                    "USD",
+                    "US",
+                    &SkuSelectionOptions::default(),
+                )
+                .await,
+            client
+                .adjust_sku(
+                    "1005001234567890",
+                    "  ",
+                    "en_US",
+                    "USD",
+                    "US",
+                    &SkuSelectionOptions::default(),
+                )
+                .await,
+            client
+                .adjust_pdp(
+                    "1005001234567890",
+                    "",
+                    "en_US",
+                    "USD",
+                    "US",
+                    &SkuSelectionOptions::default(),
+                )
+                .await,
+        ] {
+            assert_eq!(result["ok"], false);
+            assert_eq!(result["error"]["category"], "request_invalid");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_s1_3_store_endpoints_reject_empty_store_locally() {
+        let client = AliExpressClient::new();
+        let result = client
+            .get_store_groups("", "", "", "en_US", "USD", "US")
+            .await;
+        assert_eq!(result["ok"], false);
+        assert_eq!(result["error"]["category"], "request_invalid");
+        let result = client
+            .get_store_module("", "", "", "en_US", "USD", "US")
+            .await;
+        assert_eq!(result["ok"], false);
+        assert_eq!(result["error"]["category"], "request_invalid");
+    }
+
+    // ---- S1-4: SKU extraction against the synthetic fixture shapes ----
+    // NOTE: both payloads below mirror the SYNTHETIC Python fixtures
+    // (tests/fixtures/synthetic/product_android_entry.json /
+    // product_web.json in aliexpress-search-parser). No measured PDP
+    // payload exists locally — see notes-ae.md (S1-4 is 保留).
+
+    #[test]
+    fn test_s1_4_sku_properties_android_synthetic_shape() {
+        // One android PDP entry (data[product_id] object), shape from
+        // the synthetic fixture: data.galaxy_sku_1.fields.skuProperties.
+        let entry = json!({
+            "data": {
+                "galaxy_sku_1": {"fields": {"skuProperties": [
+                    {"hasSkuImage": true, "skuPropertyId": "14", "skuPropertyName": "Color",
+                     "skuPropertyValues": [{"definitionName": "Black", "imagePath": "//ae01.alicdn.com/kf/black.jpg", "propertyValueId": "771"}]}
+                ]}}
+            }
+        });
+        let variants = extract_sku_variants(&entry);
+        assert_eq!(variants.len(), 1);
+        assert_eq!(variants[0]["property_name"], "Color");
+        assert_eq!(variants[0]["values"][0]["name"], "Black");
+        assert_eq!(variants[0]["values"][0]["value_id"], "771");
+        assert_eq!(
+            variants[0]["values"][0]["image"],
+            "https://ae01.alicdn.com/kf/black.jpg"
+        );
+        // Properties-only payload: no per-SKU combinations exist.
+        assert!(extract_sku_combinations(&entry).is_empty());
+    }
+
+    #[test]
+    fn test_s1_4_sku_properties_web_synthetic_shape() {
+        // Web result shape from the synthetic fixture:
+        // SKU_CARD_PC.skuProperties with hasSkuImage as the string "true".
+        let result = json!({
+            "SKU_CARD_PC": {"skuProperties": [
+                {"hasSkuImage": "true", "skuPropertyId": 14, "skuPropertyName": "Color",
+                 "skuPropertyValues": [
+                     {"definitionName": "Black", "imagePath": "//ae01.alicdn.com/kf/black.jpg", "propertyValueId": 771},
+                     {"definitionName": "White", "propertyValueId": 772}
+                 ]}
+            ]}
+        });
+        let variants = extract_web_sku_variants(&result);
+        assert_eq!(variants.len(), 1);
+        assert_eq!(variants[0]["property_id"], "14");
+        assert_eq!(variants[0]["values"].as_array().unwrap().len(), 2);
+        assert_eq!(variants[0]["values"][1]["name"], "White");
+    }
+
+    #[test]
+    fn test_s1_4_sku_properties_uppercase_container_key() {
+        // S1-4 fix: the android container-key match is
+        // case-insensitive (previously "SKU…" keys were skipped).
+        let entry = json!({
+            "data": {
+                "SKU_MAIN": {"fields": {"skuProperties": [
+                    {"skuPropertyId": "5", "skuPropertyName": "Size",
+                     "skuPropertyValues": [{"definitionName": "L", "propertyValueId": "9"}]}
+                ]}}
+            }
+        });
+        let variants = extract_sku_variants(&entry);
+        assert_eq!(variants.len(), 1);
+        assert_eq!(variants[0]["property_name"], "Size");
+    }
+
+    #[test]
+    fn test_s1_4_sku_combinations_from_sku_map_synthetic() {
+        // Synthetic skuMap shape (the Python parser's assumed
+        // container; NOT a measured payload).
+        let payload = json!({
+            "data": {
+                "skuMap": {
+                    "14:771": {"skuId": "120000001", "skuAttr": "14:771",
+                               "skuPrice": {"amountCent": 1299, "currencyCode": "USD"},
+                               "stock": 7},
+                    "14:772": {"skuId": "120000002", "skuAttr": "14:772",
+                               "skuPrice": {"amountCent": 1499, "currencyCode": "USD"},
+                               "stock": 0}
+                }
+            }
+        });
+        let combinations = extract_sku_combinations(&payload);
+        assert_eq!(combinations.len(), 2);
+        let first = combinations
+            .iter()
+            .find(|c| c["sku_id"] == "120000001")
+            .unwrap();
+        assert_eq!(first["price_detail"]["amount"], "12.99");
+        assert_eq!(first["stock"]["quantity"], 7);
+        assert_eq!(first["stock"]["available"], true);
+        assert_eq!(first["sku_attr"], "14:771");
+        let second = combinations
+            .iter()
+            .find(|c| c["sku_id"] == "120000002")
+            .unwrap();
+        assert_eq!(second["stock"]["available"], false);
+    }
+
+    #[test]
+    fn test_s1_4_android_normalize_includes_combinations() {
+        // A (synthetic) batch entry carrying both bizContext and a
+        // skuMap: the normalised detail surfaces sku_combinations.
+        let entry = json!({
+            "global": {"bizContext": {
+                "productInfo": {"productId": "1005001234567890", "subject": "Synthetic Title",
+                                "mainImages": ["//ae01.alicdn.com/kf/a.jpg"]},
+                "priceInfo": {
+                    "saleMinPrice": {"amountCent": 1299, "currencyCode": "USD", "value": "12.99"},
+                    "saleMaxPrice": {"amountCent": 1499, "currencyCode": "USD", "value": "14.99"}
+                },
+                "sellerInfo": {"sellerId": 238001122, "storeId": 911234567, "storeName": "Audio Store"}
+            }},
+            "data": {
+                "skuMap": {
+                    "14:771": {"skuId": "120000001", "skuPrice": {"amountCent": 1299, "currencyCode": "USD"}, "stock": 3}
+                }
+            }
+        });
+        let out = normalize_android_pdp_result(
+            "1005001234567890",
+            &entry,
+            "https://www.aliexpress.com/item/1005001234567890.html",
+            "en_US",
+            "USD",
+            "direct_mtop_android_pdp_batch",
+        );
+        let combinations = out["sku_combinations"].as_array().expect("combinations");
+        assert_eq!(combinations.len(), 1);
+        assert_eq!(combinations[0]["sku_id"], "120000001");
+    }
+
+    // ---- S1-6: PDP route request builders (offline) ----
+
+    #[test]
+    fn test_s1_6_android_pdp_batch_request_shape() {
+        let data = build_android_pdp_batch_data("1005001234567890", "ja_JP", "JPY", "JP");
+        let v: Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(v["productIdList"], "1005001234567890");
+        assert_eq!(v["quantity"], "1");
+        assert_eq!(v["isPreload"], "true");
+        assert_eq!(v["channel"], "index");
+        assert_eq!(v["clientType"], "android");
+        let ext: Value = serde_json::from_str(v["ext"].as_str().unwrap()).unwrap();
+        assert_eq!(ext["newPdp"], true);
+        assert_eq!(ext["galaxyDetail"], true);
+    }
+
+    #[test]
+    fn test_s1_6_android_pdp_main_request_shape() {
+        let referer = "https://ja.aliexpress.com/item/1005001234567890.html";
+        let data = build_android_pdp_main_data("1005001234567890", "ja_JP", "JPY", "JP", referer);
+        let v: Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(v["productId"], "1005001234567890");
+        assert_eq!(v["clientType"], "android");
+        assert_eq!(v["channel"], "unknown");
+        assert_eq!(v["needReal"], "true");
+        assert_eq!(v["originalUrl"], referer);
+        let ext: Value = serde_json::from_str(v["ext"].as_str().unwrap()).unwrap();
+        assert_eq!(ext["galaxyDetail"], "true");
+        assert_eq!(ext["skuOptimize"], "true");
+        let place_order: Value =
+            serde_json::from_str(v["placeOrderParam"].as_str().unwrap()).unwrap();
+        assert_eq!(place_order["channel"], "unknown");
+    }
+
+    #[test]
+    fn test_s1_6_web_pdp_request_shape() {
+        let data = build_web_pdp_data("1005001234567890", "ja_JP", "JPY", "JP");
+        let v: Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(v["productId"], "1005001234567890");
+        assert_eq!(v["_lang"], "ja_JP");
+        assert_eq!(v["_currency"], "JPY");
+        assert_eq!(v["country"], "JP");
+        assert_eq!(v["clientType"], "pc");
+        let ext: Value = serde_json::from_str(v["ext"].as_str().unwrap()).unwrap();
+        assert_eq!(ext["site"], "jpn");
+        assert_eq!(ext["host"], "ja.aliexpress.com");
+        assert_eq!(ext["crawler"], false);
+        assert_eq!(ext["signedIn"], false);
+    }
+
     #[tokio::test]
     #[ignore = "live network test (AE-RUST-029)"]
     async fn test_live_search() {
@@ -4027,5 +5366,233 @@ mod tests {
                 "review must have buyer_country field"
             );
         }
+    }
+
+    // ---- S1-6 live: PDP fallback routes exercised DIRECTLY ----
+    // get_product normally stops at route 1 (batch), so routes 2/3
+    // are verified here by calling the route methods themselves.
+    // Run by the parent: cargo test -p shopping-mcp-aliexpress -- --ignored
+
+    #[tokio::test]
+    #[ignore = "live network test (S1-6 route 2: mtop.aliexpress.pdp.main.query direct)"]
+    async fn test_live_get_product_route2_main_query() {
+        let client = AliExpressClient::new();
+        let search = client
+            .search_products("bluetooth earbuds", 1, 3, "en_US", "USD", "US", "")
+            .await;
+        assert_eq!(search["ok"], true, "search failed: {}", search);
+        let pid = search["items"][0]["product_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let source_url = format!("https://www.aliexpress.com/item/{}.html", pid);
+        let call = client
+            .call_android_pdp_main(&pid, "en_US", "USD", "US", &source_url)
+            .await
+            .expect("route2 transport failed");
+        assert_eq!(
+            call.category, "success",
+            "route2 pdp.main.query not successful: ret={:?}",
+            call.ret
+        );
+        let (entry, _matched_by_key) =
+            extract_android_pdp_entry(&call.response, &pid).expect("route2: no PDP entry found");
+        let normalized = normalize_android_pdp_result(
+            &pid,
+            &entry,
+            &source_url,
+            "en_US",
+            "USD",
+            "direct_mtop_android_pdp_main",
+        );
+        assert!(
+            detail_accepted(&normalized, &pid),
+            "route2 detail not accepted: {}",
+            normalized
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test (S1-6 route 3: mtop.aliexpress.pdp.pc.query direct)"]
+    async fn test_live_get_product_route3_web_query() {
+        let client = AliExpressClient::new();
+        let search = client
+            .search_products("bluetooth earbuds", 1, 3, "en_US", "USD", "US", "")
+            .await;
+        assert_eq!(search["ok"], true, "search failed: {}", search);
+        let pid = search["items"][0]["product_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let source_url = format!("https://www.aliexpress.com/item/{}.html", pid);
+        let call = client
+            .call_web_pdp(&pid, "en_US", "USD", "US", &source_url)
+            .await
+            .expect("route3 transport failed");
+        assert_eq!(
+            call.category, "success",
+            "route3 pdp.pc.query not successful: ret={:?}",
+            call.ret
+        );
+        let result = call
+            .response
+            .get("data")
+            .and_then(|d| d.get("result"))
+            .cloned()
+            .unwrap_or(json!({}));
+        assert!(
+            result.as_object().map(|o| !o.is_empty()).unwrap_or(false),
+            "route3: empty data.result"
+        );
+        let normalized = normalize_pdp_result(&pid, &result, &source_url, "en_US", "USD");
+        assert!(
+            detail_accepted(&normalized, &pid),
+            "route3 detail not accepted: {}",
+            normalized
+        );
+    }
+
+    // ---- S1-3 live: SKU / store endpoints (anonymous UNVERIFIED) ----
+    // These assert ok==true strictly so the parent's live run settles
+    // whether each endpoint works anonymously. A failure here is a
+    // finding (record the category/ret), not a code bug by itself.
+
+    async fn live_search_sku_target(client: &AliExpressClient) -> Option<(String, String)> {
+        let search = client
+            .search_products("bluetooth earbuds", 1, 5, "en_US", "USD", "US", "")
+            .await;
+        assert_eq!(search["ok"], true, "search failed: {}", search);
+        for item in search["items"].as_array().unwrap() {
+            if let (Some(pid), Some(sku)) = (
+                item["product_id"].as_str(),
+                item["sku_id"].as_str().filter(|s| !s.is_empty()),
+            ) {
+                return Some((pid.to_string(), sku.to_string()));
+            }
+        }
+        None
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test (S1-3 sku.query; anonymous unverified)"]
+    async fn test_live_sku_query() {
+        let client = AliExpressClient::new();
+        let Some((pid, sku)) = live_search_sku_target(&client).await else {
+            return; // no sku-bearing search card; nothing to verify with
+        };
+        let result = client
+            .query_sku(
+                &pid,
+                &sku,
+                "en_US",
+                "USD",
+                "US",
+                &SkuSelectionOptions::default(),
+            )
+            .await;
+        assert_eq!(
+            result["ok"], true,
+            "sku.query FAILED for {} sku {} (anonymous unverified): {}",
+            pid, sku, result
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test (S1-3 sku.adjust; anonymous unverified)"]
+    async fn test_live_sku_adjust() {
+        let client = AliExpressClient::new();
+        let Some((pid, sku)) = live_search_sku_target(&client).await else {
+            return;
+        };
+        let result = client
+            .adjust_sku(
+                &pid,
+                &sku,
+                "en_US",
+                "USD",
+                "US",
+                &SkuSelectionOptions::default(),
+            )
+            .await;
+        assert_eq!(
+            result["ok"], true,
+            "sku.adjust FAILED for {} sku {} (anonymous unverified): {}",
+            pid, sku, result
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test (S1-3 pdp main.adjust; anonymous unverified)"]
+    async fn test_live_pdp_adjust() {
+        let client = AliExpressClient::new();
+        let Some((pid, sku)) = live_search_sku_target(&client).await else {
+            return;
+        };
+        let result = client
+            .adjust_pdp(
+                &pid,
+                &sku,
+                "en_US",
+                "USD",
+                "US",
+                &SkuSelectionOptions::default(),
+            )
+            .await;
+        assert_eq!(
+            result["ok"], true,
+            "pdp main.adjust FAILED for {} sku {} (anonymous unverified): {}",
+            pid, sku, result
+        );
+    }
+
+    async fn live_store_target(client: &AliExpressClient) -> Option<(String, String)> {
+        let search = client
+            .search_products("bluetooth earbuds", 1, 3, "en_US", "USD", "US", "")
+            .await;
+        assert_eq!(search["ok"], true, "search failed: {}", search);
+        let pid = search["items"][0]["product_id"].as_str().unwrap();
+        let detail = client.get_product(pid, "en_US", "USD", "US").await;
+        assert_eq!(detail["ok"], true, "get_product failed: {}", detail);
+        let store_id = json_value_to_string(detail.pointer("/store/store_id"));
+        let seller_id = json_value_to_string(detail.pointer("/store/seller_id"));
+        if store_id.is_empty() {
+            None
+        } else {
+            Some((store_id, seller_id))
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test (S1-3 store groupType; anonymous unverified)"]
+    async fn test_live_store_group() {
+        let client = AliExpressClient::new();
+        let Some((store_id, seller_id)) = live_store_target(&client).await else {
+            return; // detail carried no store id; nothing to verify with
+        };
+        let result = client
+            .get_store_groups(&store_id, "", &seller_id, "en_US", "USD", "US")
+            .await;
+        assert_eq!(
+            result["ok"], true,
+            "store groupType FAILED for store {} (anonymous unverified): {}",
+            store_id, result
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "live network test (S1-3 store ModuleAsyncService; anonymous unverified)"]
+    async fn test_live_store_module() {
+        let client = AliExpressClient::new();
+        let Some((store_id, seller_id)) = live_store_target(&client).await else {
+            return;
+        };
+        let result = client
+            .get_store_module(&store_id, "", &seller_id, "en_US", "USD", "US")
+            .await;
+        assert_eq!(
+            result["ok"], true,
+            "store ModuleAsyncService FAILED for store {} (anonymous unverified): {}",
+            store_id, result
+        );
     }
 }
