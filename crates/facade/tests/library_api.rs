@@ -93,7 +93,10 @@ fn outcome_types_serialise() {
         ok: false,
         items: vec![],
         error: Some("boom".to_string()),
+        error_kind: Some(zero_search::ErrorKind::Unknown),
     }]);
+    let value0 = serde_json::to_value(&web).unwrap();
+    assert_eq!(value0[0]["error_kind"], serde_json::json!("unknown"));
     let value = serde_json::to_value(&web).unwrap();
     assert_eq!(value[0]["engine"], serde_json::json!("naver"));
     assert_eq!(value[0]["ok"], serde_json::json!(false));
@@ -103,6 +106,7 @@ fn outcome_types_serialise() {
         ok: true,
         result: Some(serde_json::json!({"ok": true})),
         error: None,
+        error_kind: None,
     }]);
     let value = serde_json::to_value(&shop).unwrap();
     assert_eq!(value[0]["provider"], serde_json::json!("mercari"));
@@ -112,6 +116,7 @@ fn outcome_types_serialise() {
         ok: true,
         result: Some(serde_json::json!({"ok": true})),
         error: None,
+        error_kind: None,
     }]);
     let value = serde_json::to_value(&media).unwrap();
     assert_eq!(value[0]["provider"], serde_json::json!("bilibili"));
@@ -121,6 +126,7 @@ fn outcome_types_serialise() {
         ok: true,
         result: Some(serde_json::json!({"ok": true})),
         error: None,
+        error_kind: None,
     }]);
     let value = serde_json::to_value(&articles).unwrap();
     assert_eq!(value[0]["provider"], serde_json::json!("csdn"));
@@ -190,5 +196,80 @@ fn media_next_token_reads_each_providers_field() {
     assert_eq!(
         zero_search::media_next_token(MediaProvider::Bilibili, &yt),
         None
+    );
+}
+
+#[test]
+fn error_kind_classifies_provider_messages() {
+    use zero_search::ErrorKind;
+    // The exact message shapes the providers produce (Z12).
+    assert_eq!(
+        ErrorKind::from_error_message(
+            "access_restricted: HTTP 429 Too Many Requests from Bing (rate limited or blocked)"
+        ),
+        ErrorKind::RateLimited
+    );
+    assert_eq!(
+        ErrorKind::from_error_message(
+            "access_restricted: yandex answered with a smart captcha (showcaptcha)"
+        ),
+        ErrorKind::Captcha
+    );
+    assert_eq!(
+        ErrorKind::from_error_message("access_restricted: HTTP 403 Forbidden"),
+        ErrorKind::AccessRestricted
+    );
+    assert_eq!(
+        ErrorKind::from_error_message("http_error: HTTP 500 from Yahoo"),
+        ErrorKind::ServerError
+    );
+    assert_eq!(
+        ErrorKind::from_error_message("yahoo us image search returned HTTP 500"),
+        ErrorKind::ServerError
+    );
+    assert_eq!(
+        ErrorKind::from_error_message("amazon returned HTTP 503"),
+        ErrorKind::ServerError
+    );
+    assert_eq!(
+        ErrorKind::from_error_message("http_error: HTTP 400 from Bing"),
+        ErrorKind::HttpError
+    );
+    assert_eq!(
+        ErrorKind::from_error_message("parse_error: no results found in the response"),
+        ErrorKind::ParseError
+    );
+    assert_eq!(
+        ErrorKind::from_error_message("connection_error: dns error"),
+        ErrorKind::NetworkError
+    );
+    assert_eq!(
+        ErrorKind::from_error_message("not_found: HTTP 404"),
+        ErrorKind::NotFound
+    );
+    assert_eq!(
+        ErrorKind::from_error_message("something entirely different"),
+        ErrorKind::Unknown
+    );
+}
+
+#[test]
+fn error_kind_serialises_snake_case_and_is_omitted_on_success() {
+    let ok = CategoryOutcome::Web(vec![EngineOutcome {
+        engine: WebEngine::Bing,
+        ok: true,
+        items: vec![],
+        error: None,
+        error_kind: None,
+    }]);
+    let value = serde_json::to_value(&ok).unwrap();
+    assert!(value[0].get("error_kind").is_none(), "{value}");
+    assert_eq!(
+        serde_json::to_value(zero_search::ErrorKind::RateLimited).unwrap(),
+        serde_json::json!("rate_limited")
+    );
+    assert_eq!(
+        serde_json::to_value(zero_search::ErrorKind::AccessRestricted).unwrap(),
+        serde_json::json!("access_restricted")
     );
 }

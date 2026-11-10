@@ -212,19 +212,33 @@ impl BingSearchClient {
     }
 
     async fn get_with(&self, client: &reqwest::Client, url: &str, referer: &str) -> Result<String> {
-        let resp = client
-            .get(url)
-            .header(REFERER, referer)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("connection_error: {e}"))?;
-        let status = resp.status();
-        if !status.is_success() {
-            return Err(common::status_error(status));
+        // One retry on HTTP 429 after a pause: Bing's quota is per
+        // appid + egress IP and shared, so a transient 429 often
+        // clears within seconds (Z12: a facade search hit 429 while
+        // spaced identical searches succeeded). The retry waits —
+        // it does not change identity or shape — and a second 429
+        // surfaces as the usual access_restricted error.
+        for attempt in 0..=1 {
+            let resp = client
+                .get(url)
+                .header(REFERER, referer)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("connection_error: {e}"))?;
+            let status = resp.status();
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt == 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                continue;
+            }
+            if !status.is_success() {
+                return Err(common::status_error(status));
+            }
+            return resp
+                .text()
+                .await
+                .map_err(|e| anyhow::anyhow!("connection_error: {e}"));
         }
-        resp.text()
-            .await
-            .map_err(|e| anyhow::anyhow!("connection_error: {e}"))
+        unreachable!("the retry loop always returns")
     }
 
     /// Fetch a page with the desktop user agent.
@@ -265,21 +279,31 @@ impl BingSearchClient {
     }
 
     /// Fetch a JSON document (the app's APIs: v7 search, suggestions).
+    /// Retries once on HTTP 429 after a pause, like
+    /// [`Self::get_with`].
     pub async fn get_json(&self, url: &str) -> Result<Value> {
-        let resp = self
-            .http
-            .get(url)
-            .header(REFERER, "https://www.bing.com/")
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("connection_error: {e}"))?;
-        let status = resp.status();
-        if !status.is_success() {
-            return Err(common::status_error(status));
+        for attempt in 0..=1 {
+            let resp = self
+                .http
+                .get(url)
+                .header(REFERER, "https://www.bing.com/")
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("connection_error: {e}"))?;
+            let status = resp.status();
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt == 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                continue;
+            }
+            if !status.is_success() {
+                return Err(common::status_error(status));
+            }
+            return resp
+                .json::<Value>()
+                .await
+                .map_err(|e| anyhow::anyhow!("parse_error: {e}"));
         }
-        resp.json::<Value>()
-            .await
-            .map_err(|e| anyhow::anyhow!("parse_error: {e}"))
+        unreachable!("the retry loop always returns")
     }
 }
 

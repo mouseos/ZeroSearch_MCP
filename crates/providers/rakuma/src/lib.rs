@@ -26,8 +26,16 @@ static JSONLD_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static DETAIL_IMG_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#""(https://img\.fril\.jp/img/\d+/l/[^"]+)""#).unwrap());
+/// The seller's shop identifier in the item page's shop link.
+/// Most sellers carry a 32-hex id, but store and official sellers
+/// use a vanity slug instead (`fril.jp/shop/star55`,
+/// `fril.jp/shop/blackscorpion` — measured live in Z12, where 3 of
+/// 8 sampled items had slug sellers whose id the old hex-only
+/// pattern missed, which in turn broke review lookups for them).
+/// Both forms work in the `/shop/<id>/review` URL, so the field
+/// (named `seller_hash` for API compatibility) holds either.
 static SELLER_HASH_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"href="https://fril\.jp/shop/([a-f0-9]{32})""#).unwrap());
+    LazyLock::new(|| Regex::new(r#"href="https://fril\.jp/shop/([A-Za-z0-9_-]+)""#).unwrap());
 static REVIEW_ITEM_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r#"(?s)<article[^>]*class="[^"]*review-item[^"]*"[^>]*>.*?<p[^>]*class="[^"]*review-item-title[^"]*"[^>]*>.*?</i>(.*?)</p>.*?<div[^>]*class="[^"]*review-item-text[^"]*"[^>]*>(.*?)</div>\s*<div[^>]*class="row"[^>]*>\s*<div[^>]*class="[^"]*review-item-name[^"]*"[^>]*>\s*(.*?)\s*</div>.*?<p[^>]*class="[^"]*review-item-date[^"]*"[^>]*>(.*?)</p>"#
@@ -163,6 +171,9 @@ pub struct SellerInfo {
     pub id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The seller's shop identifier: a 32-hex id for most sellers,
+    /// a vanity slug (e.g. `star55`) for store/official sellers.
+    /// Either form addresses the shop and its review page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seller_hash: Option<String>,
 }
@@ -675,6 +686,28 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("unknown sort"), "err: {err}");
+    }
+
+    // [Z12] Shop ids come in two forms: 32-hex for most sellers,
+    // vanity slugs for store/official sellers. Both must be
+    // captured — the hex-only pattern left slug sellers without a
+    // seller_hash and broke review lookups for their items.
+    #[test]
+    fn test_seller_shop_id_forms() {
+        let hex_page = r#"<a href="https://fril.jp/shop/03a7da03a4853007948264b5b7aa3dfa">shop</a>"#;
+        let slug_page = r#"<a href="https://fril.jp/shop/star55">shop</a><a href="https://fril.jp/shop/star55/review">reviews</a>"#;
+        assert_eq!(
+            SELLER_HASH_RE.captures(hex_page).unwrap()[1].to_string(),
+            "03a7da03a4853007948264b5b7aa3dfa"
+        );
+        assert_eq!(
+            SELLER_HASH_RE.captures(slug_page).unwrap()[1].to_string(),
+            "star55"
+        );
+        assert_eq!(
+            review_page_url("star55", 1),
+            "https://fril.jp/shop/star55/review"
+        );
     }
 
     // [S1-34] The review page URL is page-independent (live-verified:

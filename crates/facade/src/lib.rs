@@ -284,6 +284,107 @@ pub struct SearchItem {
     pub snippet: Option<String>,
 }
 
+/// Machine-readable classification of a failed outcome.
+///
+/// Added so callers can react to the *kind* of failure — back off on
+/// [`ErrorKind::RateLimited`], give up on [`ErrorKind::Captcha`],
+/// retry on [`ErrorKind::NetworkError`] — without parsing the
+/// human-readable `error` string, which is unchanged. The variants
+/// mirror the error kinds the providers already use internally
+/// (`access_restricted`, `http_error`, `parse_error`, …), classified
+/// from the message by [`ErrorKind::from_error_message`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorKind {
+    /// The service throttled the request (HTTP 429 or an equivalent
+    /// rate-limit response). Waiting and retrying later is sane.
+    RateLimited,
+    /// The service answered with a captcha / bot-verification
+    /// challenge instead of results.
+    Captcha,
+    /// The service refused the request class outright (access
+    /// restriction, risk-control or verification gates).
+    AccessRestricted,
+    /// The service itself failed (HTTP 5xx).
+    ServerError,
+    /// Any other HTTP error status (4xx and friends).
+    HttpError,
+    /// The response could not be parsed or carried no usable data.
+    ParseError,
+    /// The request never completed (connection failure, timeout).
+    NetworkError,
+    /// The requested resource does not exist (HTTP 404).
+    NotFound,
+    /// Anything that does not fit the kinds above.
+    Unknown,
+}
+
+impl ErrorKind {
+    /// Classify a provider error message. The providers prefix
+    /// their errors with a kind tag (`access_restricted: …`,
+    /// `http_error: …`, `parse_error: …`, `connection_error: …`,
+    /// `not_found: …`); untagged messages are classified from the
+    /// HTTP status or keywords they carry. This function is public
+    /// so callers can classify errors from the single-provider
+    /// methods (which return `anyhow::Error`) the same way the
+    /// outcome types do.
+    pub fn from_error_message(message: &str) -> ErrorKind {
+        let lower = message.to_lowercase();
+        if lower.contains("captcha") {
+            return ErrorKind::Captcha;
+        }
+        if lower.contains("429") || lower.contains("too many requests") {
+            return ErrorKind::RateLimited;
+        }
+        if lower.contains("not_found") || lower.contains("http 404") {
+            return ErrorKind::NotFound;
+        }
+        if lower.contains("access_restricted") {
+            return ErrorKind::AccessRestricted;
+        }
+        if lower.contains("parse_error") {
+            return ErrorKind::ParseError;
+        }
+        if lower.contains("connection_error")
+            || lower.contains("timeout")
+            || lower.contains("timed out")
+        {
+            return ErrorKind::NetworkError;
+        }
+        // HTTP status mentions, tagged (`http_error: HTTP 503 …`)
+        // or bare (`… returned HTTP 500`, reqwest's
+        // `(500 Internal Server Error)`).
+        for code in ["500", "502", "503", "504"] {
+            if lower.contains(&format!("http {code}")) || lower.contains(&format!("({code} ")) {
+                return ErrorKind::ServerError;
+            }
+        }
+        if lower.contains("http_error") || lower.contains("http ") {
+            return ErrorKind::HttpError;
+        }
+        ErrorKind::Unknown
+    }
+}
+
+/// Extract the human-readable error text from a provider result
+/// payload whose `ok` is false: the `error` field as a string, or
+/// an error object's `message` (falling back to its `kind`).
+fn payload_error_message(result: &Value) -> Option<String> {
+    match result.get("error")? {
+        Value::String(s) => Some(s.clone()),
+        Value::Object(map) => map
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                map.get("kind")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }),
+        _ => None,
+    }
+}
+
 /// The outcome of one engine inside a multi-engine search. Failures
 /// are kept per engine: one engine failing never fails the others.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -294,6 +395,9 @@ pub struct EngineOutcome {
     pub items: Vec<SearchItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The failure's machine-readable kind; `None` on success.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<ErrorKind>,
 }
 
 /// The outcome of one provider inside a multi-provider shopping
@@ -307,6 +411,9 @@ pub struct ShopOutcome {
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The failure's machine-readable kind; `None` on success.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<ErrorKind>,
 }
 
 /// The outcome of one provider inside a multi-provider media
@@ -320,6 +427,9 @@ pub struct MediaOutcome {
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The failure's machine-readable kind; `None` on success.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<ErrorKind>,
 }
 
 /// The outcome of one provider inside a multi-provider article
@@ -333,6 +443,9 @@ pub struct ArticleOutcome {
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The failure's machine-readable kind; `None` on success.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<ErrorKind>,
 }
 
 /// The outcome of a category-wide search ([`Client::search_category`]).
@@ -586,13 +699,18 @@ impl Client {
                 ok: true,
                 items,
                 error: None,
+                error_kind: None,
             },
-            Err(e) => EngineOutcome {
-                engine,
-                ok: false,
-                items: Vec::new(),
-                error: Some(format!("{e:#}")),
-            },
+            Err(e) => {
+                let message = format!("{e:#}");
+                EngineOutcome {
+                    engine,
+                    ok: false,
+                    items: Vec::new(),
+                    error_kind: Some(ErrorKind::from_error_message(&message)),
+                    error: Some(message),
+                }
+            }
         }
     }
 
@@ -739,18 +857,30 @@ impl Client {
         let mut out = Vec::with_capacity(ShopProvider::all().len());
         for &provider in ShopProvider::all() {
             let outcome = match self.search_products(provider, query, limit).await {
-                Ok(result) => ShopOutcome {
-                    provider,
-                    ok: result.get("ok").and_then(Value::as_bool).unwrap_or(true),
-                    result: Some(result),
-                    error: None,
-                },
-                Err(e) => ShopOutcome {
-                    provider,
-                    ok: false,
-                    result: None,
-                    error: Some(format!("{e:#}")),
-                },
+                Ok(result) => {
+                    let ok = result.get("ok").and_then(Value::as_bool).unwrap_or(true);
+                    let error = if ok { None } else { payload_error_message(&result) };
+                    let error_kind = error
+                        .as_deref()
+                        .map(ErrorKind::from_error_message);
+                    ShopOutcome {
+                        provider,
+                        ok,
+                        result: Some(result),
+                        error,
+                        error_kind,
+                    }
+                }
+                Err(e) => {
+                    let message = format!("{e:#}");
+                    ShopOutcome {
+                        provider,
+                        ok: false,
+                        result: None,
+                        error_kind: Some(ErrorKind::from_error_message(&message)),
+                        error: Some(message),
+                    }
+                }
             };
             out.push(outcome);
         }
@@ -848,18 +978,30 @@ impl Client {
         let mut out = Vec::with_capacity(MediaProvider::all().len());
         for &provider in MediaProvider::all() {
             let outcome = match self.search_media(provider, query, limit).await {
-                Ok(result) => MediaOutcome {
-                    provider,
-                    ok: result.get("ok").and_then(Value::as_bool).unwrap_or(true),
-                    result: Some(result),
-                    error: None,
-                },
-                Err(e) => MediaOutcome {
-                    provider,
-                    ok: false,
-                    result: None,
-                    error: Some(format!("{e:#}")),
-                },
+                Ok(result) => {
+                    let ok = result.get("ok").and_then(Value::as_bool).unwrap_or(true);
+                    let error = if ok { None } else { payload_error_message(&result) };
+                    let error_kind = error
+                        .as_deref()
+                        .map(ErrorKind::from_error_message);
+                    MediaOutcome {
+                        provider,
+                        ok,
+                        result: Some(result),
+                        error,
+                        error_kind,
+                    }
+                }
+                Err(e) => {
+                    let message = format!("{e:#}");
+                    MediaOutcome {
+                        provider,
+                        ok: false,
+                        result: None,
+                        error_kind: Some(ErrorKind::from_error_message(&message)),
+                        error: Some(message),
+                    }
+                }
             };
             out.push(outcome);
         }
@@ -913,18 +1055,30 @@ impl Client {
         let mut out = Vec::with_capacity(ArticleProvider::all().len());
         for &provider in ArticleProvider::all() {
             let outcome = match self.search_articles(provider, query, limit).await {
-                Ok(result) => ArticleOutcome {
-                    provider,
-                    ok: result.get("ok").and_then(Value::as_bool).unwrap_or(true),
-                    result: Some(result),
-                    error: None,
-                },
-                Err(e) => ArticleOutcome {
-                    provider,
-                    ok: false,
-                    result: None,
-                    error: Some(format!("{e:#}")),
-                },
+                Ok(result) => {
+                    let ok = result.get("ok").and_then(Value::as_bool).unwrap_or(true);
+                    let error = if ok { None } else { payload_error_message(&result) };
+                    let error_kind = error
+                        .as_deref()
+                        .map(ErrorKind::from_error_message);
+                    ArticleOutcome {
+                        provider,
+                        ok,
+                        result: Some(result),
+                        error,
+                        error_kind,
+                    }
+                }
+                Err(e) => {
+                    let message = format!("{e:#}");
+                    ArticleOutcome {
+                        provider,
+                        ok: false,
+                        result: None,
+                        error_kind: Some(ErrorKind::from_error_message(&message)),
+                        error: Some(message),
+                    }
+                }
             };
             out.push(outcome);
         }

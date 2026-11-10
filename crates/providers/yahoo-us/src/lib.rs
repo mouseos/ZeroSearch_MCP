@@ -228,7 +228,30 @@ impl YahooUsSearchClient {
     }
 
     /// GET a Yahoo page as text, with the headers their edge expects.
+    ///
+    /// When the direct fetch fails, the request is retried once
+    /// through the helper process (see [`helper`]) if the helper is
+    /// installed: Yahoo's edge answers `search.yahoo.com` with a
+    /// bare HTTP 500 to plain HTTP clients while serving real
+    /// browsers (Z12 diagnosis, measured from two egresses), which
+    /// is the same refusal the image host has always shown. Where
+    /// the direct fetch works it is used untouched, and where no
+    /// helper is installed the original error surfaces unchanged.
     pub(crate) async fn get_html(&self, url: &str, referer: &str) -> Result<String> {
+        match self.get_html_direct(url, referer).await {
+            Ok(html) => Ok(html),
+            Err(direct_err) => {
+                if helper::helper_path().is_some() {
+                    if let Ok(html) = helper::fetch_page_html(url).await {
+                        return Ok(html);
+                    }
+                }
+                Err(direct_err)
+            }
+        }
+    }
+
+    async fn get_html_direct(&self, url: &str, referer: &str) -> Result<String> {
         let resp = self
             .http
             .get(url)
@@ -256,6 +279,24 @@ impl YahooUsSearchClient {
     }
 
     pub(crate) async fn get_json(&self, url: &str, referer: &str) -> Result<serde_json::Value> {
+        match self.get_json_direct(url, referer).await {
+            Ok(value) => Ok(value),
+            Err(direct_err) => {
+                // Same helper fallback as get_html: the JSON
+                // endpoints sit behind the same edge.
+                if helper::helper_path().is_some() {
+                    if let Ok(body) = helper::fetch_page_html(url).await {
+                        if let Ok(value) = serde_json::from_str(&body) {
+                            return Ok(value);
+                        }
+                    }
+                }
+                Err(direct_err)
+            }
+        }
+    }
+
+    async fn get_json_direct(&self, url: &str, referer: &str) -> Result<serde_json::Value> {
         let resp = self
             .http
             .get(url)

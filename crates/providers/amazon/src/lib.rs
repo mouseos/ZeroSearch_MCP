@@ -145,7 +145,10 @@ pub struct SearchParams {
     pub department: String,
     /// Category node id → rh `n:`.
     pub category_node: String,
-    /// Price band in JPY → rh `p_36:<min>-<max>`.
+    /// Price band in JPY → rh `p_36:<min>-<max>`. The wire
+    /// values are the JPY amounts ×100 (the refinement is in
+    /// 1/100-yen units — measured live: an unscaled 3000-5000 band
+    /// behaves as ¥30–¥50 and returns items priced in that range).
     pub price_min: Option<i64>,
     pub price_max: Option<i64>,
     /// Prime-eligible only → rh `p_85`.
@@ -182,14 +185,28 @@ pub fn build_rh(params: &SearchParams) -> String {
         parts.push(format!("n:{}", params.category_node));
     }
     if params.price_min.is_some() || params.price_max.is_some() {
+        // p_36 is denominated in 1/100 yen: the web UI's own
+        // refinement values scale the displayed JPY band by 100.
+        // Sending the raw JPY amounts made the server filter to a
+        // band 100× lower than intended (Z12: a 3000-5000 search
+        // returned a ¥43 item; with Prime added it returned none).
         parts.push(format!(
             "p_36:{}-{}",
-            params.price_min.unwrap_or(0),
-            params.price_max.unwrap_or(i32::MAX as i64)
+            params.price_min.map(|v| v.saturating_mul(100)).unwrap_or(0),
+            params
+                .price_max
+                .map(|v| v.saturating_mul(100))
+                .unwrap_or(i32::MAX as i64)
         ));
     }
     if params.prime_only {
-        parts.push("p_85:2470954011".into());
+        // The Prime facet value is marketplace-specific: the
+        // search page amazon.co.jp itself serves carries
+        // p_85:8070706051. The previously used 2470954011 is the
+        // .com value; on .co.jp it filters by an unrelated facet,
+        // which is why Prime alone returned items but Prime
+        // combined with a price band returned none (Z12).
+        parts.push("p_85:8070706051".into());
     }
     if params.in_stock_only {
         parts.push("p_n_availability:2494232051".into());
@@ -336,6 +353,18 @@ pub fn is_block_page(html: &str) -> bool {
     html.contains("validateCaptcha")
         || html.contains("Robot Check")
         || html.contains("ロボット") && html.contains("チェック")
+}
+
+/// Whether a redirect chain (all response header lines, in order)
+/// passes through Amazon's sign-in page. The reviews route answers
+/// guest sessions with `302 Location: …/ap/signin?…`; the client
+/// follows the redirect, so the chain is the only place the
+/// detour remains visible. Pure; unit-tested.
+pub fn redirected_to_signin(headers: &[String]) -> bool {
+    headers.iter().any(|h| {
+        let lower = h.to_lowercase();
+        lower.starts_with("location:") && lower.contains("/ap/signin")
+    })
 }
 
 /// Parse a search results page. Pure; unit-tested against the
@@ -635,6 +664,13 @@ impl AmazonClient {
     }
 
     async fn get_html(&self, url: &str) -> Result<String> {
+        Ok(self.get_html_full(url).await?.0)
+    }
+
+    /// [`Self::get_html`] plus the response header lines of the
+    /// whole redirect chain (the fetch follows redirects, so the
+    /// chain is how a sign-in redirect is visible at all).
+    async fn get_html_full(&self, url: &str) -> Result<(String, Vec<String>)> {
         let cookie = self.cookie_header();
         let url = url.to_string();
         let dump_url = url.clone();
@@ -652,7 +688,7 @@ impl AmazonClient {
         if !(200..300).contains(&status) {
             return Err(anyhow!("amazon returned HTTP {status}"));
         }
-        Ok(html)
+        Ok((html, headers))
     }
 
     pub async fn search_products(&self, params: SearchParams) -> Result<SearchResult> {
@@ -736,10 +772,24 @@ impl AmazonClient {
     /// app has no review API; the page route is the candidate
     /// the round-1 analysis identified). Returns the standard
     /// result JSON with a `reviews` array.
+    ///
+    /// Guest state, measured 2026-11-10: the page answers with a
+    /// 302 redirect to `/ap/signin`, so reviews are not served to
+    /// guest sessions at all. That case is reported as its own
+    /// error (not as a parse failure) via the redirect chain.
     pub async fn get_reviews(&self, product: &str, page: i32) -> Result<serde_json::Value> {
         let asin = extract_asin(product);
         let url = build_reviews_url(&asin, page);
-        let html = self.get_html(&url).await?;
+        let (html, headers) = self.get_html_full(&url).await?;
+        if redirected_to_signin(&headers) {
+            return Ok(serde_json::json!({
+                "provider": "amazon",
+                "ok": false,
+                "asin": asin,
+                "page": page,
+                "error": "amazon reviews: the reviews page redirected to sign-in; reviews are not available to guest sessions",
+            }));
+        }
         if is_block_page(&html) {
             return Ok(serde_json::json!({
                 "provider": "amazon",
@@ -919,7 +969,7 @@ mod tests {
         });
         assert_eq!(
             rh,
-            "p_36:1000-5000,p_85:2470954011,p_72:2661618011,p_89:Anker"
+            "p_36:100000-500000,p_85:8070706051,p_72:2661618011,p_89:Anker"
         );
     }
 
@@ -1212,10 +1262,35 @@ mod tests {
         assert!(s["count"].as_u64().unwrap() > 0);
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         let r = client.get_reviews("B0FNRS5WB2", 1).await.unwrap();
-        assert_eq!(r["ok"], serde_json::json!(true), "{r}");
-        assert!(r["count"].as_u64().unwrap() > 0, "{r}");
-        assert!(r["reviews"][0]["body"]
-            .as_str()
-            .is_some_and(|b| !b.is_empty()));
+        if r["ok"] == serde_json::json!(true) {
+            assert!(r["count"].as_u64().unwrap() > 0, "{r}");
+            assert!(r["reviews"][0]["body"]
+                .as_str()
+                .is_some_and(|b| !b.is_empty()));
+        } else {
+            // Guest sessions are currently redirected to sign-in
+            // (measured 2026-11-10: GET /product-reviews/<ASIN>
+            // answers 302 with Location: /ap/signin?…). Reviews
+            // cannot be served to guests; what this test pins is
+            // that the provider reports exactly that, instead of
+            // the old misleading "no review data" parse failure.
+            let err = r["error"].as_str().unwrap_or("");
+            assert!(
+                err.contains("redirected to sign-in"),
+                "unexpected reviews error: {r}"
+            );
+        }
+    }
+
+    #[test]
+    fn signin_redirect_is_detected_in_the_chain() {
+        let chain = vec![
+            "HTTP/1.1 302 Found".to_string(),
+            "location: https://www.amazon.co.jp/ap/signin?openid.return_to=x".to_string(),
+            "HTTP/1.1 200 OK".to_string(),
+        ];
+        assert!(redirected_to_signin(&chain));
+        let plain = vec!["HTTP/1.1 200 OK".to_string()];
+        assert!(!redirected_to_signin(&plain));
     }
 }

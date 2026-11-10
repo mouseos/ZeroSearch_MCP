@@ -692,10 +692,22 @@ mod tests {
         assert!(resp["result"]["isError"].is_null(), "{resp}");
         let parsed = result_json(&resp);
         assert_eq!(parsed["ok"], json!(true), "{parsed}");
-        assert!(
-            !parsed["suggestions"].as_array().unwrap().is_empty(),
-            "no suggestions: {parsed}"
-        );
+        // All three of the app's suggestion systems are retired
+        // server-side (Z12, measured 2026-11-10: classic sug and
+        // SugRec answer HTTP 404 — as they already did in the
+        // 2026-10 analysis — and the AI input box answers errno 0
+        // with data:null for every query). The tool's contract in
+        // that state is an honest degradation: ok with per-system
+        // failures recorded in `systems`. If Baidu revives a
+        // system, suggestions flow again and this passes the other
+        // way; what must never happen is a silent empty success or
+        // a hard failure of the whole call.
+        let suggestions = parsed["suggestions"].as_array().unwrap();
+        if suggestions.is_empty() {
+            let systems = &parsed["systems"];
+            assert_eq!(systems["classic"]["ok"], json!(false), "{parsed}");
+            assert_eq!(systems["recommendations"]["ok"], json!(false), "{parsed}");
+        }
     }
 
     #[tokio::test]
@@ -769,11 +781,24 @@ mod tests {
     #[tokio::test]
     #[ignore = "live network test; needs an assembled goofish-runtime bundle and a minutes-long harness boot"]
     async fn e2e_goofish_search_products() {
-        e2e_search_tool(
+        // Goofish's payload is its native envelope: results live
+        // under data.items, not the top-level items the shared
+        // assert_search_ok expects (measured live; the tool itself
+        // returns ok with results). Assert that real shape.
+        let p = providers();
+        let resp = call_tool(
+            &p,
             "goofish_search_products",
             json!({ "query": "耳机", "limit": 3 }),
         )
         .await;
+        assert!(resp["result"]["isError"].is_null(), "{resp}");
+        let parsed = result_json(&resp);
+        assert_eq!(parsed["ok"], json!(true), "{parsed}");
+        assert!(
+            !parsed["data"]["items"].as_array().unwrap().is_empty(),
+            "no items: {parsed}"
+        );
     }
 
     #[tokio::test]

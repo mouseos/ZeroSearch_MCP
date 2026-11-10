@@ -1,8 +1,13 @@
-//! Fetching image-search pages through the helper process.
+//! Fetching Yahoo pages through the helper process.
 //!
-//! Yahoo's image host refuses plain HTTP clients (HTTP 500, empty
-//! body) while answering real browsers, so image pages are fetched
-//! by `zero-search-yahoo-us-image-helper`, a small companion binary
+//! Yahoo's edge refuses plain HTTP clients on some hosts (HTTP 500,
+//! empty body) while answering real browsers — measured first on
+//! the image host, and on `search.yahoo.com` itself in the Z12
+//! diagnosis (both egresses tested, plain clients always 500, the
+//! helper's browser-grade request always 200). Pages are therefore
+//! fetched — image pages unconditionally, the other surfaces as a
+//! fallback when the direct fetch fails — by
+//! `zero-search-yahoo-us-image-helper`, a small companion binary
 //! whose browser-grade HTTP client (wreq, Firefox emulation profile)
 //! reproduces the browser request fingerprint. That client's TLS
 //! stack (BoringSSL) cannot be linked into the main server binary
@@ -81,7 +86,12 @@ fn decode_response(line: &str) -> Result<(u16, String)> {
 /// (the shipped layout — the installer ZIP and the MCPB both place
 /// it beside the server), then the executable's parent directory
 /// (cargo puts test binaries in `deps/`, one level deeper), then
-/// the `target/` directories (development fallback).
+/// the workspace `target/` directories resolved from this crate's
+/// manifest directory (independent of the process working
+/// directory — `cargo test` runs providers from their crate root,
+/// where the old working-directory-relative candidates never
+/// matched), then the working-directory-relative `target/`
+/// directories (development fallback).
 pub fn helper_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var(HELPER_ENV) {
         let p = p.trim();
@@ -96,6 +106,21 @@ pub fn helper_path() -> Option<PathBuf> {
             if let Some(parent) = dir.parent() {
                 candidates.push(parent.join(HELPER_NAME));
             }
+        }
+    }
+    // This crate lives at crates/providers/yahoo-us, so the
+    // workspace root is three ancestors up from the manifest dir.
+    if let Some(root) = PathBuf::from(env!("CARGO_MANIFEST_DIR")).ancestors().nth(3) {
+        for profile in ["debug", "release"] {
+            candidates.push(root.join("target").join(profile).join(HELPER_NAME));
+            candidates.push(
+                root.join("crates")
+                    .join("helpers")
+                    .join("yahoo-us-image")
+                    .join("target")
+                    .join(profile)
+                    .join(HELPER_NAME),
+            );
         }
     }
     for profile in ["debug", "release"] {
@@ -118,6 +143,27 @@ pub fn helper_path() -> Option<PathBuf> {
 /// return its HTML. HTTP error statuses are reported with the same
 /// wording the rest of this crate's error mapping expects.
 pub(crate) async fn fetch_image_html(url: &str) -> Result<String> {
+    let (status, html) = run_helper(url).await?;
+    if !(200..300).contains(&status) {
+        return Err(anyhow!("yahoo us image search returned HTTP {status}"));
+    }
+    Ok(html)
+}
+
+/// Fetch one page through the helper process as the fallback for a
+/// failed direct fetch (see [`crate::YahooUsSearchClient::get_html`]).
+/// Same protocol as [`fetch_image_html`]; only the error wording
+/// differs.
+pub(crate) async fn fetch_page_html(url: &str) -> Result<String> {
+    let (status, html) = run_helper(url).await?;
+    if !(200..300).contains(&status) {
+        return Err(anyhow!("yahoo us page fetch returned HTTP {status}"));
+    }
+    Ok(html)
+}
+
+/// Run the helper for one URL and return `(status, body)`.
+async fn run_helper(url: &str) -> Result<(u16, String)> {
     let path = helper_path().ok_or_else(|| {
         anyhow!(
             "image helper not found (expected {HELPER_NAME} next to the server binary); \
@@ -144,11 +190,7 @@ pub(crate) async fn fetch_image_html(url: &str) -> Result<String> {
         .context("image helper process failed")?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let line = stdout.lines().last().unwrap_or("");
-    let (status, html) = decode_response(line)?;
-    if !(200..300).contains(&status) {
-        return Err(anyhow!("yahoo us image search returned HTTP {status}"));
-    }
-    Ok(html)
+    decode_response(line)
 }
 
 #[cfg(test)]
