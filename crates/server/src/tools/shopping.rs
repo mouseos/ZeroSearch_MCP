@@ -428,7 +428,7 @@ pub fn tool_definitions() -> Vec<Value> {
             },
             "required": ["query"]
         })),
-        tool_def("mercari_get_product", "Fetch normalized Mercari item detail by item id or item URL through the APK-derived JSON endpoint. The item carries is_auction and, for auction listings, an auction object (highest_bid, initial_price, total_bids, expected_end_time, state).", json!({
+        tool_def("mercari_get_product", "Fetch normalized Mercari item detail by item id or item URL through the APK-derived JSON endpoint. Mercari Shops products (item_type beyond, /shops/product/ URLs) are fetched from the Shops endpoint and normalized to the same shape, with item_type beyond and the shop in seller/shop. The item carries is_auction and, for auction listings, an auction object (highest_bid, initial_price, total_bids, expected_end_time, state).", json!({
             "type": "object",
             "properties": {
                 "product": {"type": "string", "description": "Item ID or URL"}

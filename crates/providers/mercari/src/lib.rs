@@ -15,6 +15,12 @@ const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 
 const SEARCH_ENDPOINT: &str = "/v2/entities:search";
 const ITEM_GET_ENDPOINT: &str = "/items/get";
+/// Mercari Shops (ITEM_TYPE_BEYOND) product detail. The personal
+/// `/items/get` endpoint rejects Shops ids with HTTP 400; the web
+/// frontend reads Shops products from this endpoint instead
+/// (live-verified 2026-11-13: same DPoP proof as the other endpoints,
+/// no login; without DPoP it answers 401).
+const SHOP_PRODUCT_ENDPOINT: &str = "/v1/marketplaces/shops/products";
 const ITEMS_GET_ENDPOINT: &str = "/items/get_items";
 const AUTOCOMPLETE_ENDPOINT: &str = "/services/bff/search/v1/autocomplete:search";
 const BRANDS_DATASET_ENDPOINT: &str = "/master/v2/datasets/item_brands";
@@ -128,6 +134,56 @@ fn item_url(id: &str) -> String {
     } else {
         format!("https://jp.mercari.com/item/{id}?afid={MERCARI_AFID}")
     }
+}
+
+/// Canonical page URL for a Mercari Shops product (live-verified
+/// 2026-11-13: `/item/<id>` 404s for Shops ids, `/shops/product/<id>`
+/// serves the product; the afid query is accepted there too).
+fn shops_url(id: &str) -> String {
+    if id.is_empty() {
+        String::new()
+    } else {
+        format!("https://jp.mercari.com/shops/product/{id}?afid={MERCARI_AFID}")
+    }
+}
+
+/// Page URL for an item whose type is known (search results carry it).
+fn product_url(id: &str, item_type: &str) -> String {
+    if item_type_label(item_type) == "beyond" {
+        shops_url(id)
+    } else {
+        item_url(id)
+    }
+}
+
+/// Classic personal-listing id: `m` followed by digits only.
+fn is_classic_item_id(id: &str) -> bool {
+    id.len() > 1 && id.starts_with('m') && id[1..].chars().all(|c| c.is_ascii_digit())
+}
+
+/// Which detail endpoint a `get_product` input should use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DetailRoute {
+    /// Personal listing (`/items/get`).
+    Personal,
+    /// Mercari Shops product (`/v1/marketplaces/shops/products/<id>`).
+    Shops,
+    /// Hash-format id with no URL hint: try Shops first (Shops ids are
+    /// 22-char base62; the personal endpoint rejects them with 400),
+    /// then fall back to the personal endpoint so a personal listing
+    /// with a hash-format id still resolves.
+    ShopsThenPersonal,
+}
+
+fn detail_route(product: &str, item_id: &str) -> DetailRoute {
+    let text = product.trim();
+    if text.contains("/shops/product/") {
+        return DetailRoute::Shops;
+    }
+    if text.contains("/item/") || is_classic_item_id(item_id) {
+        return DetailRoute::Personal;
+    }
+    DetailRoute::ShopsThenPersonal
 }
 
 fn to_int(v: &Value) -> Option<i64> {
@@ -434,9 +490,33 @@ impl MercariClient {
             anyhow::bail!("Could not find a Mercari item id in: {product}");
         }
 
+        let item = match detail_route(product, &item_id) {
+            DetailRoute::Personal => self.get_personal_product(&item_id).await?,
+            DetailRoute::Shops => self.get_shop_product(&item_id).await?,
+            DetailRoute::ShopsThenPersonal => match self.get_shop_product(&item_id).await {
+                Ok(item) => item,
+                Err(shops_err) => self
+                    .get_personal_product(&item_id)
+                    .await
+                    .map_err(|personal_err| {
+                        anyhow::anyhow!(
+                            "Mercari detail failed for {item_id} as a Shops product ({shops_err}) and as a personal listing ({personal_err})"
+                        )
+                    })?,
+            },
+        };
+
+        Ok(json!({
+            "provider": "mercari",
+            "ok": true,
+            "item": item,
+        }))
+    }
+
+    async fn get_personal_product(&self, item_id: &str) -> Result<Value> {
         let url = format!("{API_BASE}{ITEM_GET_ENDPOINT}");
         let params = [
-            ("id", item_id.as_str()),
+            ("id", item_id),
             ("include_item_attributes", "true"),
             ("include_product_page_component", "true"),
             ("include_non_ui_item_attributes", "true"),
@@ -467,13 +547,39 @@ impl MercariClient {
         } else {
             &envelope
         };
-        let item = normalize_item_detail(data);
+        Ok(normalize_item_detail(data))
+    }
 
-        Ok(json!({
-            "provider": "mercari",
-            "ok": true,
-            "item": item,
-        }))
+    /// Mercari Shops product detail. Live-verified 2026-11-13 with the
+    /// Surface Dock example `2JYr3K454Ks8q9XoSdCrhD`: HTTP 200 with the
+    /// same DPoP proof the personal endpoints use, 401 without it.
+    /// A personal (m-format) id answers 404 here, and a Shops id
+    /// answers 400 on the personal endpoint, so the two routes are
+    /// cleanly distinguishable.
+    async fn get_shop_product(&self, item_id: &str) -> Result<Value> {
+        let url = format!("{API_BASE}{SHOP_PRODUCT_ENDPOINT}/{item_id}");
+        let params = [("view", "FULL"), ("imageType", "JPEG")];
+
+        let dpop_proof = {
+            let full_url = reqwest::Url::parse_with_params(&url, &params)?;
+            let signer = self.dpop.lock().await;
+            signer.proof("GET", full_url.as_ref())
+        };
+
+        let resp = self
+            .client
+            .get(&url)
+            .query(&params)
+            .header("DPoP", dpop_proof)
+            .header("X-Platform", "web")
+            .header("Accept-Language", "ja-JP")
+            .header("Accept", "application/json")
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let data: Value = resp.json().await?;
+        Ok(normalize_shop_detail(&data))
     }
 
     pub async fn search_seller_products(
@@ -770,6 +876,15 @@ pub fn extract_item_id(value: &str) -> String {
     if digits_re.is_match(text) {
         return format!("m{text}");
     }
+    // URL with /shops/product/{id} path (Mercari Shops)
+    if text.contains("mercari.") && text.contains("/shops/product/") {
+        if let Some(seg) = text.rsplit("/shops/product/").next() {
+            let id = seg.split(&['?', '#', '/'][..]).next().unwrap_or("");
+            if id.len() >= 6 {
+                return id.to_string();
+            }
+        }
+    }
     // URL with /item/{hash} path
     if text.contains("mercari.") && text.contains("/item/") {
         if let Some(seg) = text.rsplit("/item/").next() {
@@ -875,7 +990,7 @@ fn normalize_search_item(item: &Value) -> Value {
     let mut out = json!({
         "product_id": id,
         "item_id": id,
-        "url": item_url(id),
+        "url": product_url(id, item_type),
         "title": item.get("title").or(item.get("name")),
         "name": item["name"],
         "price": to_int(&item["price"]),
@@ -952,6 +1067,151 @@ fn normalize_item_detail(data: &Value) -> Value {
         },
         "created": data["created"],
         "updated": data["updated"],
+        "source": "mercari",
+    })
+}
+
+/// Auction object of a Shops product (`productDetail.auction`).
+/// Shape from the web frontend (live JS, 2026-11-13): camelCase
+/// `{id, currentPrice, bidCount, state, expectedEndTime (ISO 8601),
+/// expectedWinnerPeriodEndTime, isWinnerUser}` — different keys from
+/// both personal shapes handled by [`normalize_auction`], so it gets
+/// its own tolerant mapping onto the same output keys. Shops auction
+/// products also carry the `"auction"` product tag.
+fn normalize_shop_auction(raw: &Value) -> Option<Value> {
+    let obj = raw.as_object()?;
+    if obj.is_empty() {
+        return None;
+    }
+    let get = |keys: &[&str]| {
+        keys.iter()
+            .find_map(|k| obj.get(*k))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let id = get(&["id"]).as_str().unwrap_or_default().to_string();
+    Some(json!({
+        "id": if id.is_empty() { Value::Null } else { json!(id) },
+        "highest_bid": to_int(&get(&["currentPrice", "highestBid", "highest_bid"])),
+        "initial_price": to_int(&get(&["initialPrice", "initial_price"])),
+        "total_bids": to_int(&get(&["bidCount", "totalBid", "total_bids", "total_bid"])),
+        "bid_deadline": get(&["bidDeadline", "bid_deadline"]),
+        "expected_end_time": get(&["expectedEndTime", "expected_end_time"]),
+        "start_time": to_int(&get(&["start_time"])),
+        "state": get(&["state"]),
+        "auction_type": get(&["auction_type"]),
+    }))
+}
+
+/// Normalize a Mercari Shops product detail response
+/// (`GET /v1/marketplaces/shops/products/<id>?view=FULL`) onto the
+/// same item shape [`normalize_item_detail`] produces for personal
+/// listings. Field inventory live-measured 2026-11-13
+/// (`2JYr3K454Ks8q9XoSdCrhD`, sold-out `2JYMUqKDrFoujjFfqYET2f`):
+/// the top level carries name/displayName/price (string)/thumbnail/
+/// productTags/createTime/updateTime; everything else lives under
+/// `productDetail` (photos, description, categories, brand, condition,
+/// shipping*, shop, variants, productStats, auction).
+fn normalize_shop_detail(data: &Value) -> Value {
+    let id = data["name"].as_str().unwrap_or_default();
+    let detail = &data["productDetail"];
+    let photos: Vec<&str> = detail["photos"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    let thumbnail = data["thumbnail"].as_str().unwrap_or_default();
+    let image = photos.first().copied().unwrap_or(thumbnail);
+
+    let tags: Vec<&str> = data["productTags"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    let variants = &detail["variants"];
+    let all_variants_sold_out = variants
+        .as_array()
+        .map(|arr| {
+            !arr.is_empty()
+                && arr
+                    .iter()
+                    .all(|v| v["soldOut"].as_bool() == Some(true))
+        })
+        .unwrap_or(false);
+    // Status vocabulary mirrors the search normalization labels.
+    // Sold-out Shops products carry the `sold_out` tag (live-verified);
+    // the variant check covers products whose tags lag behind stock.
+    let status = if tags.contains(&"sold_out") || all_variants_sold_out {
+        "sold_out"
+    } else if tags.contains(&"trading") {
+        "trading"
+    } else if tags.contains(&"admin_cancel") {
+        "admin_cancel"
+    } else if tags.contains(&"cancel") {
+        "cancel"
+    } else if tags.contains(&"stop") || tags.contains(&"dismissed") {
+        "stop"
+    } else {
+        "on_sale"
+    };
+
+    let auction = normalize_shop_auction(&detail["auction"])
+        .or_else(|| {
+            if tags.contains(&"auction") {
+                Some(json!({
+                    "id": Value::Null,
+                    "highest_bid": Value::Null,
+                    "initial_price": Value::Null,
+                    "total_bids": Value::Null,
+                    "bid_deadline": Value::Null,
+                    "expected_end_time": Value::Null,
+                    "start_time": Value::Null,
+                    "state": Value::Null,
+                    "auction_type": Value::Null,
+                }))
+            } else {
+                None
+            }
+        })
+        .filter(|_| tags.contains(&"auction") || detail["auction"].is_object());
+
+    let shop = &detail["shop"];
+    let stats = &detail["productStats"];
+
+    json!({
+        "product_id": id,
+        "item_id": id,
+        "url": shops_url(id),
+        "title": data["displayName"],
+        "description": detail["description"],
+        "price": to_int(&data["price"]),
+        "is_auction": auction.is_some(),
+        "auction": auction,
+        "status": status,
+        "item_type": "beyond",
+        "category": detail["categories"],
+        "condition": detail["condition"],
+        "brand": detail["brand"],
+        "photos": photos,
+        "thumbnails": if thumbnail.is_empty() { Vec::<&str>::new() } else { vec![thumbnail] },
+        "image": image,
+        "like_count": to_int(&stats["likesCount"]),
+        "comment_count": to_int(&stats["commentCount"]),
+        "seller": {
+            "id": shop["name"],
+            "name": shop["displayName"],
+            "is_shop": true,
+            "shop_score": shop["shopStats"]["score"],
+            "shop_review_count": to_int(&shop["shopStats"]["reviewCount"]),
+        },
+        "shop": shop,
+        "shipping": {
+            "from_area": detail["shippingFromArea"],
+            "method": detail["shippingMethod"],
+            "payer": detail["shippingPayer"],
+            "duration": detail["shippingDuration"],
+        },
+        "variants": variants,
+        "created": data["createTime"],
+        "updated": data["updateTime"],
         "source": "mercari",
     })
 }
@@ -1307,6 +1567,178 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn test_shops_url_and_route() {
+        assert_eq!(
+            shops_url("2JYr3K454Ks8q9XoSdCrhD"),
+            "https://jp.mercari.com/shops/product/2JYr3K454Ks8q9XoSdCrhD?afid=6694470352"
+        );
+        assert_eq!(shops_url(""), "");
+        assert_eq!(
+            product_url("2JYr3K454Ks8q9XoSdCrhD", "ITEM_TYPE_BEYOND"),
+            shops_url("2JYr3K454Ks8q9XoSdCrhD")
+        );
+        assert_eq!(
+            product_url("m1234567890", "ITEM_TYPE_MERCARI"),
+            item_url("m1234567890")
+        );
+        // Routing: classic ids and /item/ URLs stay on the personal
+        // endpoint; /shops/product/ URLs and bare hash ids go Shops.
+        assert_eq!(
+            detail_route("m1234567890", "m1234567890"),
+            DetailRoute::Personal
+        );
+        assert_eq!(
+            detail_route(
+                "https://jp.mercari.com/item/m1234567890",
+                "m1234567890"
+            ),
+            DetailRoute::Personal
+        );
+        assert_eq!(
+            detail_route(
+                "https://jp.mercari.com/shops/product/2JYr3K454Ks8q9XoSdCrhD",
+                "2JYr3K454Ks8q9XoSdCrhD"
+            ),
+            DetailRoute::Shops
+        );
+        assert_eq!(
+            detail_route("2JYr3K454Ks8q9XoSdCrhD", "2JYr3K454Ks8q9XoSdCrhD"),
+            DetailRoute::ShopsThenPersonal
+        );
+        // Shops product URLs must extract their id.
+        assert_eq!(
+            extract_item_id(
+                "https://jp.mercari.com/shops/product/2JYr3K454Ks8q9XoSdCrhD?source=shared_link"
+            ),
+            "2JYr3K454Ks8q9XoSdCrhD"
+        );
+    }
+
+    #[test]
+    fn test_normalize_shop_detail_on_sale() {
+        // Shape live-measured 2026-11-13 (2JYr3K454Ks8q9XoSdCrhD,
+        // trimmed: shopItems / seoMetadata omitted, they are unused).
+        let data = json!({
+            "name": "2JYr3K454Ks8q9XoSdCrhD",
+            "displayName": "Microsoft Surface Dock Model 1661 1749 ACアダプタ付 USB3.0 4ポート搭載",
+            "productTags": [],
+            "thumbnail": "https://assets.mercari-shops-static.com/-/small/plain/2JYr3K2fxrVH7ntQ6XdvDp.jpg@jpg",
+            "price": "500",
+            "createTime": "2026-10-30T04:59:35Z",
+            "updateTime": "2026-11-13T07:09:20Z",
+            "productDetail": {
+                "shop": {
+                    "name": "62NEEkLTb9qF47BbFThyeD",
+                    "displayName": "ストックルームメルカリ店",
+                    "shopStats": {"shopId": "62NEEkLTb9qF47BbFThyeD", "score": 5, "reviewCount": "1552"}
+                },
+                "photos": ["https://example.jp/1.jpg", "https://example.jp/2.jpg"],
+                "description": "通電のみ確認済。",
+                "categories": [{"categoryId": 3843, "displayName": "Windowsタブレット本体"}],
+                "brand": null,
+                "condition": {"displayName": "目立った傷や汚れなし", "description": "細かな使用感・傷・汚れはあるが、目立たない"},
+                "shippingMethod": {"shippingMethodId": 1, "displayName": "未定(出品者が手配)"},
+                "shippingPayer": {"shippingPayerId": 1, "displayName": "送料込み(出品者負担)", "code": "SELLER"},
+                "shippingDuration": {"shippingDurationId": 2, "displayName": "2〜3日で発送", "minDays": 2, "maxDays": 3},
+                "shippingFromArea": {"shippingAreaCode": "jp23", "displayName": "愛知県"},
+                "productStats": null,
+                "variants": [{"variantId": "2JYr3K48DuvdQmFcmNqhdZ", "quantity": "1", "soldOut": false}],
+                "auction": null
+            }
+        });
+        let out = normalize_shop_detail(&data);
+        assert_eq!(out["product_id"], "2JYr3K454Ks8q9XoSdCrhD");
+        assert_eq!(out["item_type"], "beyond");
+        assert!(out["url"]
+            .as_str()
+            .unwrap()
+            .contains("/shops/product/2JYr3K454Ks8q9XoSdCrhD"));
+        assert_eq!(out["price"], 500);
+        assert_eq!(out["status"], "on_sale");
+        assert_eq!(out["is_auction"], false);
+        assert!(out["auction"].is_null());
+        assert_eq!(out["photos"].as_array().unwrap().len(), 2);
+        assert_eq!(out["image"], "https://example.jp/1.jpg");
+        assert_eq!(out["condition"]["displayName"], "目立った傷や汚れなし");
+        assert_eq!(out["shipping"]["payer"]["code"], "SELLER");
+        assert_eq!(out["shipping"]["from_area"]["displayName"], "愛知県");
+        assert_eq!(out["seller"]["name"], "ストックルームメルカリ店");
+        assert_eq!(out["seller"]["shop_review_count"], 1552);
+        assert_eq!(out["description"], "通電のみ確認済。");
+    }
+
+    #[test]
+    fn test_normalize_shop_detail_sold_out() {
+        // Sold-out shape live-measured 2026-11-13 (2JYMUqKDrFoujjFfqYET2f):
+        // productTags carries "sold_out" and the only variant is soldOut.
+        let data = json!({
+            "name": "2JYMUqKDrFoujjFfqYET2f",
+            "displayName": "水筒",
+            "productTags": ["sold_out"],
+            "price": "3200",
+            "productDetail": {
+                "photos": ["https://example.jp/1.jpg"],
+                "variants": [{"variantId": "x", "quantity": "0", "soldOut": true}],
+                "auction": null
+            }
+        });
+        let out = normalize_shop_detail(&data);
+        assert_eq!(out["status"], "sold_out");
+        assert_eq!(out["price"], 3200);
+    }
+
+    #[test]
+    fn test_normalize_shop_detail_auction() {
+        // Shops auction shape from the web frontend: productDetail.auction
+        // is camelCase {id, currentPrice, bidCount, state, expectedEndTime}.
+        let data = json!({
+            "name": "2Jaaaaaaaaaaaaaaaaaaaa",
+            "displayName": "オークション商品",
+            "productTags": ["auction"],
+            "price": "1000",
+            "productDetail": {
+                "photos": [],
+                "variants": [],
+                "auction": {
+                    "id": "12345",
+                    "currentPrice": "2500",
+                    "bidCount": "3",
+                    "state": "AUCTION_STATE_ACTIVE",
+                    "expectedEndTime": "2026-11-20T11:11:00Z"
+                }
+            }
+        });
+        let out = normalize_shop_detail(&data);
+        assert_eq!(out["is_auction"], true);
+        assert_eq!(out["auction"]["id"], "12345");
+        assert_eq!(out["auction"]["highest_bid"], 2500);
+        assert_eq!(out["auction"]["total_bids"], 3);
+        assert_eq!(out["auction"]["state"], "AUCTION_STATE_ACTIVE");
+        assert_eq!(
+            out["auction"]["expected_end_time"],
+            "2026-11-20T11:11:00Z"
+        );
+    }
+
+    #[test]
+    fn test_normalize_search_item_beyond_url() {
+        let item = json!({
+            "id": "2JYr3K454Ks8q9XoSdCrhD",
+            "name": "Microsoft Surface Dock Model 1661",
+            "price": "500",
+            "status": "ITEM_STATUS_ON_SALE",
+            "itemType": "ITEM_TYPE_BEYOND"
+        });
+        let out = normalize_search_item(&item);
+        assert_eq!(out["item_type"], "beyond");
+        assert!(out["url"]
+            .as_str()
+            .unwrap()
+            .contains("/shops/product/2JYr3K454Ks8q9XoSdCrhD"));
+    }
+
+    #[test]
     fn test_filter_exclude_auction() {
         let items = vec![
             json!({"product_id": "a", "is_auction": true}),
@@ -1540,6 +1972,65 @@ mod tests {
         assert!(item.is_object(), "item must be object");
         assert!(!item["product_id"].as_str().unwrap_or("").is_empty());
         assert!(item["url"].as_str().unwrap().contains("mercari.com"));
+    }
+
+    #[tokio::test]
+    #[ignore = "live test: run with --ignored"]
+    async fn test_live_get_shop_product() {
+        let client = MercariClient::new();
+        // Find a live Shops (beyond) product through search, then fetch
+        // its detail — this is the route that used to fail with HTTP 400
+        // on the personal /items/get endpoint.
+        let search = client
+            .search_products(SearchParams {
+                query: "水筒".into(),
+                limit: 40,
+                item_types: "beyond".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(search["ok"], true, "search failed: {}", search);
+        let items = search["items"].as_array().unwrap();
+        let shop_item = items
+            .iter()
+            .find(|i| i["item_type"] == "beyond")
+            .expect("no beyond (Shops) item found in search results");
+        let pid = shop_item["product_id"].as_str().unwrap().to_string();
+        assert!(
+            shop_item["url"].as_str().unwrap().contains("/shops/product/"),
+            "search url for a Shops item must use /shops/product/: {}",
+            shop_item["url"]
+        );
+
+        let detail = client.get_product(&pid).await.unwrap();
+        assert_eq!(detail["ok"], true, "get_product FAILED for Shops {}: {}", pid, detail);
+        let item = &detail["item"];
+        assert_eq!(item["product_id"], pid);
+        assert_eq!(item["item_type"], "beyond");
+        assert!(item["url"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("/shops/product/{pid}")));
+        assert!(item["price"].as_i64().is_some(), "price missing: {:?}", item);
+        assert!(item["title"].is_string(), "title missing: {:?}", item);
+        assert!(item["photos"].is_array(), "photos missing: {:?}", item);
+        assert!(
+            ["on_sale", "sold_out", "trading", "stop", "cancel"].contains(
+                &item["status"].as_str().unwrap_or("")
+            ),
+            "unexpected status: {:?}",
+            item["status"]
+        );
+        assert!(item["is_auction"].is_boolean());
+
+        // The /shops/product/ URL form must resolve to the same product.
+        let by_url = client
+            .get_product(&format!("https://jp.mercari.com/shops/product/{pid}"))
+            .await
+            .unwrap();
+        assert_eq!(by_url["ok"], true, "get_product by Shops URL failed: {}", by_url);
+        assert_eq!(by_url["item"]["product_id"], pid);
     }
 
     #[tokio::test]
