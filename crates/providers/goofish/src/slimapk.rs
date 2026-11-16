@@ -27,34 +27,160 @@ pub(crate) trait RangeSource {
     fn read_at(&mut self, start: u64, len: u64) -> Result<Vec<u8>, String>;
 }
 
+/// Client addresses in mainland China sent as the "client" in the
+/// edge lookups below (Shanghai Telecom, Beijing Unicom, Guangdong
+/// Telecom). The CDN's DNS picks edges by the client's location;
+/// asking as a mainland client yields mainland edges.
+const MAINLAND_CLIENT_IPS: [&str; 3] = ["101.226.0.1", "61.135.0.1", "113.108.0.1"];
+
+/// At most this many mainland edges are tried before falling back
+/// to the system resolver.
+const MAX_EDGE_CANDIDATES: usize = 8;
+
 /// HTTP range reads (`Range: bytes=a-b`, answered with 206).
+///
+/// The package host is a CDN whose edges differ in which ranges they
+/// can serve: measured 2026-11-17 from a Japanese line, the edge the
+/// system resolver returned reset every range it had not cached
+/// (most of the package, including the SecurityGuard libraries),
+/// while some mainland-China edges served the same ranges, others
+/// reset them too or answered 302. So reads go first to mainland
+/// edges, looked up as a mainland client (Tencent's HTTPDNS, then
+/// DNS-over-HTTPS with an EDNS client subnet as a second source), one
+/// edge at a time until one serves the range, and only then through
+/// the system resolver. No edge address is hard-coded. TLS is still
+/// verified for the package host's name, and every piece used is
+/// checked against a pinned SHA-256 by the caller, so the edge choice
+/// cannot change what is accepted.
 pub(crate) struct HttpRanges {
-    client: reqwest::blocking::Client,
     url: String,
     size: u64,
+    /// Remaining connection targets, in order: mainland edges, then
+    /// `None` (the system resolver). The first entry is the current
+    /// one; a target that fails a read is dropped.
+    targets: Vec<Option<std::net::IpAddr>>,
+    client: Option<reqwest::blocking::Client>,
     /// Bytes fetched so far (for the log line).
     pub fetched: u64,
 }
 
+fn url_host(url: &str) -> Option<String> {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+}
+
+/// Parse a Tencent HTTPDNS answer (`ip;ip;...` optionally followed by
+/// `,ttl`).
+fn parse_httpdns(body: &str) -> Vec<std::net::IpAddr> {
+    body.trim()
+        .split(',')
+        .next()
+        .unwrap_or("")
+        .split(';')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect()
+}
+
+/// Parse the A records out of a DNS-over-HTTPS JSON answer.
+fn parse_doh_json(body: &str) -> Vec<std::net::IpAddr> {
+    let Ok(doc) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    doc.get("Answer")
+        .and_then(|a| a.as_array())
+        .map(|answers| {
+            answers
+                .iter()
+                .filter(|a| a.get("type").and_then(|t| t.as_u64()) == Some(1))
+                .filter_map(|a| a.get("data").and_then(|d| d.as_str()))
+                .filter_map(|d| d.parse().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Mainland-China edges for `host`, looked up as mainland clients.
+/// Lookup failures just yield fewer candidates.
+fn mainland_edges(host: &str) -> Vec<std::net::IpAddr> {
+    let Ok(client) = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+    else {
+        return Vec::new();
+    };
+    let get = |url: String| -> Option<String> {
+        client
+            .get(url)
+            .send()
+            .ok()
+            .filter(|r| r.status().is_success())
+            .and_then(|r| r.text().ok())
+    };
+    let mut edges: Vec<std::net::IpAddr> = Vec::new();
+    let mut push = |found: Vec<std::net::IpAddr>| {
+        for ip in found {
+            if !edges.contains(&ip) {
+                edges.push(ip);
+            }
+        }
+    };
+    for client_ip in MAINLAND_CLIENT_IPS {
+        if let Some(body) = get(format!("http://119.29.29.29/d?dn={host}&ip={client_ip}")) {
+            push(parse_httpdns(&body));
+        }
+    }
+    for client_ip in MAINLAND_CLIENT_IPS {
+        if let Some(body) = get(format!(
+            "https://dns.google/resolve?name={host}&type=A&edns_client_subnet={client_ip}/24"
+        )) {
+            push(parse_doh_json(&body));
+        }
+    }
+    edges.truncate(MAX_EDGE_CANDIDATES);
+    edges
+}
+
 impl HttpRanges {
     pub(crate) fn new(url: &str, size: u64) -> Result<Self, String> {
-        let client = reqwest::blocking::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(30))
-            .timeout(std::time::Duration::from_secs(300))
-            .build()
-            .map_err(|e| format!("cannot build the download client: {e}"))?;
+        let host = url_host(url).ok_or_else(|| format!("bad package URL: {url}"))?;
+        let mut targets: Vec<Option<std::net::IpAddr>> =
+            mainland_edges(&host).into_iter().map(Some).collect();
+        targets.push(None);
         Ok(Self {
-            client,
             url: url.to_string(),
             size,
+            targets,
+            client: None,
             fetched: 0,
         })
     }
 
-    fn fetch_once(&self, start: u64, len: u64) -> Result<Vec<u8>, String> {
+    /// The client for the current target, built on first use.
+    fn client(&mut self) -> Result<reqwest::blocking::Client, String> {
+        if let Some(c) = &self.client {
+            return Ok(c.clone());
+        }
+        let mut builder = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(300))
+            // A redirect means this edge does not serve the object;
+            // the next target is tried instead.
+            .redirect(reqwest::redirect::Policy::none());
+        if let (Some(Some(ip)), Some(host)) = (self.targets.first(), url_host(&self.url)) {
+            builder = builder.resolve(&host, std::net::SocketAddr::new(*ip, 443));
+        }
+        let client = builder
+            .build()
+            .map_err(|e| format!("cannot build the download client: {e}"))?;
+        self.client = Some(client.clone());
+        Ok(client)
+    }
+
+    fn fetch_once(&mut self, start: u64, len: u64) -> Result<Vec<u8>, String> {
         let end = start + len - 1;
-        let mut resp = self
-            .client
+        let client = self.client()?;
+        let mut resp = client
             .get(&self.url)
             .header(reqwest::header::RANGE, format!("bytes={start}-{end}"))
             .send()
@@ -88,19 +214,28 @@ impl RangeSource for HttpRanges {
             return Ok(Vec::new());
         }
         let mut last = String::new();
-        for attempt in 0..4 {
-            if attempt > 0 {
-                std::thread::sleep(std::time::Duration::from_secs(2 * attempt));
-            }
-            match self.fetch_once(start, len) {
-                Ok(body) => {
-                    self.fetched += len;
-                    return Ok(body);
+        loop {
+            // Two tries per target; the system resolver (the last
+            // target) gets two more with a pause, as before.
+            let tries = if self.targets.len() == 1 { 4 } else { 2 };
+            for attempt in 0..tries {
+                if attempt > 1 {
+                    std::thread::sleep(std::time::Duration::from_secs(2 * attempt));
                 }
-                Err(e) => last = e,
+                match self.fetch_once(start, len) {
+                    Ok(body) => {
+                        self.fetched += len;
+                        return Ok(body);
+                    }
+                    Err(e) => last = e,
+                }
             }
+            if self.targets.len() <= 1 {
+                return Err(last);
+            }
+            self.targets.remove(0);
+            self.client = None;
         }
-        Err(last)
     }
 }
 
@@ -422,6 +557,27 @@ mod tests {
         assert_eq!(sig2, sig);
         assert_eq!(kept2.len(), 2);
         assert_eq!(kept2[1].plain, b"CERT");
+    }
+
+    #[test]
+    fn edge_lookup_answers_parse() {
+        let ips = parse_httpdns("116.211.162.139;61.170.65.76,120
+");
+        assert_eq!(ips.len(), 2);
+        assert_eq!(ips[1].to_string(), "61.170.65.76");
+        assert!(parse_httpdns("").is_empty());
+        let doh = r#"{"Status":0,"Answer":[
+            {"name":"a.","type":5,"data":"b."},
+            {"name":"b.","type":1,"data":"61.170.65.76"},
+            {"name":"b.","type":1,"data":"116.211.162.139"}]}"#;
+        let ips = parse_doh_json(doh);
+        assert_eq!(ips.len(), 2);
+        assert_eq!(ips[0].to_string(), "61.170.65.76");
+        assert!(parse_doh_json("not json").is_empty());
+        assert_eq!(
+            url_host("https://imtt.dd.qq.com/16891/apk/X.apk").as_deref(),
+            Some("imtt.dd.qq.com")
+        );
     }
 
     #[test]

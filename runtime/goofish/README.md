@@ -62,7 +62,14 @@ on Linux, the platform equivalent elsewhere):
    requests: the ZIP central directory, the arm64 SecurityGuard
    libraries, `res/drawable/yw_1222.jpg`, `META-INF/CERT.RSA` and
    the APK Signing Block (about 3 MB), each checked against a
-   pinned SHA-256 (`provision.rs`);
+   pinned SHA-256 (`provision.rs`). The CDN's edges differ in what
+   they serve: from a Japanese line the edge the system resolver
+   returned reset every uncached range, while mainland-China edges
+   served them. Reads therefore go first to mainland edges, looked
+   up as a mainland client (Tencent HTTPDNS, then DNS-over-HTTPS
+   with an EDNS client subnet) and tried one by one, and fall back
+   to the system resolver last; no edge address is hard-coded and
+   TLS is verified for the package host's name (`slimapk.rs`);
 2. write the SecurityGuard `.so` libraries to `libs/`;
 3. stage the emulator rootfs: the directory skeleton, plus a slim
    package (~55 KB: the image, the certificate and the signing

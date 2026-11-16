@@ -1479,7 +1479,7 @@ pub fn extract_item_id(product: &str) -> Option<String> {
 
 /// application/x-www-form-urlencoded encoding (quote_plus semantics:
 /// unreserved bytes kept, space -> '+', everything else %XX).
-fn percent_encode(value: &str) -> String {
+pub(crate) fn percent_encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
         match byte {

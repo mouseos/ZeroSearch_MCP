@@ -87,7 +87,15 @@ pub fn build_form(plan: &RequestPlan, ctx: Option<&RuntimeContext>) -> Result<Va
     headers.insert("x-t".into(), json!(ctx.timestamp.clone().unwrap()));
     headers.insert("x-sign".into(), json!(ctx.sign.clone().unwrap()));
     headers.insert("x-appkey".into(), json!(PUBLIC_APP_KEY));
-    headers.insert("x-utdid".into(), json!(ctx.utdid.clone().unwrap()));
+    // URL-encoded: the gateway URL-decodes this header before it
+    // checks the signature, so a UTDID's base64 `+` arrived as a space
+    // and every request from such an identity (about half of all
+    // generated ones) was refused with FAIL_SYS_ILEGEL_SIGN. The
+    // signature input keeps the raw UTDID. Live-verified 2026-11-17.
+    headers.insert(
+        "x-utdid".into(),
+        json!(crate::percent_encode(ctx.utdid.as_deref().unwrap())),
+    );
     headers.insert("x-devid".into(), json!(ctx.device_id.clone().unwrap()));
     headers.insert("x-sid".into(), json!(ctx.sid.clone().unwrap_or_default()));
     headers.insert("x-uid".into(), json!(ctx.uid.clone().unwrap_or_default()));
@@ -183,6 +191,23 @@ mod tests {
         let form_fields = form["form"].as_object().unwrap();
         assert_eq!(form_fields.len(), 1);
         assert!(form_fields.contains_key("data"));
+    }
+
+    #[test]
+    fn utdid_header_is_url_encoded() {
+        let ctx = RuntimeContext {
+            sign: Some("s".into()),
+            timestamp: Some("1".into()),
+            utdid: Some("avuUv8if6IIDAP+NzWN2yn/N".into()),
+            device_id: Some(String::new()),
+            ..Default::default()
+        };
+        let plan = build_search_request(Some("x"), &SearchOptions::default()).unwrap();
+        let form = build_form(&plan, Some(&ctx)).unwrap();
+        assert_eq!(
+            form["headers"]["x-utdid"],
+            json!("avuUv8if6IIDAP%2BNzWN2yn%2FN")
+        );
     }
 
     #[test]
