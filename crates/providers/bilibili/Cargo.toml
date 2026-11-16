@@ -14,8 +14,11 @@ anyhow = { workspace = true }
 base64 = { workspace = true }
 rand = { workspace = true }
 bytes = "1"
-tokio-rustls = "0.26"
-rustls = { version = "0.23", features = ["ring", "tls12"] }
+# ring only (default features off): the rest of the library's TLS is
+# reqwest's rustls, which uses ring, so a second crypto backend
+# (aws-lc-rs and its C/cmake build) never enters the graph.
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "tls12", "std", "logging"] }
 webpki-roots = "0.26"
 tokio-socks = "0.5"
 hpack = "0.3"

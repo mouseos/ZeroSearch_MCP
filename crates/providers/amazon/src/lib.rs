@@ -11,18 +11,21 @@
 //! `amzn-app-ctxt` is deliberately not sent: live verification
 //! succeeded without it, and its value embeds device serials.
 //!
-//! The fetches themselves are made with libcurl (the `curl`
-//! crate): the same requests sent through a different HTTP
-//! client stack are answered with a robot check (HTTP 503),
-//! while libcurl's requests — the requests the curl tool makes —
-//! are served. Only this provider uses libcurl; the rest of the
-//! workspace stays on reqwest.
+//! The fetches are made with reqwest on the library's single TLS
+//! stack (rustls), over HTTP/1.1, with redirects followed by hand
+//! so every hop's headers (and its `Set-Cookie` values) are seen.
+//! Through v0.6.0 this provider used libcurl because a different
+//! client stack had been answered with a robot check; a rustls
+//! re-test on 2026-11-17 was served normally, so libcurl is now
+//! only an opt-in fallback behind the `curl` cargo feature (off by
+//! default — it would link a second TLS implementation).
 //!
 //! Note: Amazon serves these pages only to Japan-side access in
 //! practice; from other egress the request typically times out
 //! or is answered with a robot check.
 
 use anyhow::{anyhow, Result};
+#[cfg(feature = "curl")]
 use curl::easy::{Easy, HttpVersion, List};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -626,6 +629,8 @@ fn extract_description(html: &str) -> Option<String> {
 
 pub struct AmazonClient {
     cookies: Mutex<HashMap<String, String>>,
+    #[cfg(not(feature = "curl"))]
+    http: reqwest::Client,
 }
 
 impl AmazonClient {
@@ -641,6 +646,8 @@ impl AmazonClient {
         jar.insert("amzn-app-id".to_string(), COOKIE_APP_ID.to_string());
         Self {
             cookies: Mutex::new(jar),
+            #[cfg(not(feature = "curl"))]
+            http: build_http_client(),
         }
     }
 
@@ -674,10 +681,13 @@ impl AmazonClient {
         let cookie = self.cookie_header();
         let url = url.to_string();
         let dump_url = url.clone();
+        #[cfg(feature = "curl")]
         let (status, set_cookies, headers, html) =
             tokio::task::spawn_blocking(move || fetch_blocking(&url, &cookie))
                 .await
                 .map_err(|e| anyhow!("amazon fetch task failed: {e}"))??;
+        #[cfg(not(feature = "curl"))]
+        let (status, set_cookies, headers, html) = fetch_reqwest(&self.http, &url, &cookie).await?;
         dump_response(&dump_url, status, &headers, &html);
         self.store_response_cookies(&set_cookies);
         if status == 503 {
@@ -855,6 +865,90 @@ fn dump_response(url: &str, status: u32, headers: &[String], html: &str) {
     let _ = std::fs::write(dir.join(format!("{stamp}.html")), html);
 }
 
+/// The reqwest client for the default transport: rustls (the
+/// workspace's single TLS stack), HTTP/1.1 only (the request shape
+/// the provider is live-verified with), transparent gzip/brotli
+/// decoding, and no automatic redirects — [`fetch_reqwest`] follows
+/// them itself so the whole chain's headers are visible. Proxies
+/// come from the standard environment variables, as with libcurl.
+#[cfg(not(feature = "curl"))]
+fn build_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .http1_only()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(60))
+        .user_agent(USER_AGENT)
+        .build()
+        .expect("reqwest client with static configuration")
+}
+
+/// One fetch through reqwest, following up to 10 redirects. Returns
+/// the final HTTP status, every hop's `Set-Cookie` values, the
+/// response header lines of the whole chain (each hop's status line
+/// first, `Name: value` lines after — the same shape libcurl's
+/// header callback produced), and the final body as text. Cookies
+/// set by an intermediate hop are sent on the following hops.
+#[cfg(not(feature = "curl"))]
+async fn fetch_reqwest(
+    http: &reqwest::Client,
+    url: &str,
+    cookie_header: &str,
+) -> Result<(u32, Vec<String>, Vec<String>, String)> {
+    let mut url = reqwest::Url::parse(url)?;
+    let mut cookies: Vec<(String, String)> = cookie_header
+        .split("; ")
+        .filter_map(|p| p.split_once('='))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let mut set_cookies: Vec<String> = Vec::new();
+    let mut header_lines: Vec<String> = Vec::new();
+    for _hop in 0..=10 {
+        let cookie = cookies
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        let resp = http
+            .get(url.clone())
+            .header("Accept-Language", "ja-JP")
+            .header(
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            )
+            .header("Cookie", cookie)
+            .send()
+            .await?;
+        let status = resp.status();
+        header_lines.push(format!("HTTP/1.1 {}", status));
+        for (name, value) in resp.headers() {
+            let value = String::from_utf8_lossy(value.as_bytes()).into_owned();
+            header_lines.push(format!("{}: {}", name.as_str(), value));
+            if name == reqwest::header::SET_COOKIE {
+                if let Some((k, v)) = value.split(';').next().and_then(|f| f.split_once('=')) {
+                    let (k, v) = (k.trim().to_string(), v.trim().to_string());
+                    cookies.retain(|(ck, _)| *ck != k);
+                    cookies.push((k, v));
+                }
+                set_cookies.push(value);
+            }
+        }
+        if status.is_redirection() {
+            if let Some(loc) = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+            {
+                url = url.join(loc)?;
+                continue;
+            }
+        }
+        let html = resp.text().await?;
+        return Ok((status.as_u16() as u32, set_cookies, header_lines, html));
+    }
+    Err(anyhow!("amazon: too many redirects"))
+}
+
+#[cfg(feature = "curl")]
 /// One blocking libcurl fetch. Returns the final HTTP status,
 /// the response's `Set-Cookie` values, the response header lines,
 /// and the body as text.

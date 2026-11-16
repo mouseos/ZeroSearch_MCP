@@ -29,6 +29,7 @@ pub mod netdiag;
 pub mod parse;
 pub mod protocol;
 mod provision;
+mod slimapk;
 pub mod registry;
 pub mod requests;
 pub mod search_session;
@@ -47,6 +48,7 @@ use signing::{ServeSigner, SignRequest, Signer};
 use transport::Transport;
 
 pub use classify::*;
+pub use identity::{data_dir, set_data_dir};
 pub use protocol::{GATEWAY_FALLBACK, GATEWAY_PRIMARY, PUBLIC_APP_KEY};
 pub use requests::*;
 pub use search_session::SearchSession;
@@ -1372,8 +1374,8 @@ static PROVISION_ERROR: Mutex<Option<String>> = Mutex::new(None);
 /// command resolves but the distribution shipped a
 /// `goofish-payload/` next to the executable, assemble the runtime
 /// in the data directory (see the `provision` module) and resolve
-/// again. Synchronous and potentially slow (a ~269 MB download on
-/// the very first use); async callers run it on a blocking thread.
+/// again. Synchronous (a few MB of range requests on the very
+/// first use); async callers run it on a blocking thread.
 fn resolve_runtime_with_provision() -> RuntimeSettings {
     let runtime = resolve_runtime();
     if runtime.serve_command.is_some() || !provision::payload_available() {
@@ -1402,7 +1404,9 @@ pub fn runtime_configured() -> bool {
 /// Split a serve command into program + arguments, honouring single
 /// and double quotes and backslash escapes (shell-like tokenisation;
 /// no variable or glob expansion). An empty/blank command yields an
-/// empty vector.
+/// empty vector. On Windows a backslash is the path separator, not
+/// an escape (inside double quotes only `\"` escapes): the
+/// auto-discovered `D:\...\serve.cmd` must reach the spawn intact.
 fn split_serve_command(command: &str) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
@@ -1416,7 +1420,8 @@ fn split_serve_command(command: &str) -> Vec<String> {
                     quote = None;
                 } else if c == '\\' && q == '"' {
                     match chars.next() {
-                        Some(esc @ ('"' | '\\')) => current.push(esc),
+                        Some('"') => current.push('"'),
+                        Some('\\') if !cfg!(windows) => current.push('\\'),
                         Some(other) => {
                             current.push('\\');
                             current.push(other);
@@ -1432,7 +1437,7 @@ fn split_serve_command(command: &str) -> Vec<String> {
                     quote = Some(c);
                     has_current = true;
                 }
-                '\\' => {
+                '\\' if !cfg!(windows) => {
                     has_current = true;
                     match chars.next() {
                         Some(esc) => current.push(esc),
@@ -2216,10 +2221,25 @@ mod tests {
             split_serve_command("\"/opt/my dir/serve.sh\" 'arg one'"),
             vec!["/opt/my dir/serve.sh".to_string(), "arg one".to_string()]
         );
+        #[cfg(not(windows))]
         assert_eq!(
             split_serve_command(r"/opt/with\ space/serve.sh"),
             vec!["/opt/with space/serve.sh".to_string()]
         );
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                split_serve_command(r"D:\data\goofish-runtime\serve.cmd"),
+                vec![r"D:\data\goofish-runtime\serve.cmd".to_string()]
+            );
+            assert_eq!(
+                split_serve_command(r#""C:\Program Files\zs\serve.cmd" --x"#),
+                vec![
+                    r"C:\Program Files\zs\serve.cmd".to_string(),
+                    "--x".to_string()
+                ]
+            );
+        }
         assert!(split_serve_command("").is_empty());
         assert!(split_serve_command("   ").is_empty());
     }

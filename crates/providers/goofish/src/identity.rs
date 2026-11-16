@@ -216,10 +216,27 @@ pub fn check_bytes_ok(utdid: &str) -> bool {
 // Persistence (server data directory)
 // ---------------------------------------------------------------------------
 
-/// The server's per-user data directory:
-/// `$XDG_DATA_HOME/zero-search-mcp`, defaulting to
+/// Caller-chosen data directory (see [`set_data_dir`]).
+static DATA_DIR_OVERRIDE: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
+
+/// Set the directory Goofish keeps its state in (the generated
+/// identity under `goofish/` and the assembled signing runtime under
+/// `goofish-runtime/`). The path is used as-is — nothing is appended.
+/// `None` restores the default (`$XDG_DATA_HOME/zero-search-mcp`,
+/// else `$HOME/.local/share/zero-search-mcp`). Call it before the
+/// first Goofish call: a runtime already assembled or a harness
+/// already started keeps the directory it was set up with.
+pub fn set_data_dir(dir: Option<PathBuf>) {
+    *DATA_DIR_OVERRIDE.write().unwrap() = dir;
+}
+
+/// The data directory in effect: the [`set_data_dir`] value when
+/// one is set, else `$XDG_DATA_HOME/zero-search-mcp`, defaulting to
 /// `$HOME/.local/share/zero-search-mcp`.
-pub(crate) fn data_dir() -> Option<PathBuf> {
+pub fn data_dir() -> Option<PathBuf> {
+    if let Some(dir) = DATA_DIR_OVERRIDE.read().unwrap().clone() {
+        return Some(dir);
+    }
     let base = std::env::var("XDG_DATA_HOME")
         .ok()
         .filter(|s| !s.is_empty())
@@ -291,6 +308,20 @@ mod tests {
             assert!(is_valid_utdid(&u), "invalid utdid: {u}");
             assert!(check_bytes_ok(&u), "check bytes mismatch: {u}");
         }
+    }
+
+    #[test]
+    fn data_dir_override_is_used_verbatim_and_clearable() {
+        let _guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join("zs_goofish_data_dir_test");
+        set_data_dir(Some(dir.clone()));
+        assert_eq!(data_dir(), Some(dir.clone()));
+        assert_eq!(
+            identity_file(),
+            Some(dir.join("goofish").join("identity.json"))
+        );
+        set_data_dir(None);
+        assert_ne!(data_dir(), Some(dir));
     }
 
     #[test]

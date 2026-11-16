@@ -5,16 +5,21 @@ edition = "2021"
 
 [dependencies]
 tokio = { workspace = true }
-# The transport is libcurl (via the curl crate), not reqwest:
-# this service answers the curl tool's requests but robot-checks
-# other HTTP client stacks, so the fetches must be libcurl's own.
-curl = "0.4"
-# Feature control for the libcurl build lives on curl-sys:
-# `static-curl` builds the bundled libcurl from source and links
-# it statically, so every platform build behaves the same without
-# depending on a system libcurl installation.
-curl-sys = { version = "0.4", features = ["static-curl"] }
+# The transport is reqwest on the workspace's single rustls stack
+# (live-verified against amazon.co.jp, 2026-11-17). libcurl is kept
+# only as an opt-in fallback transport behind the `curl` feature,
+# off by default, so the default build links no second TLS stack.
+reqwest = { workspace = true }
+curl = { version = "0.4", optional = true }
+# `static-curl` builds the bundled libcurl from source and links it
+# statically, so a `curl`-feature build behaves the same everywhere.
+curl-sys = { version = "0.4", features = ["static-curl"], optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 regex = { workspace = true }
 anyhow = { workspace = true }
+
+[features]
+default = []
+# Use libcurl instead of reqwest for this provider's fetches.
+curl = ["dep:curl", "dep:curl-sys"]

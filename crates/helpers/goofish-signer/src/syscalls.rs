@@ -49,10 +49,20 @@ fn err(code: i64) -> u64 {
 }
 
 pub fn guest_to_host(m: &Machine, guest_path: &str) -> String {
-    if guest_path.starts_with('/') {
+    let joined = if guest_path.starts_with('/') {
         format!("{}{}", m.rootfs, guest_path)
     } else {
         format!("{}/{}", m.rootfs, guest_path)
+    };
+    // On Windows the rootfs is canonicalised to a verbatim `\\?\`
+    // path, in which `/` is not a separator: every guest path joined
+    // with `/` failed to open (SG init then failed with
+    // SEC_ERROR_INIT_PARSE_USER_CONFIG_ERROR, code 125, because its
+    // own package could not be read).
+    if cfg!(windows) {
+        joined.replace('/', "\\")
+    } else {
+        joined
     }
 }
 
