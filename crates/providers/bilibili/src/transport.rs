@@ -32,19 +32,24 @@ pub enum Egress {
 }
 
 fn tls_config() -> Arc<rustls::ClientConfig> {
-    // The dependency tree can enable more than one rustls crypto backend;
-    // pin the ring provider explicitly so no auto-detection is needed.
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-    });
-    let mut roots = rustls::RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let mut config = rustls::ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    config.alpn_protocols = vec![b"h2".to_vec()];
-    Arc::new(config)
+    // Built once and shared: the root store and config were rebuilt on
+    // every gRPC call. The ring provider is passed explicitly instead
+    // of being installed as the process-wide default, which an
+    // embedding application may want to choose itself.
+    static CONFIG: std::sync::LazyLock<Arc<rustls::ClientConfig>> =
+        std::sync::LazyLock::new(|| {
+            let mut roots = rustls::RootCertStore::empty();
+            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            let provider = Arc::new(rustls::crypto::ring::default_provider());
+            let mut config = rustls::ClientConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()
+                .expect("ring supports the default TLS versions")
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            config.alpn_protocols = vec![b"h2".to_vec()];
+            Arc::new(config)
+        });
+    CONFIG.clone()
 }
 
 // HTTP/2 frame types.
