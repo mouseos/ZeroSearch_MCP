@@ -447,7 +447,14 @@ pub fn normalize_reviews_response(body: &Value, seller_id: &str, page: i32, _lim
 pub struct MercariClient {
     client: Client,
     dpop: Arc<Mutex<DpopSigner>>,
+    /// Master datasets (brands, categories) with their fetch time. Both
+    /// brand and category search filter a whole dataset client-side;
+    /// it was downloaded on every call and thrown away.
+    datasets: Mutex<std::collections::HashMap<&'static str, (std::time::Instant, Arc<Value>)>>,
 }
+
+/// How long a downloaded master dataset is reused.
+const DATASET_TTL: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
 
 impl MercariClient {
     pub fn new() -> Self {
@@ -459,7 +466,22 @@ impl MercariClient {
                 .build()
                 .expect("failed to build HTTP client"),
             dpop: Arc::new(Mutex::new(DpopSigner::new())),
+            datasets: Mutex::new(std::collections::HashMap::new()),
         }
+    }
+
+    /// A master dataset, from the cache while it is younger than
+    /// [`DATASET_TTL`]. Failed downloads are not cached.
+    async fn dataset(&self, endpoint: &'static str) -> Result<Arc<Value>> {
+        let mut cache = self.datasets.lock().await;
+        if let Some((at, value)) = cache.get(endpoint) {
+            if at.elapsed() < DATASET_TTL {
+                return Ok(value.clone());
+            }
+        }
+        let value = Arc::new(self.get_json(endpoint).await?);
+        cache.insert(endpoint, (std::time::Instant::now(), value.clone()));
+        Ok(value)
     }
 
     pub async fn search_products(&self, params: SearchParams) -> Result<Value> {
@@ -693,7 +715,7 @@ impl MercariClient {
     }
 
     pub async fn search_brands(&self, query: &str, limit: i32) -> Result<Value> {
-        let data = self.get_json(BRANDS_DATASET_ENDPOINT).await?;
+        let data = self.dataset(BRANDS_DATASET_ENDPOINT).await?;
         let rows = data["itemBrands"].as_array();
         let limit = limit.clamp(1, 100) as usize;
         let needle = query.to_lowercase();
@@ -736,7 +758,7 @@ impl MercariClient {
     }
 
     pub async fn search_categories(&self, query: &str, limit: i32) -> Result<Value> {
-        let data = self.get_json(CATEGORIES_DATASET_ENDPOINT).await?;
+        let data = self.dataset(CATEGORIES_DATASET_ENDPOINT).await?;
         let rows = data["itemCategories"].as_array();
         let limit = limit.clamp(1, 100) as usize;
         let needle = query.to_lowercase();
