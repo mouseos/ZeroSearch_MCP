@@ -1,0 +1,258 @@
+[
+  {
+    "name": "naver_search",
+    "description": "Run a Naver integrated search and get the subject sections (news, images, blog, dictionary, web documents, ...) in page order, each with its own results. Best first tool when the right vertical is unclear, or for a broad overview of a Korean topic.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query. Korean works best; Naver indexes Korean-language content far more deeply than other engines."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max results to keep per section (1-10).",
+          "default": 5
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "naver_web_search",
+    "description": "Search Naver's web-results view (external web documents). Returns title, URL, snippet and Naver's rank. The tab serves one top-selection batch, so only page 1 exists — asking for page 2 returns an explicit error rather than a repeat of page 1.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query. Korean works best; Naver indexes Korean-language content far more deeply than other engines."
+        },
+        "page": {
+          "type": "integer",
+          "description": "1-based page number.",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max results to return (1-20).",
+          "default": 10
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "naver_image_search",
+    "description": "Search Naver images. Returns the original image URL (recovered from behind Naver's thumbnail proxy), a thumbnail, the source page, the source label and pixel dimensions. Pages follow the more-API chain the page itself issues (up to page 10).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query. Korean works best; Naver indexes Korean-language content far more deeply than other engines."
+        },
+        "page": {
+          "type": "integer",
+          "description": "1-based page number.",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max images to return (1-50).",
+          "default": 10
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "naver_news_search",
+    "description": "Search Naver News for Korean news articles. Returns headline, article URL, publisher, relative publish time, snippet and thumbnail. Pages follow the more-API chain the page itself issues (up to page 10).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query. Korean works best; Naver indexes Korean-language content far more deeply than other engines."
+        },
+        "page": {
+          "type": "integer",
+          "description": "1-based page number.",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max articles to return (1-30).",
+          "default": 10
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "naver_video_search",
+    "description": "Search Naver videos across YouTube and other hosts. Returns title, watch URL, hosting platform, channel, duration, relative upload time, view count and thumbnail. Pages follow the more-API chain the page itself issues (up to page 10).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query. Korean works best; Naver indexes Korean-language content far more deeply than other engines."
+        },
+        "page": {
+          "type": "integer",
+          "description": "1-based page number.",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max videos to return (1-48).",
+          "default": 10
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "naver_blog_search",
+    "description": "Search Naver Blog posts. Returns title, post URL, blog name and id, relative publish time, snippet and thumbnail. Pages follow the more-API chain the page itself issues (up to page 10).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query. Korean works best; Naver indexes Korean-language content far more deeply than other engines."
+        },
+        "page": {
+          "type": "integer",
+          "description": "1-based page number.",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max posts to return (1-30).",
+          "default": 10
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "naver_cafe_search",
+    "description": "Search the Naver Cafe tab (community posts). Returns title, post URL, cafe name, relative publish time and snippet. Only the first page exists as a server-rendered page (the app's continuation is a native API this build does not reproduce), so page > 1 is an explicit error.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query. Korean works best; Naver indexes Korean-language content far more deeply than other engines."
+        },
+        "page": {
+          "type": "integer",
+          "description": "1-based page number.",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max posts to return (1-30).",
+          "default": 10
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "naver_kin_search",
+    "description": "Search the Naver 지식iN (knowledge Q&A) tab. Returns question title, URL, relative publish time, snippet, answer count, category and the status badge (e.g. 답변완료). Only the first page exists as a server-rendered page, so page > 1 is an explicit error.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query. Korean works best; Naver indexes Korean-language content far more deeply than other engines."
+        },
+        "page": {
+          "type": "integer",
+          "description": "1-based page number.",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max questions to return (1-30).",
+          "default": 10
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "naver_suggest",
+    "description": "Get Naver autocomplete suggestions for a partial query. Useful for discovering how Korean users actually phrase a topic before running a full search.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Partial query to complete."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "naver_build_search_url",
+    "description": "Build the Naver search URL for a query and vertical (integrated, web, image, news, video, blog) exactly as the client fetches it — no network access. Useful for handing a human a link to open.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query. Korean works best; Naver indexes Korean-language content far more deeply than other engines."
+        },
+        "vertical": {
+          "type": "string",
+          "description": "Which search page to build the URL for.",
+          "enum": [
+            "integrated",
+            "web",
+            "image",
+            "news",
+            "video",
+            "blog"
+          ],
+          "default": "integrated"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "naver_list_verticals",
+    "description": "List the Naver search verticals this server exposes, with the tool name and paging behaviour of each, plus the tabs that exist but are not supported. Call this to decide which search tool fits a question.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  }
+]

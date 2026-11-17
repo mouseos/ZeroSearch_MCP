@@ -1,0 +1,162 @@
+[
+  {
+    "name": "yandex_web_search",
+    "description": "Search the Yandex web index. Best general-purpose tool for finding Russian-language web pages, shops, official sites and documentation. Returns title, destination URL, displayed path and snippet. About 10 organic results per page; page is 1-based (the session flow is verified live for the first two pages). With include_special_cards the result also carries the page's non-organic cards (AI answer, ad blocks, related searches) under special_cards.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query. Russian works best; Yandex indexes Russian-language content far more deeply than other engines."
+        },
+        "page": {
+          "type": "integer",
+          "description": "1-based page number.",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max results to return (1-10).",
+          "default": 10
+        },
+        "include_special_cards": {
+          "type": "boolean",
+          "description": "Also return the page's special cards (AI answer, ads, related searches).",
+          "default": false
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "yandex_image_search",
+    "description": "Search Yandex images. Returns the original image URL, a Yandex thumbnail, pixel dimensions and the source page each image appears on. 20 results per page; page is 1-based.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query. Russian works best; Yandex indexes Russian-language content far more deeply than other engines."
+        },
+        "page": {
+          "type": "integer",
+          "description": "1-based page number.",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max results to return (1-20).",
+          "default": 20
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "yandex_video_search",
+    "description": "Search Yandex videos across VK, YouTube, RuTube, OK and other hosts. Returns title, the watch URL on the hosting service, duration, provider and publish date.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query. Russian works best; Yandex indexes Russian-language content far more deeply than other engines."
+        },
+        "page": {
+          "type": "integer",
+          "description": "1-based page number.",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max results to return (1-20).",
+          "default": 20
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "yandex_suggest",
+    "description": "Get Yandex autocomplete suggestions for a partial query. Useful for discovering how Russian users actually phrase a topic before running a full search.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Partial query to complete."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max suggestions to return (1-20).",
+          "default": 10
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "yandex_suggest_endings",
+    "description": "Get Yandex query-ending suggestions: the completions the search box offers for how a query could end (the suggest service's endings mode), as opposed to yandex_suggest's whole-query completions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Partial query to complete."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max suggestions to return (1-20).",
+          "default": 10
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "yandex_build_search_url",
+    "description": "Build the Yandex search URL for a query and vertical (web, image, video, suggest) without performing a search. Useful for handing a link to the user. News has no URL builder: it moved to dzen.ru and requires Yandex SSO.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query. Russian works best; Yandex indexes Russian-language content far more deeply than other engines."
+        },
+        "vertical": {
+          "type": "string",
+          "description": "Which search the URL opens.",
+          "enum": [
+            "web",
+            "image",
+            "video",
+            "suggest"
+          ],
+          "default": "web"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "yandex_list_verticals",
+    "description": "List the Yandex search verticals this server exposes, with the tool name and paging behaviour of each. News is listed as unsupported, with the reason. Call this to decide which search tool fits a question.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  }
+]

@@ -1,0 +1,2537 @@
+[
+  {
+    "name": "aliexpress_search_products",
+    "description": "Search AliExpress products through the APK-derived direct MTop search endpoint.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "default": 10
+        },
+        "locale": {
+          "type": "string",
+          "default": "ja_JP"
+        },
+        "currency": {
+          "type": "string",
+          "default": "JPY"
+        },
+        "ship_to": {
+          "type": "string",
+          "default": "JP"
+        },
+        "sort": {
+          "type": "string",
+          "default": ""
+        },
+        "min_price": {
+          "type": "string",
+          "description": "Minimum price filter (wire pr/pageMinPrice); omit for none"
+        },
+        "max_price": {
+          "type": "string",
+          "description": "Maximum price filter (wire pr); omit for none"
+        },
+        "switches": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Filter switches; bare names or filterCode:<name> values"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "aliexpress_get_product",
+    "description": "Fetch normalized AliExpress product details by product id or product URL.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "Product ID or URL"
+        },
+        "locale": {
+          "type": "string",
+          "default": "ja_JP"
+        },
+        "currency": {
+          "type": "string",
+          "default": "JPY"
+        },
+        "ship_to": {
+          "type": "string",
+          "default": "JP"
+        }
+      },
+      "required": [
+        "product"
+      ]
+    }
+  },
+  {
+    "name": "aliexpress_suggest_keywords",
+    "description": "Get AliExpress keyword suggestions through the recommend MTop endpoint (measured working; the APK suggestion API cannot be invoked through the H5 gateway).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "keyword": {
+          "type": "string"
+        },
+        "locale": {
+          "type": "string",
+          "default": "ja_JP"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 10
+        }
+      },
+      "required": [
+        "keyword"
+      ]
+    }
+  },
+  {
+    "name": "aliexpress_get_reviews",
+    "description": "Fetch AliExpress product reviews through the APK-derived MTop review endpoint.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "Product ID or URL"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "default": 20
+        },
+        "locale": {
+          "type": "string",
+          "default": "ja_JP"
+        },
+        "filter": {
+          "type": "string",
+          "default": "all",
+          "description": "Review filter (API filter parameter, passed through verbatim)"
+        },
+        "sort": {
+          "type": "string",
+          "default": "complex_default",
+          "description": "Review sort (API sort parameter, passed through verbatim)"
+        }
+      },
+      "required": [
+        "product"
+      ]
+    }
+  },
+  {
+    "name": "aliexpress_query_sku",
+    "description": "Query one SKU of an AliExpress product (mtop.aliexpress.pdp.sku.query): price/stock for the selected SKU. Live-verified anonymously. The response data shape is not fully documented, so the raw data is returned alongside any extracted sku_combinations.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "Product ID or URL"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "integer",
+          "default": 1
+        },
+        "pdp_npi": {
+          "type": "string",
+          "default": ""
+        },
+        "pdp_ext_f": {
+          "type": "string",
+          "default": ""
+        },
+        "locale": {
+          "type": "string",
+          "default": "ja_JP"
+        },
+        "currency": {
+          "type": "string",
+          "default": "JPY"
+        },
+        "ship_to": {
+          "type": "string",
+          "default": "JP"
+        }
+      },
+      "required": [
+        "product",
+        "sku_id"
+      ]
+    }
+  },
+  {
+    "name": "aliexpress_adjust_sku",
+    "description": "Adjust the selected SKU of an AliExpress product (mtop.aliexpress.pdp.sku.adjust). Request shape is implemented from the app-derived builder, but this endpoint has NOT been live-verified yet (results carry live_verified: false).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "Product ID or URL"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "integer",
+          "default": 1
+        },
+        "pdp_npi": {
+          "type": "string",
+          "default": ""
+        },
+        "pdp_ext_f": {
+          "type": "string",
+          "default": ""
+        },
+        "locale": {
+          "type": "string",
+          "default": "ja_JP"
+        },
+        "currency": {
+          "type": "string",
+          "default": "JPY"
+        },
+        "ship_to": {
+          "type": "string",
+          "default": "JP"
+        }
+      },
+      "required": [
+        "product",
+        "sku_id"
+      ]
+    }
+  },
+  {
+    "name": "aliexpress_adjust_pdp",
+    "description": "Adjust the PDP main block for a selected SKU (mtop.aliexpress.pdp.main.adjust). Request shape is implemented from the app-derived builder, but this endpoint has NOT been live-verified yet (results carry live_verified: false).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "Product ID or URL"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "integer",
+          "default": 1
+        },
+        "pdp_npi": {
+          "type": "string",
+          "default": ""
+        },
+        "pdp_ext_f": {
+          "type": "string",
+          "default": ""
+        },
+        "locale": {
+          "type": "string",
+          "default": "ja_JP"
+        },
+        "currency": {
+          "type": "string",
+          "default": "JPY"
+        },
+        "ship_to": {
+          "type": "string",
+          "default": "JP"
+        }
+      },
+      "required": [
+        "product",
+        "sku_id"
+      ]
+    }
+  },
+  {
+    "name": "aliexpress_get_store_groups",
+    "description": "Fetch an AliExpress store's product groups (mtop.ae.shop.search.product.groupType). Request shape is implemented from the app-derived builder; live acceptance is not yet confirmed (results carry live_verified: false).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "store_id": {
+          "type": "string"
+        },
+        "group_type": {
+          "type": "string",
+          "default": "",
+          "description": "e.g. shop_wireless_compare_items | shop_wireless_bundle_items; empty = default"
+        },
+        "seller_id": {
+          "type": "string",
+          "default": ""
+        },
+        "locale": {
+          "type": "string",
+          "default": "ja_JP"
+        },
+        "currency": {
+          "type": "string",
+          "default": "JPY"
+        },
+        "ship_to": {
+          "type": "string",
+          "default": "JP"
+        }
+      },
+      "required": [
+        "store_id"
+      ]
+    }
+  },
+  {
+    "name": "aliexpress_get_store_module",
+    "description": "Fetch an AliExpress store page module (ModuleAsyncService). Request shape is implemented from the app-derived builder; live acceptance is not yet confirmed (results carry live_verified: false).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "store_id": {
+          "type": "string"
+        },
+        "component_key": {
+          "type": "string",
+          "default": "",
+          "description": "empty = promotePruductList (captured spelling)"
+        },
+        "seller_id": {
+          "type": "string",
+          "default": ""
+        },
+        "locale": {
+          "type": "string",
+          "default": "ja_JP"
+        },
+        "currency": {
+          "type": "string",
+          "default": "JPY"
+        },
+        "ship_to": {
+          "type": "string",
+          "default": "JP"
+        }
+      },
+      "required": [
+        "store_id"
+      ]
+    }
+  },
+  {
+    "name": "aliexpress_search_store_products",
+    "description": "Search products in an AliExpress store through the captured Android store MTop endpoint. seller_id is required (measured: omitting it fails with FAIL_SYS_BIZPARAM_MISSED).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "store_id": {
+          "type": "string"
+        },
+        "seller_id": {
+          "type": "string",
+          "description": "Required"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "default": 20
+        },
+        "sort": {
+          "type": "string",
+          "default": "orders_desc"
+        },
+        "locale": {
+          "type": "string",
+          "default": "ja_JP"
+        },
+        "currency": {
+          "type": "string",
+          "default": "JPY"
+        },
+        "ship_to": {
+          "type": "string",
+          "default": "JP"
+        }
+      },
+      "required": [
+        "store_id",
+        "seller_id"
+      ]
+    }
+  },
+  {
+    "name": "goofish_search_products",
+    "description": "Search Goofish (Xianyu) products through the APK-derived MTOP search endpoint. Requests are signed by the SecurityGuard runtime bundled with the server; the device identity is generated by the server itself. No configuration is required: on first use the server fetches the few MB of the Goofish app package the signer needs (SecurityGuard libraries, configuration image and certificate; HTTP range requests, SHA-256 verified) and assembles the runtime in its data directory. The signing harness boots in the background when the server starts; a Goofish call made before the boot finishes waits for it (the boot takes several minutes). Sorted or filtered search may be rejected by the server (HTTP 419; cause undetermined). The optional filter arguments (prop_selections = CPV property selections as {property_id: [value_id, ...]}, price_range in \"min,max\" form, province/city/area, category ids) switch the call to the full filter form.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "default": 10
+        },
+        "sort": {
+          "type": "string",
+          "description": "create | credit | price_asc | price_desc",
+          "default": ""
+        },
+        "price_min": {
+          "type": "string",
+          "description": "Minimum price (yuan)"
+        },
+        "price_max": {
+          "type": "string",
+          "description": "Maximum price (yuan)"
+        },
+        "prop_selections": {
+          "type": "object",
+          "description": "CPV selections: {property_id: [value_id, ...]}"
+        },
+        "price_range": {
+          "type": "string",
+          "description": "Panel price band in \"min,max\" form"
+        },
+        "province": {
+          "type": "string",
+          "description": "Region filter: province"
+        },
+        "city": {
+          "type": "string",
+          "description": "Region filter: city"
+        },
+        "area": {
+          "type": "string",
+          "description": "Region filter: area"
+        },
+        "category_id": {
+          "type": "string"
+        },
+        "front_cat_id": {
+          "type": "string"
+        },
+        "leaf_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "goofish_get_product",
+    "description": "Fetch normalized Goofish (Xianyu) product details by item id or product URL.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "Item ID or URL"
+        }
+      },
+      "required": [
+        "product"
+      ]
+    }
+  },
+  {
+    "name": "goofish_suggest_keywords",
+    "description": "Get Goofish (Xianyu) keyword suggestions through the APK-derived MTOP suggest endpoint.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "keyword": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 10
+        }
+      },
+      "required": [
+        "keyword"
+      ]
+    }
+  },
+  {
+    "name": "goofish_get_comments",
+    "description": "Fetch public comments for a Goofish (Xianyu) product through the APK-derived MTOP comment endpoint. The app's comment.list has no page or cursor mechanism — rows_per_page is the only control; the response's next_page field is informational only and cannot be used to fetch further comments.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "Item ID or URL"
+        },
+        "rows_per_page": {
+          "type": "integer",
+          "default": 10,
+          "description": "Number of comments to request (the app's rowsPerPage)"
+        }
+      },
+      "required": [
+        "product"
+      ]
+    }
+  },
+  {
+    "name": "goofish_get_recommendations",
+    "description": "Fetch recommended items related to a Goofish (Xianyu) product through the APK-derived MTOP recommend endpoint. Continuation is caller-carried: pass the previous result's next_page_state back as page_state to fetch the next page; every result carries the advanced next_page_state and has_more.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "Item ID or URL"
+        },
+        "page_state": {
+          "type": "object",
+          "description": "Continuation state {page_num, page_size, current_size, history_item_ids} from the previous result's next_page_state"
+        }
+      },
+      "required": [
+        "product"
+      ]
+    }
+  },
+  {
+    "name": "goofish_home_feed",
+    "description": "Fetch the Goofish (Xianyu) home feed through the APK-derived MTOP home endpoint. Continuation is caller-carried: pass the previous result's next_page_state back as page_state (it takes precedence over page); results fetched through the state flow carry the advanced next_page_state.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "page": {
+          "type": "integer",
+          "default": 1
+        },
+        "page_state": {
+          "type": "object",
+          "description": "Continuation state {page_number, last_response_count, client_recycle_params} from the previous result's next_page_state"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "goofish_get_similar_items",
+    "description": "Fetch items similar to a Goofish (Xianyu) product (search.spusimilar.itemlist). conditions is the caller-supplied conditions object (in the app it is built from the search response's server-issued spuId; the detail response carries no spu identifier). Continuation: pass page_no from the previous result's next_page_state. NOT live-verified: the one measured attempt was rejected by the server-side app-version gate FAIL_BIZ_SERVER_NEED_UPGRADE_MSG2, so a live call may return that business error instead of data.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "Item ID or URL"
+        },
+        "conditions": {
+          "type": "object",
+          "description": "Caller-supplied conditions object"
+        },
+        "page_no": {
+          "type": "integer",
+          "default": 1
+        },
+        "page_size": {
+          "type": "integer",
+          "default": 10
+        }
+      },
+      "required": [
+        "product"
+      ]
+    }
+  },
+  {
+    "name": "goofish_get_category_guide",
+    "description": "Fetch a Goofish (Xianyu) category guide tree through the APK-derived MTOP category endpoint. name optionally selects a guide by name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Optional guide/category name"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "goofish_get_rate_list",
+    "description": "Fetch the seller evaluations (rate list) for one Goofish (Xianyu) item through the APK-derived MTOP rate endpoint. rated_uid is the rated seller's user id.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "Item ID or URL"
+        },
+        "rated_uid": {
+          "type": "string",
+          "description": "The rated user's id"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        }
+      },
+      "required": [
+        "product",
+        "rated_uid"
+      ]
+    }
+  },
+  {
+    "name": "goofish_get_user_headinfo",
+    "description": "Fetch a Goofish (Xianyu) user's header info through the APK-derived MTOP headinfo endpoint. NOT live-verified: the request shape is fixed by the app's typed classes, but no in-app caller was found, so reachability is unconfirmed.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "user_id": {
+          "type": "string"
+        },
+        "nick": {
+          "type": "string"
+        },
+        "my_user_id": {
+          "type": "integer"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "goofish_get_seller_items",
+    "description": "Fetch Goofish (Xianyu) publish.items. NOTE: the endpoint has no parameter identifying another user — its confirmed use is selecting one's own items; this is NOT another seller's public listing.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "page": {
+          "type": "integer",
+          "default": 1
+        },
+        "page_size": {
+          "type": "integer",
+          "default": 20
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "goofish_get_city_feed",
+    "description": "Fetch the Goofish (Xianyu) same-city feed (local.home / local.home.feeds). data_source_id and version are caller-supplied (they are delivered to the app by its page configuration). feeds_api=true selects the feeds variant, which is NOT live-verified.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "data_source_id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "feeds_api": {
+          "type": "boolean",
+          "default": false
+        },
+        "page_number": {
+          "type": "string",
+          "default": "1"
+        },
+        "last_response_count": {
+          "type": "string",
+          "default": "0"
+        },
+        "tab_name": {
+          "type": "string"
+        },
+        "keywords": {
+          "type": "string"
+        },
+        "latitude": {
+          "type": "number"
+        },
+        "longitude": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "data_source_id",
+        "version"
+      ]
+    }
+  },
+  {
+    "name": "goofish_get_city_nearby",
+    "description": "Fetch Goofish (Xianyu) nearby corner info (local.near.by.corner.info). NOT live-verified. Coordinates are caller-supplied strings, never invented.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "city": {
+          "type": "string"
+        },
+        "latitude": {
+          "type": "string"
+        },
+        "longitude": {
+          "type": "string"
+        },
+        "select_city": {
+          "type": "string"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "goofish_get_fishpond_list",
+    "description": "List Goofish (Xianyu) fishponds (鱼塘). NOT live-verified (the gateway registration record notes this API may not be registered).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "page": {
+          "type": "integer",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "default": 20
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "goofish_get_fishpond_info",
+    "description": "Fetch one Goofish (Xianyu) fishpond's detail (fishpool.id). NOT live-verified.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pool_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pool_id"
+      ]
+    }
+  },
+  {
+    "name": "goofish_get_fishpond_comments",
+    "description": "Fetch a Goofish (Xianyu) fishpond's public posts/comments (fishpool.comment.list). NOT live-verified. Coordinates are caller-supplied and omitted when absent.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pool_id": {
+          "type": "integer"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        },
+        "latitude": {
+          "type": "number"
+        },
+        "longitude": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "pool_id"
+      ]
+    }
+  },
+  {
+    "name": "goofish_get_video_play",
+    "description": "Fetch Goofish (Xianyu) video play info (video.play) for a video id. NOT live-verified.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "video_id": {
+          "type": "integer"
+        },
+        "item_id": {
+          "type": "integer",
+          "default": 0
+        }
+      },
+      "required": [
+        "video_id"
+      ]
+    }
+  },
+  {
+    "name": "goofish_get_video_play_from_feed_card",
+    "description": "Fetch Goofish (Xianyu) video play info from a normalized feed card (a card object as returned by the feed/search parsers, carrying video_id/has_video). Cards without a confirmed video, or with a mismatched item_id, are refused before sending. NOT live-verified.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "card": {
+          "type": "object",
+          "description": "Normalized feed card object"
+        },
+        "item_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "card"
+      ]
+    }
+  },
+  {
+    "name": "goofish_get_fun_comments",
+    "description": "Fetch Goofish (Xianyu) fun/explore comments (fun.general.comment.list). Cursor paging: pass the previous response's last_cursor as begin_cursor. NOT live-verified.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "target_id": {
+          "type": "string"
+        },
+        "target_type": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "source_id": {
+          "type": "string"
+        },
+        "begin_cursor": {
+          "type": "string"
+        },
+        "page_size": {
+          "type": "integer",
+          "default": 10
+        },
+        "rows_per_page": {
+          "type": "integer",
+          "default": 10
+        },
+        "top_comment_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_id",
+        "target_type",
+        "namespace",
+        "source_id"
+      ]
+    }
+  },
+  {
+    "name": "mercari_search_products",
+    "description": "Search Mercari Japan products through the public web Connect-RPC JSON endpoint. Login-free: requests are authorized with a locally generated DPoP proof, no account or token needed. Each item carries is_auction and, for auction listings, an auction object (highest_bid is the current bid, not a buy-now price; also initial_price, total_bids, bid_deadline). Set exclude_auction to drop auction listings from the results.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 20
+        },
+        "page_token": {
+          "type": "string",
+          "default": ""
+        },
+        "sort": {
+          "type": "string",
+          "default": "default",
+          "description": "Sort name; in addition to the usual values, price_without_time_filter / price_asc_without_time_filter / price_desc_without_time_filter (and their sort_/lowest_/highest_ spellings) select SORT_PRICE_WITHOUT_TIME_FILTER"
+        },
+        "status": {
+          "type": "string",
+          "default": ""
+        },
+        "exclude_keyword": {
+          "type": "string",
+          "default": ""
+        },
+        "exclude_auction": {
+          "type": "boolean",
+          "default": false
+        },
+        "category_ids": {
+          "type": "string",
+          "default": ""
+        },
+        "brand_ids": {
+          "type": "string",
+          "default": ""
+        },
+        "size_ids": {
+          "type": "string",
+          "default": ""
+        },
+        "seller_ids": {
+          "type": "string",
+          "default": ""
+        },
+        "price_min": {
+          "type": "integer"
+        },
+        "price_max": {
+          "type": "integer"
+        },
+        "item_condition_ids": {
+          "type": "string",
+          "default": ""
+        },
+        "shipping_payer_ids": {
+          "type": "string",
+          "default": ""
+        },
+        "color_ids": {
+          "type": "string",
+          "default": ""
+        },
+        "item_types": {
+          "type": "string",
+          "default": ""
+        },
+        "has_coupon": {
+          "type": "boolean",
+          "default": false
+        },
+        "attributes": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "default": [],
+          "description": "Raw Mercari attribute filter objects, passed through verbatim"
+        },
+        "sku_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "default": []
+        },
+        "shop_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "default": []
+        },
+        "exclude_shipping_method_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "default": []
+        },
+        "shipping_from_area": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "default": []
+        },
+        "shipping_method": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "mercari_get_product",
+    "description": "Fetch normalized Mercari item detail by item id or item URL through the APK-derived JSON endpoint. Mercari Shops products (item_type beyond, /shops/product/ URLs) are fetched from the Shops endpoint and normalized to the same shape, with item_type beyond and the shop in seller/shop. The item carries is_auction and, for auction listings, an auction object (highest_bid, initial_price, total_bids, expected_end_time, state).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "Item ID or URL"
+        }
+      },
+      "required": [
+        "product"
+      ]
+    }
+  },
+  {
+    "name": "mercari_search_seller_products",
+    "description": "List a seller's Mercari items through the APK-derived items/get_items JSON endpoint. Items carry is_auction and an auction object for auction listings.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "seller_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "default": "on_sale"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 30
+        }
+      },
+      "required": [
+        "seller_id"
+      ]
+    }
+  },
+  {
+    "name": "mercari_suggest_keywords",
+    "description": "Fetch Mercari autocomplete keyword/seller suggestions through the APK-derived BFF endpoint.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "keyword": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "keyword"
+      ]
+    }
+  },
+  {
+    "name": "mercari_search_brands",
+    "description": "Search Mercari brand IDs for use with mercari_search_products brand_ids.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 20
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "mercari_search_categories",
+    "description": "Search Mercari category IDs for use with mercari_search_products category_ids.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 20
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "mercari_get_reviews",
+    "description": "Get seller reviews/ratings for a Mercari seller. Returns rating summary (good/normal/bad counts, star rating) and individual review messages. Note: the endpoint ignores pagination (verified live — page 2 returns page 1), so page > 1 is rejected with an explicit error rather than silently repeating the first page; the real continuation mechanism is undetermined.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "seller_id": {
+          "type": "string",
+          "description": "Seller's numeric user ID (from search results sellerId or item detail seller.id)"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 20,
+          "description": "Number of reviews to return (max 100)"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        }
+      },
+      "required": [
+        "seller_id"
+      ]
+    }
+  },
+  {
+    "name": "yflea_search_products",
+    "description": "Search Yahoo Flea Market (Yahoo!フリマ / PayPayフリマ) products. Uses anonymous __NEXT_DATA__ SSR from paypayfleamarket.yahoo.co.jp. No login needed.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 40
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        },
+        "sort": {
+          "type": "string",
+          "default": "",
+          "description": "default | price_asc | price_desc | newest (aliases: lowest_price, highest_price, new, relevance, ranking)"
+        },
+        "min_price": {
+          "type": "integer"
+        },
+        "max_price": {
+          "type": "integer"
+        },
+        "category_id": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "yflea_get_product",
+    "description": "Fetch Yahoo Flea Market item detail by item ID or URL. Returns full item data. Uses anonymous __NEXT_DATA__ SSR, no login needed.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "Item ID or URL"
+        }
+      },
+      "required": [
+        "product"
+      ]
+    }
+  },
+  {
+    "name": "yflea_get_reviews",
+    "description": "Get seller reviews/ratings for a Yahoo Flea Market seller. Returns rating summary and individual reviews. No login needed.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "seller_id": {
+          "type": "string",
+          "description": "Seller ID (from item detail or search results)"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 20
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        }
+      },
+      "required": [
+        "seller_id"
+      ]
+    }
+  },
+  {
+    "name": "rakuma_search_products",
+    "description": "Search Rakuten Rakuma (楽天ラクマ) products through fril.jp. Uses anonymous Rakuten Analytics data. No login needed. 40 items/page.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 40
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        },
+        "sort": {
+          "type": "string",
+          "default": "",
+          "description": "default | price_asc | price_desc | newest | likes (aliases: lowest_price, highest_price, new, popular, relevance)"
+        },
+        "min_price": {
+          "type": "integer"
+        },
+        "max_price": {
+          "type": "integer"
+        },
+        "category_id": {
+          "type": "string",
+          "default": ""
+        },
+        "brand_id": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "rakuma_get_product",
+    "description": "Fetch Rakuma item detail by item hash or URL. Returns item data from schema.org JSON-LD Product structured data including seller_hash for use with rakuma_get_reviews. No login needed.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "Item hash or URL"
+        }
+      },
+      "required": [
+        "product"
+      ]
+    }
+  },
+  {
+    "name": "rakuma_get_reviews",
+    "description": "Get seller reviews/ratings for a Rakuma seller. Returns aggregate rating and individual reviews. The seller_hash (32-char hex) is available from rakuma_get_product item detail (seller.seller_hash field). Reviews are sliced client-side from the shop page's full review list, so page/limit page through that list.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "seller_hash": {
+          "type": "string",
+          "description": "32-char hex seller hash from item detail (seller.seller_hash)"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 20,
+          "description": "Number of reviews to return"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        }
+      },
+      "required": [
+        "seller_hash"
+      ]
+    }
+  },
+  {
+    "name": "yauction_search_products",
+    "description": "Search Yahoo Auctions Japan (ヤフオク) products via the official app API (anonymous, appid). Supports open and closed (落札済み) auctions. sort vocabulary: price_asc | price_desc | bids | bids_asc | end_time | end_time_desc | newest | total_price_asc | total_price_desc | watch_count | featured | start_price_asc | start_price_desc; literal API values (e.g. +TOTAL_PRICE) are also accepted for the matching status. seller_type is a comma-joined list of AUC_STORE / AUCTION / FLEAMARKET; prefecture_code takes comma-joined Prefecture values (e.g. TOKYO,OSAKA). conditions (raw ItemCondition ids, comma-joined) takes precedence over condition, and submit_type (ALL / AUCTION / FIXED) over buynow_only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 20
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        },
+        "sort": {
+          "type": "string",
+          "default": ""
+        },
+        "min_price": {
+          "type": "integer"
+        },
+        "max_price": {
+          "type": "integer"
+        },
+        "category_id": {
+          "type": "string",
+          "default": ""
+        },
+        "status": {
+          "type": "string",
+          "default": "open",
+          "description": "open or closed"
+        },
+        "keywords_and": {
+          "type": "string",
+          "default": ""
+        },
+        "keywords_not": {
+          "type": "string",
+          "default": ""
+        },
+        "seller_id": {
+          "type": "string",
+          "default": ""
+        },
+        "buynow_only": {
+          "type": "boolean",
+          "default": false
+        },
+        "free_shipping": {
+          "type": "boolean",
+          "default": false
+        },
+        "condition": {
+          "type": "string",
+          "default": ""
+        },
+        "brand_ids": {
+          "type": "string",
+          "default": "",
+          "description": "Comma-joined brand ids"
+        },
+        "catalog_ids": {
+          "type": "string",
+          "default": "",
+          "description": "Comma-joined catalog ids"
+        },
+        "min_buy_now_price": {
+          "type": "integer"
+        },
+        "max_buy_now_price": {
+          "type": "integer"
+        },
+        "seller_type": {
+          "type": "string",
+          "default": "",
+          "description": "Comma-joined: AUC_STORE / AUCTION / FLEAMARKET"
+        },
+        "prefecture_code": {
+          "type": "string",
+          "default": "",
+          "description": "Comma-joined Prefecture values, e.g. TOKYO,OSAKA"
+        },
+        "destination_prefecture_code": {
+          "type": "string",
+          "default": ""
+        },
+        "is_featured": {
+          "type": "boolean"
+        },
+        "is_appraisal": {
+          "type": "boolean"
+        },
+        "is_finish_soon": {
+          "type": "boolean"
+        },
+        "is_convenience_store": {
+          "type": "boolean"
+        },
+        "is_new_arrival": {
+          "type": "boolean"
+        },
+        "except_suspected_fake": {
+          "type": "boolean"
+        },
+        "can_privacy_delivery": {
+          "type": "boolean"
+        },
+        "is_adult_ok": {
+          "type": "boolean"
+        },
+        "auction_ids": {
+          "type": "string",
+          "default": "",
+          "description": "Comma-joined auction ids"
+        },
+        "except_auction_ids": {
+          "type": "string",
+          "default": ""
+        },
+        "except_auc_user_ids": {
+          "type": "string",
+          "default": ""
+        },
+        "except_catalog_ids": {
+          "type": "string",
+          "default": ""
+        },
+        "shp_spec": {
+          "type": "string",
+          "default": "",
+          "description": "Spec tokens, space-joined, passed through verbatim"
+        },
+        "spec_size_type": {
+          "type": "string",
+          "default": "",
+          "description": "e.g. MENS_SHOES"
+        },
+        "spec_size_ids": {
+          "type": "string",
+          "default": "",
+          "description": "Comma-joined numeric ids"
+        },
+        "conditions": {
+          "type": "string",
+          "default": "",
+          "description": "Raw ItemCondition ids, comma-joined"
+        },
+        "submit_type": {
+          "type": "string",
+          "default": "",
+          "description": "ALL / AUCTION / FIXED"
+        },
+        "priority": {
+          "type": "string",
+          "default": ""
+        },
+        "image_url": {
+          "type": "string",
+          "default": "",
+          "description": "Image-search image URL"
+        },
+        "search_type": {
+          "type": "string",
+          "default": ""
+        },
+        "time_from_first_start": {
+          "type": "integer",
+          "description": "Unix seconds"
+        },
+        "rewrite_query_type": {
+          "type": "string",
+          "default": ""
+        },
+        "campaign_type": {
+          "type": "string",
+          "default": ""
+        },
+        "campaign_start_time": {
+          "type": "integer",
+          "description": "Unix seconds"
+        },
+        "campaign_end_time": {
+          "type": "integer",
+          "description": "Unix seconds"
+        },
+        "module": {
+          "type": "string",
+          "default": "",
+          "description": "Comma-joined module names"
+        },
+        "src": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "yauction_get_product",
+    "description": "Fetch Yahoo Auctions Japan item detail by auction ID or item URL via the official app API (anonymous, appid), no login needed.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "Auction ID or URL"
+        }
+      },
+      "required": [
+        "product"
+      ]
+    }
+  },
+  {
+    "name": "yauction_get_statistics",
+    "description": "Get closed-auction price statistics for a Yahoo Auctions Japan catalog id (search/items/statistics, hm1 variant): totals, the last closed item, and per-day count/avg/max/min. conditions takes ItemCondition ids (a single value is recommended until the multi-value joining form is live-confirmed).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "catalog_id": {
+          "type": "string",
+          "description": "Catalog id (from item detail)"
+        },
+        "conditions": {
+          "type": "string",
+          "default": "",
+          "description": "ItemCondition ids, comma-joined"
+        }
+      },
+      "required": [
+        "catalog_id"
+      ]
+    }
+  },
+  {
+    "name": "yauction_get_statistics_closed",
+    "description": "Get closed-auction price statistics (yne variant, itemState=closed fixed) with the additional shp_spec / seller_type filters. Same result shape as yauction_get_statistics.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "catalog_id": {
+          "type": "string",
+          "description": "Catalog id (from item detail)"
+        },
+        "conditions": {
+          "type": "string",
+          "default": "",
+          "description": "ItemCondition ids, comma-joined"
+        },
+        "shp_spec": {
+          "type": "string",
+          "default": ""
+        },
+        "seller_type": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "catalog_id"
+      ]
+    }
+  },
+  {
+    "name": "yauction_get_seller_profile",
+    "description": "Get a Yahoo Auctions Japan seller's profile (user/v2 profile): display name, icon, store flags, eKYC/speed-shipping flags and the ratings summary.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "seller_id": {
+          "type": "string",
+          "description": "Seller ID (Yahoo! JAPAN ID)"
+        }
+      },
+      "required": [
+        "seller_id"
+      ]
+    }
+  },
+  {
+    "name": "yauction_get_store_profile",
+    "description": "Get a Yahoo Auctions Japan store seller's store profile (user/v1 store-profile): announcement text and banners. Non-store sellers may legitimately error here.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "seller_id": {
+          "type": "string",
+          "description": "Seller ID (Yahoo! JAPAN ID)"
+        }
+      },
+      "required": [
+        "seller_id"
+      ]
+    }
+  },
+  {
+    "name": "yauction_get_reviews",
+    "description": "Get seller reviews/ratings for a Yahoo Auctions Japan seller. Returns individual reviews parsed from the seller rating page plus a ratings_summary (enriched from the seller profile API when available).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "seller_id": {
+          "type": "string",
+          "description": "Seller ID (Yahoo! JAPAN ID)"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 25,
+          "description": "Max reviews to return"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1,
+          "description": "Page number"
+        }
+      },
+      "required": [
+        "seller_id"
+      ]
+    }
+  },
+  {
+    "name": "yauction_suggest_keywords",
+    "description": "Get Yahoo Auctions Japan keyword suggestions (with category candidates) via the official app API (anonymous, appid).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "keyword": {
+          "type": "string",
+          "description": "Partial keyword to suggest completions for"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 10,
+          "description": "Max suggestions to return"
+        },
+        "category_limit": {
+          "type": "integer",
+          "description": "Max category candidates (default 5)"
+        },
+        "brand_limit": {
+          "type": "integer",
+          "description": "Max brand candidates (default 5)"
+        }
+      },
+      "required": [
+        "keyword"
+      ]
+    }
+  },
+  {
+    "name": "rakuten_search_products",
+    "description": "Search Rakuten Ichiba products through the Rakuten app's guest BFF (dynamic/search/v1). No login or API key. Result product_id is \"{shop_id}_{item_id}\" and feeds rakuten_get_product / rakuten_get_reviews. sort is one of the app's sorts: the standard form (relevancy, price_low_to_high_all, price_high_to_low_all, newest, review_count_all, review_score_all, price_plus_shippingfee_low_to_high_all, price_plus_shippingfee_high_to_low_all) or the highRelevancy form without the _all suffix (price_low_to_high, price_high_to_low, review_count, review_score, and the two shipping-inclusive forms); the value passes through to the BFF.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query"
+        },
+        "sort": {
+          "type": "string",
+          "default": ""
+        },
+        "price_min": {
+          "type": "integer"
+        },
+        "price_max": {
+          "type": "integer"
+        },
+        "category": {
+          "type": "string",
+          "default": "",
+          "description": "Genre id"
+        },
+        "offset": {
+          "type": "integer",
+          "default": 0
+        },
+        "limit": {
+          "type": "integer",
+          "default": 20,
+          "description": "Client-side cap on returned items"
+        },
+        "filters": {
+          "type": "string",
+          "default": "",
+          "description": "Comma-joined flag filters (free_shipping, out_of_stock, super_deal, subscription, group_distribution, or server-distributed filter values)"
+        },
+        "gift": {
+          "type": "string",
+          "default": ""
+        },
+        "condition": {
+          "type": "string",
+          "default": "",
+          "description": "new | used"
+        },
+        "review_min": {
+          "type": "number",
+          "description": "Review score lower bound (3.0 / 3.5 / 4.0 / 4.5)"
+        },
+        "excluded_keyword": {
+          "type": "string",
+          "default": ""
+        },
+        "brand_tags": {
+          "type": "string",
+          "default": ""
+        },
+        "shop_id": {
+          "type": "string",
+          "default": ""
+        },
+        "shop_code": {
+          "type": "string",
+          "default": ""
+        },
+        "region": {
+          "type": "integer",
+          "description": "Prefecture id (48 = overseas, pairs with country)"
+        },
+        "country": {
+          "type": "string",
+          "default": ""
+        },
+        "postal_code": {
+          "type": "string",
+          "default": ""
+        },
+        "tags": {
+          "type": "string",
+          "default": ""
+        },
+        "tag_groups": {
+          "type": "string",
+          "default": ""
+        },
+        "event": {
+          "type": "integer"
+        },
+        "ran": {
+          "type": "string",
+          "default": ""
+        },
+        "inshop_pure_lexical_search": {
+          "type": "boolean"
+        },
+        "image_search_items": {
+          "type": "string",
+          "default": ""
+        },
+        "similar_image_search_item": {
+          "type": "string",
+          "default": ""
+        },
+        "modules": {
+          "type": "string",
+          "default": "",
+          "description": "Response modules; empty = the app's default set"
+        },
+        "ab": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "rakuten_get_product",
+    "description": "Fetch Rakuten Ichiba product detail through the app's guest BFF (itemscreen/get/v16). Identify the item by shop_id+item_id (or the search result's product \"{shop_id}_{item_id}\"), or by item_code, shop_id+manage_number, or item_url. The endpoint answers HTTP 207 for partial success; the tool reports ok from the core item data.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "\"{shop_id}_{item_id}\" from search results, or an item URL"
+        },
+        "shop_id": {
+          "type": "integer"
+        },
+        "item_id": {
+          "type": "integer"
+        },
+        "item_code": {
+          "type": "string",
+          "description": "\"shopCode:itemId\" form"
+        },
+        "manage_number": {
+          "type": "string"
+        },
+        "item_url": {
+          "type": "string"
+        },
+        "variant_id": {
+          "type": "string"
+        },
+        "postal_code": {
+          "type": "string"
+        },
+        "prefecture_id": {
+          "type": "integer"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "rakuten_get_reviews",
+    "description": "Fetch Rakuten Ichiba product reviews through the app's guest BFF (review/list/v3). sort: -regtime (newest) | -evaluation | -judgment. sex: 0 = male, 1 = female. hits is capped at 30 by the server.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "shop_id": {
+          "type": "integer"
+        },
+        "item_id": {
+          "type": "integer"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        },
+        "hits": {
+          "type": "integer",
+          "default": 10
+        },
+        "sort": {
+          "type": "string",
+          "default": ""
+        },
+        "check_display_condition": {
+          "type": "boolean",
+          "default": true
+        },
+        "sex": {
+          "type": "integer"
+        },
+        "min_evaluation": {
+          "type": "integer"
+        },
+        "max_evaluation": {
+          "type": "integer"
+        },
+        "min_age": {
+          "type": "integer"
+        },
+        "max_age": {
+          "type": "integer"
+        },
+        "image_flag": {
+          "type": "integer",
+          "default": 0,
+          "description": "0 = all reviews, 1 = media-only"
+        }
+      },
+      "required": [
+        "shop_id",
+        "item_id"
+      ]
+    }
+  },
+  {
+    "name": "rakuten_suggest_keywords",
+    "description": "Get Rakuten Ichiba keyword suggestions through the app's guest BFF (search/suggest): keyword completions and genre candidates for a partial keyword. No login.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "keyword": {
+          "type": "string",
+          "description": "Partial keyword to complete"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 10,
+          "description": "Client-side cap on returned suggestions"
+        }
+      },
+      "required": [
+        "keyword"
+      ]
+    }
+  },
+  {
+    "name": "rakuten_search_products_aggregated",
+    "description": "Search Rakuten Ichiba in the app's product-aggregated form (product/search/v1): results are grouped by product rather than by shop listing. No login.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "keyword": {
+          "type": "string",
+          "description": "Search keyword"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        },
+        "hits": {
+          "type": "integer",
+          "default": 30
+        },
+        "genre_id": {
+          "type": "integer"
+        },
+        "min_price": {
+          "type": "integer"
+        },
+        "max_price": {
+          "type": "integer"
+        },
+        "product_code": {
+          "type": "string"
+        },
+        "product_id": {
+          "type": "string",
+          "description": "Product id hash from a previous aggregated search"
+        },
+        "keyword_search_type": {
+          "type": "integer",
+          "default": 0
+        },
+        "genre_information_flag": {
+          "type": "integer",
+          "default": 0
+        }
+      },
+      "required": [
+        "keyword"
+      ]
+    }
+  },
+  {
+    "name": "rakuten_get_genre_tree",
+    "description": "Fetch a Rakuten Ichiba genre subtree (genre/search/v1): the genre itself plus, per the include flags, its children, siblings, tag groups and tags. No login.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "genre_id": {
+          "type": "integer"
+        },
+        "include_children": {
+          "type": "boolean",
+          "default": true
+        },
+        "include_brother": {
+          "type": "boolean",
+          "default": false
+        },
+        "include_tag_group": {
+          "type": "boolean",
+          "default": false
+        },
+        "include_tag": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "genre_id"
+      ]
+    }
+  },
+  {
+    "name": "rakuten_get_variant_details",
+    "description": "Fetch per-variant details for a Rakuten Ichiba item (variantdetails/get/v5): price, inventory and delivery captions for one variant. The state parameters (variant_id, is_available_for_sale, prices, inventory, is_subscription_eligible, delivery_caption_variant) are carried over from rakuten_get_product's response (its variants entries) — pass them from there. No login.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "shop_id": {
+          "type": "integer"
+        },
+        "item_id": {
+          "type": "integer"
+        },
+        "variant_id": {
+          "type": "string"
+        },
+        "is_available_for_sale": {
+          "type": "boolean",
+          "default": true
+        },
+        "postal_code": {
+          "type": "string"
+        },
+        "prefecture_id": {
+          "type": "integer",
+          "default": 0
+        },
+        "article_number": {
+          "type": "string"
+        },
+        "genre_id": {
+          "type": "integer"
+        },
+        "standard_price": {
+          "type": "integer"
+        },
+        "tax_included_price": {
+          "type": "integer"
+        },
+        "inventory": {
+          "type": "integer"
+        },
+        "is_subscription_eligible": {
+          "type": "boolean",
+          "default": false
+        },
+        "delivery_caption_variant": {
+          "type": "object",
+          "description": "One delivery-caption variant object from the detail response"
+        }
+      },
+      "required": [
+        "shop_id",
+        "item_id"
+      ]
+    }
+  },
+  {
+    "name": "qoo10_search_products",
+    "description": "Search Qoo10 Japan products through the Qoo10 app's mobile API (GetMoveSearchData). No login. sort: 0 ranking, 1 best-selling, 2 newest, 3 price ascending, 4 price descending, 5 review score, 6 review count. Brand / shipping-from / color / attribute codes come from the service's filter info. Note: the app user agent carries a device-derived token that cannot be reproduced off-device; this client sends a format-preserving placeholder token in its place, which the service accepted in live verification. The service requires Japan-side access in practice.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search keyword"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "default": 30
+        },
+        "sort": {
+          "type": "integer",
+          "default": 0
+        },
+        "search_sub_keyword": {
+          "type": "string",
+          "default": ""
+        },
+        "brand": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Brand codes"
+        },
+        "category": {
+          "type": "string",
+          "default": ""
+        },
+        "free_shipping": {
+          "type": "string",
+          "default": "",
+          "description": "\"Y\" for free-shipping only"
+        },
+        "min_price": {
+          "type": "integer"
+        },
+        "max_price": {
+          "type": "integer"
+        },
+        "official_shop": {
+          "type": "string",
+          "default": ""
+        },
+        "promotion_yn": {
+          "type": "string",
+          "default": ""
+        },
+        "shipping_from": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "review_score": {
+          "type": "string",
+          "default": "",
+          "description": "Review-score lower-bound code"
+        },
+        "color": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attribute": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "coupon_label": {
+          "type": "string",
+          "default": ""
+        },
+        "keyword_type": {
+          "type": "string",
+          "default": ""
+        },
+        "sell_cust_no": {
+          "type": "string",
+          "default": "",
+          "description": "Seller number (in-shop search)"
+        },
+        "nosearch_yn": {
+          "type": "string",
+          "default": "N"
+        },
+        "page_type": {
+          "type": "string",
+          "default": ""
+        },
+        "filter_type": {
+          "type": "string",
+          "default": ""
+        },
+        "seller_promotion_no": {
+          "type": "string",
+          "default": ""
+        },
+        "only_total_count": {
+          "type": "string",
+          "default": ""
+        },
+        "last_section": {
+          "type": "string",
+          "default": ""
+        },
+        "related_bg_color": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "qoo10_get_product",
+    "description": "Fetch Qoo10 Japan product detail by GD_NO (goods code) or product URL. Qoo10 has no native detail API; this reproduces the app's WebView product page request and extracts the title, price and images from the returned page. Requires Japan-side access in practice (see qoo10_search_products).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "GD_NO (goods code) or product URL"
+        }
+      },
+      "required": [
+        "product"
+      ]
+    }
+  },
+  {
+    "name": "qoo10_get_search_filters",
+    "description": "Get the Qoo10 Japan search filter information for a keyword (GetMoveSearchFilterInfo — the data the app's filter popup is built from): the brand, colour, price-band, category, shipping-from, review-score and attribute codes that qoo10_search_products accepts as filter values in this keyword's context. Optionally pass the category code or already-selected brand codes to scope the context. No login. Requires Japan-side access in practice (see qoo10_search_products).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "keyword": {
+          "type": "string",
+          "description": "Search keyword the filters apply to"
+        },
+        "category": {
+          "type": "string",
+          "default": "",
+          "description": "Category code context"
+        },
+        "brand": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Already-selected brand codes"
+        }
+      },
+      "required": [
+        "keyword"
+      ]
+    }
+  },
+  {
+    "name": "qoo10_suggest_keywords",
+    "description": "Get Qoo10 Japan keyword suggestions through the Qoo10 app's mobile API (GetMoveAutoKeywordSearch). No login. Requires Japan-side access in practice (see qoo10_search_products).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "keyword": {
+          "type": "string",
+          "description": "Partial keyword to complete"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 10
+        }
+      },
+      "required": [
+        "keyword"
+      ]
+    }
+  },
+  {
+    "name": "yshopping_search_products",
+    "description": "Search Yahoo! Shopping Japan products through the Yahoo! Shopping app's native API (searchList/v4). No login; the app's built-in appid is used. order is one of: Recommend, Price, TotalPrice, ReviewCount, ReviewScoreAverage, DiscountRate, CatalogReleaseDate, RegistrationDate, GoodDelivery (asc applies mainly to Price / TotalPrice). Result product_id is \"{storeId}_{itemCode}\" and feeds yshopping_get_product and yshopping_get_reviews.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 48
+        },
+        "start_index": {
+          "type": "integer",
+          "default": 1
+        },
+        "order": {
+          "type": "string",
+          "default": "Recommend"
+        },
+        "asc": {
+          "type": "boolean",
+          "default": false
+        },
+        "price_from": {
+          "type": "integer"
+        },
+        "price_to": {
+          "type": "integer"
+        },
+        "discounted": {
+          "type": "boolean"
+        },
+        "discount_from": {
+          "type": "integer"
+        },
+        "discount_rate_from": {
+          "type": "integer"
+        },
+        "category_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "brand_id_list": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "seller_id": {
+          "type": "string",
+          "default": ""
+        },
+        "seller_rating_from": {
+          "type": "number"
+        },
+        "used_status": {
+          "type": "string",
+          "default": ""
+        },
+        "jan_code": {
+          "type": "string",
+          "default": ""
+        },
+        "include_sold_out": {
+          "type": "boolean"
+        },
+        "good_delivery": {
+          "type": "boolean"
+        },
+        "asutsuku": {
+          "type": "boolean"
+        },
+        "furusato": {
+          "type": "boolean"
+        },
+        "has_coupon": {
+          "type": "boolean"
+        },
+        "has_premium_price": {
+          "type": "boolean"
+        },
+        "is_verified": {
+          "type": "boolean"
+        },
+        "delivery_area": {
+          "type": "string",
+          "default": "13",
+          "description": "Prefecture code"
+        },
+        "shipping_service_list": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "conditional_free_shipping_price_to": {
+          "type": "integer"
+        },
+        "payment_list": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kspec_id_list": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sp_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "municipality_code": {
+          "type": "string",
+          "default": ""
+        },
+        "seller_event_group_id": {
+          "type": "string",
+          "default": ""
+        },
+        "campaign_tab_id": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "yshopping_get_product",
+    "description": "Fetch Yahoo! Shopping Japan product detail through the app's native API (item-detail/app/v2). product is the search result's product_id (\"{storeId}_{itemCode}\") or a store product URL. Detail images are returned as image_ids (the API hands out ids, not URLs); the main image URL is in image.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "\"{storeId}_{itemCode}\" or store product URL"
+        },
+        "prefectures": {
+          "type": "string",
+          "default": ""
+        },
+        "sku_id": {
+          "type": "string",
+          "default": ""
+        },
+        "donation_id": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "product"
+      ]
+    }
+  },
+  {
+    "name": "yshopping_get_reviews",
+    "description": "Fetch Yahoo! Shopping Japan product reviews. The app's native API has no review-list endpoint; the app itself shows reviews by opening the review page (shopping.yahoo.co.jp/review/item/list) in a WebView, and this tool reads reviews from that page's server-rendered data and, for anything beyond the first 20, a non-default sort, or a filter, from the continuation endpoint the page's own SPA uses. product is the search result's product_id (\"{storeId}_{itemCode}\") or a store product URL. offset is the zero-based index of the first review to return (page through results with offset + count, or the returned next_offset). sort is one of the page's own sort orders: lengthDesc (default, おすすめ順), ratingDesc (評価の高い順), referenceCountDesc (いいねの多い順), postedTimeDesc (新着順), pickUp. rating and sub_review_id apply the page's own review filters (both live-verified). Returns the rating summary (total, average, per-star counts), the reviews, next_offset, and subReviewSummaries — the item's aspect summaries whose id values are what sub_review_id takes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "\"{storeId}_{itemCode}\" or store product URL"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 20,
+          "description": "Max reviews to return"
+        },
+        "offset": {
+          "type": "integer",
+          "default": 0,
+          "description": "Zero-based index of the first review to return"
+        },
+        "sort": {
+          "type": "string",
+          "default": "lengthDesc",
+          "description": "lengthDesc | ratingDesc | referenceCountDesc | postedTimeDesc | pickUp"
+        },
+        "rating": {
+          "type": "integer",
+          "description": "Only reviews with this star rating (the review page's rating filter)"
+        },
+        "sub_review_id": {
+          "type": "integer",
+          "description": "Only reviews that rated this aspect; an id from the item's aspect summaries (subReviewSummaries)"
+        }
+      },
+      "required": [
+        "product"
+      ]
+    }
+  },
+  {
+    "name": "yshopping_suggest_keywords",
+    "description": "Get Yahoo! Shopping Japan keyword suggestions through the suggest endpoint the app uses (suggest-shop.yahooapis.jp, appid built in). Returns keyword completions plus, with detailed (default), category candidates and direct store links. No login.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "keyword": {
+          "type": "string",
+          "description": "Partial keyword to complete"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 20,
+          "description": "Max suggestions (the app's fixed 20)"
+        },
+        "detailed": {
+          "type": "boolean",
+          "default": true,
+          "description": "Also return category and store suggestions"
+        }
+      },
+      "required": [
+        "keyword"
+      ]
+    }
+  },
+  {
+    "name": "amazon_search_products",
+    "description": "Search Amazon.co.jp products by reproducing the Amazon Shopping app's WebView requests (app-format user agent and the app's pre-navigation cookies; no browser engine). sort (the web s parameter): relevancerank, price-asc-rank, price-desc-rank, review-rank, date-desc-rank. Refinements use Amazon's web facet vocabulary, passed through as the app does: department (i:), category_node (n:), price band (p_36), prime_only (p_85), in_stock_only, min_rating (p_72), brand (p_89), seller_id (me), plus raw rh entries. Note: Amazon serves these pages only to Japan-side access in practice.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search keyword (k)"
+        },
+        "asin": {
+          "type": "string",
+          "default": "",
+          "description": "ASIN to search for directly (field-keywords=ASIN form); takes the place of the keyword search"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1
+        },
+        "limit": {
+          "type": "integer",
+          "default": 20,
+          "description": "Client-side cap on returned items"
+        },
+        "sort": {
+          "type": "string",
+          "default": ""
+        },
+        "rank": {
+          "type": "string",
+          "default": "",
+          "description": "The app's rank hand-off parameter"
+        },
+        "department": {
+          "type": "string",
+          "default": ""
+        },
+        "category_node": {
+          "type": "string",
+          "default": ""
+        },
+        "price_min": {
+          "type": "integer"
+        },
+        "price_max": {
+          "type": "integer"
+        },
+        "prime_only": {
+          "type": "boolean",
+          "default": false
+        },
+        "in_stock_only": {
+          "type": "boolean",
+          "default": false
+        },
+        "min_rating": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "description": "Minimum star rating, 1-4"
+        },
+        "brand": {
+          "type": "string",
+          "default": ""
+        },
+        "seller_id": {
+          "type": "string",
+          "default": ""
+        },
+        "rh": {
+          "type": "string",
+          "default": "",
+          "description": "Raw extra rh entries (key:value, comma-joined)"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "amazon_get_product",
+    "description": "Fetch Amazon.co.jp product detail by ASIN or product URL, reproducing the app's WebView request (see amazon_search_products). Extracts title, price, main image, rating and review count from the product page. Requires Japan-side access in practice.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string",
+          "description": "ASIN or product URL"
+        }
+      },
+      "required": [
+        "product"
+      ]
+    }
+  },
+  {
+    "name": "amazon_suggest_keywords",
+    "description": "Get Amazon.co.jp keyword suggestions through the completion endpoint the Amazon Shopping app uses. No login. Requires Japan-side access in practice (see amazon_search_products). Note: Amazon product reviews are not exposed — the review pages sit behind a sign-in wall (verified), so no review tool exists.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "keyword": {
+          "type": "string",
+          "description": "Partial keyword to complete"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 10
+        }
+      },
+      "required": [
+        "keyword"
+      ]
+    }
+  },
+  {
+    "name": "shopping_list_sources",
+    "description": "List APK-derived endpoints and runtime data sources currently supported by Shopping_MCP.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  }
+]

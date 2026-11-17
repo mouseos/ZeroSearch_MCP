@@ -32,138 +32,17 @@ fn int_param(args: &Value, key: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
-fn tool_def(name: &str, description: &str, schema: Value) -> Value {
-    json!({
-        "name": name,
-        "description": description,
-        "inputSchema": schema,
-    })
-}
-
-fn query_prop() -> Value {
-    json!({"type": "string", "description": "Search query. Bing handles Japanese and English well."})
-}
-
-fn market_props() -> Value {
-    json!({
-        "mkt": {"type": "string", "description": "Bing market, e.g. \"ja-JP\" or \"en-US\". Pinning the market is required — without it Bing returns an empty result set. Defaults to \"ja-JP\".", "default": "ja-JP"},
-        "setlang": {"type": "string", "description": "UI language code, e.g. \"ja\" or \"en\". Defaults to \"ja\".", "default": "ja"}
-    })
-}
-
-fn object_schema(mut properties: Value, required: &[&str]) -> Value {
-    properties["query"] = query_prop();
-    json!({"type": "object", "properties": properties, "required": required})
-}
-
-fn paged_schema(limit_default: i64, limit_max: i64, extra: Value) -> Value {
-    let mut props = market_props();
-    props["page"] = json!({"type": "integer", "description": "1-based page number.", "default": 1});
-    props["limit"] = json!({"type": "integer", "description": format!("Max results to return (1-{limit_max})."), "default": limit_default});
-    let extra_obj = extra.as_object().cloned().unwrap_or_default();
-    for (k, v) in extra_obj {
-        props[k] = v;
-    }
-    object_schema(props, &["query"])
-}
-
 // ── Tool definitions ──
 
 pub fn tool_definitions() -> Vec<Value> {
-    vec![
-        tool_def(
-            "bing_web_search",
-            "Search the Microsoft Bing web index via Bing's native v7 search API (the endpoint embedded in the Bing app). Returns title, direct destination URL, the displayed URL and a snippet, plus the reported total hit count and related queries. 10 results per page.",
-            paged_schema(10, 10, json!({})),
-        ),
-        tool_def(
-            "bing_image_search",
-            "Search Bing images. Returns the original image URL, a Bing thumbnail, the page the image appears on and a title. Fetched the way the Bing app receives it (mobile user agent + app-style parameters), the only form where Bing server-renders image results. 12 results per page; this form has no total count.",
-            paged_schema(12, 12, json!({})),
-        ),
-        tool_def(
-            "bing_video_search",
-            "Search Bing videos across YouTube, TikTok, Niconico and other hosts. Returns title, the real watch URL (taken from the result link's churl parameter), hosting site, channel, duration, view count and upload date text.",
-            paged_schema(10, 35, json!({})),
-        ),
-        tool_def(
-            "bing_news_search",
-            "Search Bing News for news articles. Returns headline, article URL, publisher, publish-time text and a snippet. Bing's news page does not paginate, so this returns the first page only.",
-            object_schema(
-                {
-                    let mut props = market_props();
-                    props["limit"] =
-                        json!({"type": "integer", "description": "Max articles to return (1-50).", "default": 10});
-                    props
-                },
-                &["query"],
-            ),
-        ),
-        tool_def(
-            "bing_suggest",
-            "Get Bing autocomplete suggestions for a partial query (the Bing app's own suggestions API). Useful for discovering how people phrase a topic before running a full search. Pass vertical \"images\" or \"videos\" for candidates in those verticals; mkt/setlang select the market the app would request for (the app derives them from the device locale).",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Partial query to complete."},
-                    "vertical": {"type": "string", "description": "\"web\" (default), \"images\" or \"videos\".", "enum": ["web", "images", "videos"], "default": "web"},
-                    "mkt": {"type": "string", "description": "Bing market, e.g. \"ja-JP\" or \"en-US\". Defaults to \"en-US\" (the form the app requests).", "default": "en-US"},
-                    "setlang": {"type": "string", "description": "UI language code, e.g. \"en\" or \"ja\". Defaults to \"en\".", "default": "en"}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "bing_shopping_search",
-            "Search Bing Shopping (the shop vertical the Bing app renders). Returns offer cards with title, price text, seller, rating, image and the product URL.",
-            paged_schema(20, 40, json!({})),
-        ),
-        tool_def(
-            "bing_trending_topics",
-            "Fetch Bing's current trending topics (the same feed the app shows). Takes no query; limit caps the topics returned. Note: on current server behaviour this endpoint answers anonymous requests with HTTP 401, which is reported as a structured error.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "limit": {"type": "integer", "description": "Max topics to return (1-50).", "default": 20},
-                    "mkt": {"type": "string", "description": "Bing market. Defaults to \"en-US\".", "default": "en-US"},
-                    "setlang": {"type": "string", "description": "UI language code. Defaults to \"en\".", "default": "en"}
-                }
-            }),
-        ),
-        tool_def(
-            "bing_visual_search",
-            "Run Bing Visual Search over an image, the way the Bing app's camera search does: pass the image bytes base64-encoded. Returns identification tags with the actions (pages including the image, similar images, related searches) the service attaches. Note: on current server behaviour this endpoint answers anonymous requests with HTTP 401, which is reported as a structured error.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "image_base64": {"type": "string", "description": "The image (JPEG/PNG bytes) encoded as base64."},
-                    "mkt": {"type": "string", "description": "Bing market. Defaults to \"en-US\".", "default": "en-US"},
-                    "setlang": {"type": "string", "description": "UI language code. Defaults to \"en\".", "default": "en"}
-                },
-                "required": ["image_base64"]
-            }),
-        ),
-        tool_def(
-            "bing_build_search_url",
-            "Build the Bing search URL for a query and vertical (web, image, video, news) without performing any search. Works offline.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "vertical": {"type": "string", "description": "\"web\" (default), \"image\", \"video\" or \"news\".", "enum": ["web", "image", "video", "news"], "default": "web"},
-                    "mkt": {"type": "string", "description": "Bing market. Defaults to \"ja-JP\".", "default": "ja-JP"},
-                    "setlang": {"type": "string", "description": "UI language code. Defaults to \"ja\".", "default": "ja"}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "bing_list_verticals",
-            "List the Bing search verticals this server exposes, with the tool name for each. Call this to decide which search tool fits a question.",
-            json!({"type": "object", "properties": {}}),
-        ),
-    ]
+    DEFS.clone()
 }
+
+/// The tool definitions, kept as data (`defs/bing.json`) and
+/// parsed once: building them with `json!` compiled to hundreds of
+/// KiB of machine code for what is a constant document.
+static DEFS: std::sync::LazyLock<Vec<Value>> =
+    std::sync::LazyLock::new(|| super::parse_defs(include_str!("defs/bing.json")));
 
 // ── Error form (unified with Baidu_MCP / Yahoo) ──
 //

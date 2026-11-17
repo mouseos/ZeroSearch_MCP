@@ -32,119 +32,17 @@ fn int_param(args: &Value, key: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
-fn tool_def(name: &str, description: &str, schema: Value) -> Value {
-    json!({
-        "name": name,
-        "description": description,
-        "inputSchema": schema,
-    })
-}
-
-fn query_prop() -> Value {
-    json!({"type": "string", "description": "Search query for Yahoo (US). English works best; this is the US edition of Yahoo Search, separate from Yahoo! JAPAN."})
-}
-
 // ── Tool definitions ──
 
 pub fn tool_definitions() -> Vec<Value> {
-    vec![
-        tool_def(
-            "yahoo_us_web_search",
-            "Search the Yahoo (US) web index. Returns title, real destination URL (Yahoo redirect links are unwrapped), snippet and source site. 7 results per page. Note: this is Yahoo US (search.yahoo.com), not Yahoo! JAPAN.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "page": {"type": "integer", "description": "1-based page number.", "default": 1},
-                    "limit": {"type": "integer", "description": "Max results to return (1-7).", "default": 7}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "yahoo_us_video_search",
-            "Search Yahoo (US) videos across YouTube and other hosts. Returns title, watch URL, duration, source site, description and thumbnail. 60 results per page.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "page": {"type": "integer", "description": "1-based page number.", "default": 1},
-                    "limit": {"type": "integer", "description": "Max results to return (1-60).", "default": 20}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "yahoo_us_image_search",
-            "Search Yahoo (US) images. Returns title, the page the image appears on, the original image URL, a thumbnail, dimensions and the source site. 60 results per page. Pages are fetched by the bundled helper process with a browser-grade client because Yahoo's image host refuses plain HTTP requests. The optional filters are the image SERP's own filter parameters; related queries found on the page are returned as related_queries.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "page": {"type": "integer", "description": "1-based page number.", "default": 1},
-                    "limit": {"type": "integer", "description": "Max results to return (1-60).", "default": 20},
-                    "size": {"type": "string", "enum": ["small", "medium", "large", "wallpaper"], "description": "Image size filter."},
-                    "color": {"type": "string", "enum": ["black", "blue", "brown", "bw", "color", "gray", "green", "orange", "pink", "purple", "red", "teal", "white", "yellow"], "description": "Dominant-colour filter (bw = black & white, color = full colour)."},
-                    "image_type": {"type": "string", "enum": ["clipart", "gif", "linedrawing", "photo", "transparent"], "description": "Image type filter."},
-                    "layout": {"type": "string", "enum": ["square", "tall", "wide"], "description": "Aspect/layout filter."},
-                    "feature": {"type": "string", "enum": ["face", "portrait", "nonprofit"], "description": "Content feature filter."},
-                    "license": {"type": "string", "enum": ["cc", "fmsu", "fmsuc", "fsu", "fsuc", "pd"], "description": "Licence filter (Yahoo's licence codes)."},
-                    "time": {"type": "string", "enum": ["day", "week", "month", "year"], "description": "Recency filter."},
-                    "safesearch": {"type": "string", "enum": ["r", "p"], "description": "SafeSearch setting (the vm parameter): \"r\" = on, \"p\" = off. Omitted leaves the server default in force."}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "yahoo_us_news_search",
-            "Search Yahoo (US) news articles. Returns headline, article URL, publisher, relative publish time and a snippet. 10 results per page.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "page": {"type": "integer", "description": "1-based page number.", "default": 1},
-                    "limit": {"type": "integer", "description": "Max articles to return (1-10).", "default": 10}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "yahoo_us_suggest",
-            "Get Yahoo (US) autocomplete suggestions for a partial query. Useful for discovering how users actually phrase a topic before running a full search.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Partial query to complete."},
-                    "limit": {"type": "integer", "description": "Max suggestions to return (1-20).", "default": 10}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "yahoo_us_build_search_url",
-            "Build the Yahoo (US) search URL for a query and vertical (web, image, video, news, suggest) without performing any search. Useful for handing a user a link to open themselves.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "vertical": {
-                        "type": "string",
-                        "description": "Which search vertical the URL should open.",
-                        "enum": ["web", "image", "video", "news", "suggest"],
-                        "default": "web"
-                    },
-                    "page": {"type": "integer", "description": "1-based page number the URL should open.", "default": 1}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "yahoo_us_list_verticals",
-            "List the Yahoo (US) search verticals this server exposes, with the tool name and paging behaviour of each. Call this to decide which search tool fits a question.",
-            json!({"type": "object", "properties": {}}),
-        ),
-    ]
+    DEFS.clone()
 }
+
+/// The tool definitions, kept as data (`defs/yahoo_us.json`) and
+/// parsed once: building them with `json!` compiled to hundreds of
+/// KiB of machine code for what is a constant document.
+static DEFS: std::sync::LazyLock<Vec<Value>> =
+    std::sync::LazyLock::new(|| super::parse_defs(include_str!("defs/yahoo_us.json")));
 
 // ── Dispatch ──
 

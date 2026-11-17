@@ -52,14 +52,6 @@ fn int_param(args: &Value, key: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
-fn tool_def(name: &str, description: &str, schema: Value) -> Value {
-    json!({
-        "name": name,
-        "description": description,
-        "inputSchema": schema,
-    })
-}
-
 fn youtube_error_result(err: YoutubeError) -> Value {
     json!({
         "provider": "youtube",
@@ -102,115 +94,14 @@ fn video_id_param(args: &Value) -> Result<String> {
 // ── Tool definitions ──
 
 pub fn tool_definitions() -> Vec<Value> {
-    vec![
-        tool_def(
-            "youtube_search_videos",
-            "Search YouTube through the YouTube Android app's own InnerTube API (guest session, no login). `items` holds the video results (id, title, watch URL, channel, view count, duration); `results` holds every result kind in page order — videos, Shorts, playlists and channels — each tagged with its kind. Also returns the estimated total and a continuation token. Pass `continuation` (from a previous call) to fetch the next page; filters and sort are the app's own search parameters.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search keywords. Required unless `continuation` is given."},
-                    "continuation": {"type": "string", "description": "Continuation token from a previous youtube_search_videos result (`next_continuation`); fetches the next page of that search."},
-                    "sort": {"type": "string", "enum": ["relevance", "rating", "upload_date", "view_count"], "description": "Sort order (default relevance)."},
-                    "upload_date": {"type": "string", "enum": ["hour", "today", "week", "month", "year"], "description": "Only videos uploaded within this window."},
-                    "type": {"type": "string", "enum": ["video", "channel", "playlist", "movie"], "description": "Result type filter (app search parameter)."},
-                    "duration": {"type": "string", "enum": ["short", "medium", "long"], "description": "Duration filter: short (under 4 min), medium (4-20 min), long (over 20 min)."}
-                },
-                "required": []
-            }),
-        ),
-        tool_def(
-            "youtube_get_video",
-            "Get one YouTube video's details through the app's InnerTube API: title, channel, length, view count, description, keywords, thumbnail, caption tracks. The like count is merged from the watch-next response and the exact view count plus the relative upload time (upload_time_text, e.g. \"5y ago\") from updated_metadata — the same entities the app renders. No response in the app's flow carries an absolute calendar publish date, so published_date stays null.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "video_id": {"type": "string", "description": "Video id (e.g. \"5C_HPTJg5ek\"), or a watch / Shorts / youtu.be URL."}
-                },
-                "required": ["video_id"]
-            }),
-        ),
-        tool_def(
-            "youtube_get_related",
-            "Get the related videos shown next to a YouTube video (the app's watch-next list, about 20 entries with title, channel, view count and duration), the watched video's like count, and the continuation tokens: related_continuation pages this list (pass it back as `continuation`), comments_continuation opens the comments section — pass it to youtube_get_comments.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "video_id": {"type": "string", "description": "Video id, or a watch / Shorts / youtu.be URL. Required unless `continuation` is given."},
-                    "continuation": {"type": "string", "description": "Related-list continuation token from a previous youtube_get_related result (`related_continuation`)."}
-                },
-                "required": []
-            }),
-        ),
-        tool_def(
-            "youtube_get_captions",
-            "Get a YouTube video's caption transcript through the app's own two-step caption flow (player-issued track URL, then the timedtext document). Returns the cues with timestamps plus the joined text. `language` selects a track by language code; without it a manual track is preferred over the automatic (ASR) one.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "video_id": {"type": "string", "description": "Video id, or a watch / Shorts / youtu.be URL."},
-                    "language": {"type": "string", "description": "Caption language code (e.g. \"en\", \"ja\")."}
-                },
-                "required": ["video_id"]
-            }),
-        ),
-        tool_def(
-            "youtube_get_comments",
-            "Get one page of a YouTube video's comments (about 20, with author, text, like count text and reply count) through the app's InnerTube next API. The first page's token comes from youtube_get_related (`comments_continuation`); the result's `next_continuation` fetches the following page.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "continuation": {"type": "string", "description": "Comments continuation token from youtube_get_related or a previous youtube_get_comments result."}
-                },
-                "required": ["continuation"]
-            }),
-        ),
-        tool_def(
-            "bilibili_get_video",
-            "Get one Bilibili video's details through the app's viewunite View call, as a guest — no login. Identify the video by BV id / video URL (video_id) or by numeric aid. Returns title, author, cover, description, duration, play/danmaku/like/coin/favorite/share counts, publish time and the part (分P) list.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "video_id": {"type": "string", "description": "BV id (e.g. \"BV1xx411c7mD\") or a bilibili video URL."},
-                    "aid": {"type": "integer", "description": "Numeric av id; alternative to video_id."}
-                },
-                "required": []
-            }),
-        ),
-        tool_def(
-            "bilibili_get_related",
-            "Get the related videos Bilibili shows next to a video (viewunite RelatesFeed), as a guest — no login. Identify the video by BV id / video URL (video_id) or by numeric aid. `next` continues the feed.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "video_id": {"type": "string", "description": "BV id or a bilibili video URL."},
-                    "aid": {"type": "integer", "description": "Numeric av id; alternative to video_id."},
-                    "limit": {"type": "integer", "description": "Page size.", "default": 20},
-                    "next": {"type": "string", "description": "Pagination token from a previous result; omit for the first page."}
-                },
-                "required": []
-            }),
-        ),
-        tool_def(
-            "bilibili_search_videos",
-            "Search Bilibili videos through the Bilibili Android app's own gRPC search (SearchAll), as a guest — no login. Returns title, BV id, author, cover, duration, play and danmaku counts and the watch URL, plus a `next` token for paging.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search keywords. Chinese works best; Bilibili is a Chinese platform."},
-                    "limit": {"type": "integer", "description": "Page size (results per page).", "default": 20},
-                    "next": {"type": "string", "description": "Pagination token from a previous result's `next` field; omit for the first page."},
-                    "order": {"type": "integer", "description": "Sort order code of the app's SearchAll request (0 = comprehensive, the app default). Passed through unchanged.", "default": 0},
-                    "tid_list": {"type": "string", "description": "Region (tid) filter, in the app's own list format. Passed through unchanged."},
-                    "duration_list": {"type": "string", "description": "Duration filter, in the app's own list format. Passed through unchanged."},
-                    "pub_time_begin_s": {"type": "integer", "description": "Only videos published at or after this unix timestamp (seconds)."},
-                    "pub_time_end_s": {"type": "integer", "description": "Only videos published at or before this unix timestamp (seconds)."}
-                },
-                "required": ["query"]
-            }),
-        ),
-    ]
+    DEFS.clone()
 }
+
+/// The tool definitions, kept as data (`defs/media.json`) and
+/// parsed once: building them with `json!` compiled to hundreds of
+/// KiB of machine code for what is a constant document.
+static DEFS: std::sync::LazyLock<Vec<Value>> =
+    std::sync::LazyLock::new(|| super::parse_defs(include_str!("defs/media.json")));
 
 // ── Dispatch ──
 

@@ -3,7 +3,7 @@
 //! guest, no login.
 
 use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::Providers;
 
@@ -36,49 +36,17 @@ fn int_param(args: &Value, key: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
-fn tool_def(name: &str, description: &str, schema: Value) -> Value {
-    json!({
-        "name": name,
-        "description": description,
-        "inputSchema": schema,
-    })
-}
-
 // ── Tool definitions ──
 
 pub fn tool_definitions() -> Vec<Value> {
-    vec![
-        tool_def(
-            "csdn_search_articles",
-            "Search CSDN through the CSDN app's own gateway API (the same assembled search the Android app uses, with its search categories). Returns titles, authors, digests, URLs and view counts. Works without login. There is no forum category: the app has no forum search (verified in the current app), so forum/bbs is rejected. The ebook category exists in the app but the server currently returns it empty. search_user_name switches to the app's personal-home search (only for categories all/blog/ask/download/vip, as in the app).",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search keywords. Chinese works best; CSDN is a Chinese developer platform."},
-                    "page": {"type": "integer", "minimum": 1, "description": "1-based page (default 1)"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Results per page (default 20)"},
-                    "category": {"type": "string", "enum": ["all", "blog", "ask", "download", "course", "mall", "ebook", "user", "vip", "special_column"], "description": "Search category (the app's search tabs; default all). all sends the current app's all_v2 form."},
-                    "sort": {"type": "string", "description": "Sort: relevance (default) | latest | popular, or the app's raw second_rank_name_sort values (times_rank, hot_rank)"},
-                    "filter": {"type": "string", "description": "The app's one-button filter: vip_content (blog/course/mall) | accepted (ask)"},
-                    "subfilter": {"type": "string", "description": "Raw subfilter expression; takes precedence over filter"},
-                    "search_user_name": {"type": "string", "description": "Restrict to one author's personal-home search (app channel switch)"}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "csdn_get_article",
-            "Fetch a CSDN blog article (title, author, full body HTML and text, tags, counts) through the CSDN app's BlogPhoenix API. Works without login.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "article_id": {"type": "string", "description": "Numeric article id, or a blog.csdn.net article URL"}
-                },
-                "required": ["article_id"]
-            }),
-        ),
-    ]
+    DEFS.clone()
 }
+
+/// The tool definitions, kept as data (`defs/articles.json`) and
+/// parsed once: building them with `json!` compiled to hundreds of
+/// KiB of machine code for what is a constant document.
+static DEFS: std::sync::LazyLock<Vec<Value>> =
+    std::sync::LazyLock::new(|| super::parse_defs(include_str!("defs/articles.json")));
 
 // ── Dispatch ──
 

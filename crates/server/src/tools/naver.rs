@@ -32,164 +32,17 @@ fn int_param(args: &Value, key: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
-fn tool_def(name: &str, description: &str, schema: Value) -> Value {
-    json!({
-        "name": name,
-        "description": description,
-        "inputSchema": schema,
-    })
-}
-
-fn query_prop() -> Value {
-    json!({"type": "string", "description": "Search query. Korean works best; Naver indexes Korean-language content far more deeply than other engines."})
-}
-
-fn page_prop() -> Value {
-    json!({"type": "integer", "description": "1-based page number.", "default": 1})
-}
-
 // ── Tool definitions ──
 
 pub fn tool_definitions() -> Vec<Value> {
-    vec![
-        tool_def(
-            "naver_search",
-            "Run a Naver integrated search and get the subject sections (news, images, blog, dictionary, web documents, ...) in page order, each with its own results. Best first tool when the right vertical is unclear, or for a broad overview of a Korean topic.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "limit": {"type": "integer", "description": "Max results to keep per section (1-10).", "default": 5}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "naver_web_search",
-            "Search Naver's web-results view (external web documents). Returns title, URL, snippet and Naver's rank. The tab serves one top-selection batch, so only page 1 exists — asking for page 2 returns an explicit error rather than a repeat of page 1.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "page": page_prop(),
-                    "limit": {"type": "integer", "description": "Max results to return (1-20).", "default": 10}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "naver_image_search",
-            "Search Naver images. Returns the original image URL (recovered from behind Naver's thumbnail proxy), a thumbnail, the source page, the source label and pixel dimensions. Pages follow the more-API chain the page itself issues (up to page 10).",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "page": page_prop(),
-                    "limit": {"type": "integer", "description": "Max images to return (1-50).", "default": 10}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "naver_news_search",
-            "Search Naver News for Korean news articles. Returns headline, article URL, publisher, relative publish time, snippet and thumbnail. Pages follow the more-API chain the page itself issues (up to page 10).",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "page": page_prop(),
-                    "limit": {"type": "integer", "description": "Max articles to return (1-30).", "default": 10}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "naver_video_search",
-            "Search Naver videos across YouTube and other hosts. Returns title, watch URL, hosting platform, channel, duration, relative upload time, view count and thumbnail. Pages follow the more-API chain the page itself issues (up to page 10).",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "page": page_prop(),
-                    "limit": {"type": "integer", "description": "Max videos to return (1-48).", "default": 10}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "naver_blog_search",
-            "Search Naver Blog posts. Returns title, post URL, blog name and id, relative publish time, snippet and thumbnail. Pages follow the more-API chain the page itself issues (up to page 10).",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "page": page_prop(),
-                    "limit": {"type": "integer", "description": "Max posts to return (1-30).", "default": 10}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "naver_cafe_search",
-            "Search the Naver Cafe tab (community posts). Returns title, post URL, cafe name, relative publish time and snippet. Only the first page exists as a server-rendered page (the app's continuation is a native API this build does not reproduce), so page > 1 is an explicit error.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "page": page_prop(),
-                    "limit": {"type": "integer", "description": "Max posts to return (1-30).", "default": 10}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "naver_kin_search",
-            "Search the Naver 지식iN (knowledge Q&A) tab. Returns question title, URL, relative publish time, snippet, answer count, category and the status badge (e.g. 답변완료). Only the first page exists as a server-rendered page, so page > 1 is an explicit error.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "page": page_prop(),
-                    "limit": {"type": "integer", "description": "Max questions to return (1-30).", "default": 10}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "naver_suggest",
-            "Get Naver autocomplete suggestions for a partial query. Useful for discovering how Korean users actually phrase a topic before running a full search.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Partial query to complete."}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "naver_build_search_url",
-            "Build the Naver search URL for a query and vertical (integrated, web, image, news, video, blog) exactly as the client fetches it — no network access. Useful for handing a human a link to open.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "vertical": {
-                        "type": "string",
-                        "description": "Which search page to build the URL for.",
-                        "enum": ["integrated", "web", "image", "news", "video", "blog"],
-                        "default": "integrated"
-                    }
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "naver_list_verticals",
-            "List the Naver search verticals this server exposes, with the tool name and paging behaviour of each, plus the tabs that exist but are not supported. Call this to decide which search tool fits a question.",
-            json!({"type": "object", "properties": {}}),
-        ),
-    ]
+    DEFS.clone()
 }
+
+/// The tool definitions, kept as data (`defs/naver.json`) and
+/// parsed once: building them with `json!` compiled to hundreds of
+/// KiB of machine code for what is a constant document.
+static DEFS: std::sync::LazyLock<Vec<Value>> =
+    std::sync::LazyLock::new(|| super::parse_defs(include_str!("defs/naver.json")));
 
 // ── Dispatch ──
 

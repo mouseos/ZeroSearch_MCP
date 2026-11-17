@@ -1,0 +1,125 @@
+[
+  {
+    "name": "baidu_search",
+    "description": "Search Baidu through the APK-derived (baiduboxapp) anonymous search flow and return the aggregated multi-page result JSON (same shape as the Python baidu_search client, plus provider/ok). Per-page failures are recorded in diagnostics.errors and already-fetched pages are kept.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query (aliases: q, keyword)"
+        },
+        "max_pages": {
+          "type": "integer",
+          "default": 3,
+          "description": "Maximum number of result pages to fetch"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "baidu_search_page",
+    "description": "Fetch and parse exactly one Baidu search-result page. With page_url omitted the first-page URL is built from query; otherwise page_url is fetched as-is (server-issued pagination URL). The optional page (1-based) builds the URL for that page instead (pn offset), taking precedence over page_url. Failures return {provider, ok:false, error:{kind,message,url,status_code}} with the Python client's error kind.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query (aliases: q, keyword)"
+        },
+        "page_url": {
+          "type": "string",
+          "description": "Optional server-issued page URL to fetch as-is"
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional 1-based page number; the page URL is built from the query (page 1 is the initial URL, later pages use the pn offset)"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "baidu_suggest",
+    "description": "Fetch Baidu search suggestions from the app's three suggestion systems: classic (the classic sug endpoint — on current server behaviour this returns an HTTP error, recorded per-system), recommendations (SugRec related/guess words) and inputbox (the AI input box: chat suggestions and content groups). With system omitted all three are queried and per-system failures are recorded in the systems field instead of failing the call.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Partial query text (aliases: q, keyword)"
+        },
+        "system": {
+          "type": "string",
+          "enum": [
+            "classic",
+            "recommendations",
+            "inputbox"
+          ],
+          "description": "Optional: query only this suggestion system instead of all three"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "baidu_parse_search_results",
+    "description": "Parse a saved Baidu (APK/wise) search-result HTML page into structured JSON, offline (no network). Returns the Python baidu_parser page dict plus provider/ok.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "html": {
+          "type": "string",
+          "description": "Search-result HTML"
+        },
+        "query": {
+          "type": "string",
+          "description": "Search query the page belongs to"
+        },
+        "page_url": {
+          "type": "string",
+          "description": "URL the HTML was fetched from (for relative-URL resolution and pn detection)"
+        }
+      },
+      "required": [
+        "html"
+      ]
+    }
+  },
+  {
+    "name": "baidu_build_search_url",
+    "description": "Build the first-page Baidu search URL for a query (APK bq0.m reproduction: pu merges, https upgrade, ant_ct, t_samp). now_ms pins the clock for reproducibility; omit for the current time.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query (aliases: q, keyword)"
+        },
+        "now_ms": {
+          "type": "integer",
+          "description": "Optional epoch milliseconds to pin the generated URL"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "baidu_list_sources",
+    "description": "List the search providers and tools supported by Baidu_MCP.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  }
+]

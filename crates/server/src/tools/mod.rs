@@ -40,6 +40,13 @@ pub fn tool_definitions() -> Vec<Value> {
     defs
 }
 
+/// Parse a module's embedded tool-definition document (a JSON array).
+/// The documents are part of the source tree and covered by tests,
+/// so a malformed one is a build defect, not a runtime condition.
+pub(crate) fn parse_defs(text: &str) -> Vec<Value> {
+    serde_json::from_str(text).expect("embedded tool definitions are valid JSON")
+}
+
 fn tool_names(defs: &[Value]) -> Vec<String> {
     defs.iter()
         .filter_map(|d| d.get("name").and_then(Value::as_str).map(str::to_string))

@@ -32,110 +32,17 @@ fn int_param(args: &Value, key: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
-fn tool_def(name: &str, description: &str, schema: Value) -> Value {
-    json!({
-        "name": name,
-        "description": description,
-        "inputSchema": schema,
-    })
-}
-
-fn query_prop() -> Value {
-    json!({"type": "string", "description": "Search query. Russian works best; Yandex indexes Russian-language content far more deeply than other engines."})
-}
-
 // ── Tool definitions ──
 
 pub fn tool_definitions() -> Vec<Value> {
-    vec![
-        tool_def(
-            "yandex_web_search",
-            "Search the Yandex web index. Best general-purpose tool for finding Russian-language web pages, shops, official sites and documentation. Returns title, destination URL, displayed path and snippet. About 10 organic results per page; page is 1-based (the session flow is verified live for the first two pages). With include_special_cards the result also carries the page's non-organic cards (AI answer, ad blocks, related searches) under special_cards.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "page": {"type": "integer", "description": "1-based page number.", "default": 1},
-                    "limit": {"type": "integer", "description": "Max results to return (1-10).", "default": 10},
-                    "include_special_cards": {"type": "boolean", "description": "Also return the page's special cards (AI answer, ads, related searches).", "default": false}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "yandex_image_search",
-            "Search Yandex images. Returns the original image URL, a Yandex thumbnail, pixel dimensions and the source page each image appears on. 20 results per page; page is 1-based.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "page": {"type": "integer", "description": "1-based page number.", "default": 1},
-                    "limit": {"type": "integer", "description": "Max results to return (1-20).", "default": 20}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "yandex_video_search",
-            "Search Yandex videos across VK, YouTube, RuTube, OK and other hosts. Returns title, the watch URL on the hosting service, duration, provider and publish date.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "page": {"type": "integer", "description": "1-based page number.", "default": 1},
-                    "limit": {"type": "integer", "description": "Max results to return (1-20).", "default": 20}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "yandex_suggest",
-            "Get Yandex autocomplete suggestions for a partial query. Useful for discovering how Russian users actually phrase a topic before running a full search.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Partial query to complete."},
-                    "limit": {"type": "integer", "description": "Max suggestions to return (1-20).", "default": 10}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "yandex_suggest_endings",
-            "Get Yandex query-ending suggestions: the completions the search box offers for how a query could end (the suggest service's endings mode), as opposed to yandex_suggest's whole-query completions.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Partial query to complete."},
-                    "limit": {"type": "integer", "description": "Max suggestions to return (1-20).", "default": 10}
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "yandex_build_search_url",
-            "Build the Yandex search URL for a query and vertical (web, image, video, suggest) without performing a search. Useful for handing a link to the user. News has no URL builder: it moved to dzen.ru and requires Yandex SSO.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": query_prop(),
-                    "vertical": {
-                        "type": "string",
-                        "description": "Which search the URL opens.",
-                        "enum": ["web", "image", "video", "suggest"],
-                        "default": "web"
-                    }
-                },
-                "required": ["query"]
-            }),
-        ),
-        tool_def(
-            "yandex_list_verticals",
-            "List the Yandex search verticals this server exposes, with the tool name and paging behaviour of each. News is listed as unsupported, with the reason. Call this to decide which search tool fits a question.",
-            json!({"type": "object", "properties": {}}),
-        ),
-    ]
+    DEFS.clone()
 }
+
+/// The tool definitions, kept as data (`defs/yandex.json`) and
+/// parsed once: building them with `json!` compiled to hundreds of
+/// KiB of machine code for what is a constant document.
+static DEFS: std::sync::LazyLock<Vec<Value>> =
+    std::sync::LazyLock::new(|| super::parse_defs(include_str!("defs/yandex.json")));
 
 // ── Error form (unified with the sibling search MCPs) ──
 //
