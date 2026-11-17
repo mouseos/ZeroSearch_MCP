@@ -108,10 +108,6 @@ pub fn signature(string_to_sign: &str) -> String {
 /// Login-only headers (Authorization, JWT-TOKEN, UserToken,
 /// X-Access-Token) are absent for a guest session, matching the app
 /// used while logged out.
-pub struct GatewayHeaders {
-    pub headers: Vec<(String, String)>,
-}
-
 pub fn build_headers(
     method: &str,
     path: &str,
