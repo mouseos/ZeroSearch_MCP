@@ -318,30 +318,21 @@ impl RakumaClient {
         let limit = if limit > 0 { limit } else { 20 };
         let page = page.max(1);
 
-        // Step 1: Fetch shop page for aggregate rating from JSON-LD
+        // The shop page (aggregate rating from JSON-LD) and the review
+        // page are independent, so both are fetched together. The
+        // review page has no server-side pagination (live-verified
+        // 2026-11-08: `?page=` ignored, no pagination links, 400
+        // reviews carried in one page), so the requested page is
+        // sliced out of its full list [S1-34].
         let shop_url = format!("{BASE}/shop/{seller_hash}");
-        let shop_resp = self
-            .client
-            .get(&shop_url)
-            .send()
-            .await?
-            .error_for_status()?;
-        let shop_html = shop_resp.text().await?;
+        let review_url = review_page_url(seller_hash, page);
+        let fetch = |url: String| async move {
+            let resp = self.client.get(&url).send().await?.error_for_status()?;
+            Ok::<_, anyhow::Error>(resp.text().await?)
+        };
+        let (shop_html, review_html) = tokio::try_join!(fetch(shop_url), fetch(review_url))?;
 
         let (aggregate_rating, seller_name) = extract_aggregate_rating(&shop_html);
-
-        // Step 2: Fetch the review page and slice the requested page
-        // out of its full list [S1-34]. The page has no server-side
-        // pagination (live-verified 2026-11-08: `?page=` ignored, no
-        // pagination links, 400 reviews carried in one page).
-        let review_url = review_page_url(seller_hash, page);
-        let review_resp = self
-            .client
-            .get(&review_url)
-            .send()
-            .await?
-            .error_for_status()?;
-        let review_html = review_resp.text().await?;
 
         let all = extract_reviews(&review_html, 100_000);
         let (reviews, total_on_page) = review_page_window(&all, page, limit);
