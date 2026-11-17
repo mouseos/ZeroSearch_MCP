@@ -589,7 +589,7 @@ impl GoofishClient {
             timestamp: Some(timestamp),
             utdid: Some(utdid),
             device_id,
-            umid_token: sign_result.x_umt.clone(),
+            umid_token: None,
             sid: None,
             uid: None,
             ttid: if ttid.is_empty() { None } else { Some(ttid) },
@@ -651,16 +651,6 @@ impl GoofishClient {
                     if let Some(value) = value.as_str() {
                         request = request.header(name.as_str(), value);
                     }
-                }
-            }
-            if let Some(wua) = &sign_result.x_mini_wua {
-                if !wua.is_empty() {
-                    request = request.header("x-mini-wua", wua.as_str());
-                }
-            }
-            if let Some(sgext) = &sign_result.x_sgext {
-                if !sgext.is_empty() {
-                    request = request.header("x-sgext", sgext.as_str());
                 }
             }
             match request.send().await {
