@@ -1,0 +1,14 @@
+[package]
+name = "zero-search-common"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Small text helpers shared by the zero-search providers: HTML entity decoding, query-value percent-encoding and limit clamping."
+repository = "https://github.com/mouseos/ZeroSearch_MCP"
+
+[lib]
+name = "zs_common"
+path = "src/lib.rs"
+
+[dependencies]
+regex = { workspace = true }

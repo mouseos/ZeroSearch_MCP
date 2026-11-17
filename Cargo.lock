@@ -544,6 +544,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "url",
+ "zero-search-common",
  "zero-search-tls",
 ]
 
@@ -2707,6 +2708,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "url",
+ "zero-search-common",
  "zero-search-tls",
 ]
 
@@ -4156,6 +4158,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "zero-search-common",
  "zero-search-tls",
 ]
 
@@ -5822,6 +5825,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "zero-search-common",
  "zero-search-tls",
 ]
 
@@ -5836,6 +5840,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "zero-search-common",
  "zero-search-tls",
 ]
 
@@ -5849,6 +5854,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "zero-search-common",
  "zero-search-tls",
 ]
 
@@ -6026,6 +6032,13 @@ dependencies = [
  "yahoo-us-mcp-provider",
  "yandex-mcp-provider",
  "youtube-mcp-provider",
+]
+
+[[package]]
+name = "zero-search-common"
+version = "0.1.0"
+dependencies = [
+ "regex",
 ]
 
 [[package]]

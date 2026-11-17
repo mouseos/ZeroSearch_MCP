@@ -31,6 +31,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
+use zs_common::urlencode;
 #[cfg(not(feature = "curl"))]
 use zs_tls::SharedTls;
 
@@ -252,28 +253,28 @@ pub fn retain_price_band(items: &mut Vec<Item>, min: Option<i64>, max: Option<i6
 
 /// Build the search URL. Pure; unit-tested.
 pub fn build_search_url(params: &SearchParams) -> String {
-    let mut url = format!("{HOST}/s?k={}", url_encode(&params.query));
+    let mut url = format!("{HOST}/s?k={}", urlencode(&params.query));
     if !params.sort.is_empty() {
-        url.push_str(&format!("&s={}", url_encode(&params.sort)));
+        url.push_str(&format!("&s={}", urlencode(&params.sort)));
     }
     if !params.rank.is_empty() {
-        url.push_str(&format!("&rank={}", url_encode(&params.rank)));
+        url.push_str(&format!("&rank={}", urlencode(&params.rank)));
     }
     let rh = build_rh(params);
     if !rh.is_empty() {
-        url.push_str(&format!("&rh={}", url_encode(&rh)));
+        url.push_str(&format!("&rh={}", urlencode(&rh)));
     }
     if !params.seller_id.is_empty() {
-        url.push_str(&format!("&me={}", url_encode(&params.seller_id)));
+        url.push_str(&format!("&me={}", urlencode(&params.seller_id)));
     }
     if !params.asin.is_empty() {
-        url.push_str(&format!("&field-asin={}", url_encode(&params.asin)));
+        url.push_str(&format!("&field-asin={}", urlencode(&params.asin)));
         let hidden = if params.query.is_empty() {
             params.asin.as_str()
         } else {
             params.query.as_str()
         };
-        url.push_str(&format!("&hidden-keywords={}", url_encode(hidden)));
+        url.push_str(&format!("&hidden-keywords={}", urlencode(hidden)));
     }
     if params.page > 1 {
         url.push_str(&format!("&page={}", params.page));
@@ -299,19 +300,6 @@ pub fn extract_asin(product: &str) -> String {
         .next()
         .unwrap_or(s)
         .to_string()
-}
-
-fn url_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() * 2);
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }
 
 // ---------------------------------------------------------------------------
@@ -513,7 +501,7 @@ pub fn build_suggest_url(keyword: &str, limit: i32) -> String {
     let limit = if limit > 0 { limit } else { 10 };
     format!(
         "{COMPLETION_HOST}/api/2017/suggestions?prefix={}&alias=aps&mid={MARKETPLACE_ID}&site-variant=android-mshop&version=2&limit={limit}&suggestion-type=KEYWORD&event=onkeypress&lop=ja-JP",
-        url_encode(keyword)
+        urlencode(keyword)
     )
 }
 

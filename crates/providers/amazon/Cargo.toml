@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 zs_tls = { workspace = true }
+zs_common = { workspace = true }
 tokio = { workspace = true }
 # The transport is reqwest on the workspace's single rustls stack
 # (live-verified against amazon.co.jp, 2026-11-17). libcurl is kept

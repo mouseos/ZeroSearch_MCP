@@ -4,6 +4,8 @@ use anyhow::anyhow;
 use base64::Engine;
 use regex::Regex;
 use std::sync::LazyLock;
+use zs_common::TAG_RE;
+pub use zs_common::{clamp_limit, decode_entities, urlencode};
 
 /// Desktop Chrome UA — the web / video / news pages only render their
 /// results server-side for a desktop-class agent (APK analysis, round 1).
@@ -14,11 +16,6 @@ pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb
 pub const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
 
 pub const ACCEPT_LANGUAGE: &str = "ja,en-US;q=0.9,en;q=0.8";
-
-static TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]*>").unwrap());
-
-static NUMERIC_ENTITY_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"&#(x[0-9a-fA-F]+|[0-9]+);").unwrap());
 
 static DIGITS_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[0-9][0-9,]*").unwrap());
 
@@ -49,60 +46,6 @@ pub fn clean_text(s: &str) -> String {
     let without_markers = without_tags.replace(['\u{e000}', '\u{e001}'], "");
     let decoded = decode_entities(&without_markers);
     decoded.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-pub fn decode_entities(s: &str) -> String {
-    let named = s
-        .replace("&nbsp;", " ")
-        .replace("&middot;", "·")
-        .replace("&hellip;", "…")
-        .replace("&mdash;", "—")
-        .replace("&ndash;", "–")
-        .replace("&laquo;", "«")
-        .replace("&raquo;", "»")
-        .replace("&lsquo;", "\u{2018}")
-        .replace("&rsquo;", "\u{2019}")
-        .replace("&ldquo;", "\u{201c}")
-        .replace("&rdquo;", "\u{201d}")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&apos;", "'")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">");
-
-    let numeric = NUMERIC_ENTITY_RE.replace_all(&named, |caps: &regex::Captures| {
-        let raw = &caps[1];
-        let code = if let Some(hex) = raw.strip_prefix('x').or_else(|| raw.strip_prefix('X')) {
-            u32::from_str_radix(hex, 16).ok()
-        } else {
-            raw.parse::<u32>().ok()
-        };
-        code.and_then(char::from_u32)
-            .map(String::from)
-            .unwrap_or_else(|| caps[0].to_string())
-    });
-
-    // `&amp;` last so `&amp;lt;` does not collapse into a real `<`.
-    numeric.replace("&amp;", "&")
-}
-
-/// Percent-encode a string for use in a query value (RFC 3986 unreserved set).
-pub fn urlencode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() * 3);
-    for byte in s.as_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(*byte as char)
-            }
-            _ => out.push_str(&format!("%{:02X}", byte)),
-        }
-    }
-    out
-}
-
-/// Clamp a caller-supplied limit into a sane range.
-pub fn clamp_limit(limit: i64, max: i64) -> usize {
-    limit.clamp(1, max) as usize
 }
 
 /// Look up one query parameter in a URL (percent-decoded by the URL parser).

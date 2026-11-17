@@ -2,9 +2,9 @@
 //! HTML/entity cleanup and query building.
 
 use anyhow::{anyhow, Result};
-use regex::Regex;
 use serde_json::Value;
-use std::sync::LazyLock;
+use zs_common::TAG_RE;
+pub use zs_common::{clamp_limit, decode_entities, urlencode};
 
 /// User agent of the official Yandex app (Yandex Start) web view, as measured
 /// against the live service. Yandex serves the touch result pages — and only
@@ -20,11 +20,6 @@ pub const YANDEX_FLAGS: &str = "appsearch-header=1;disable_intents=1;accept-api=
 /// The `ui` query parameter the app attaches to its search page
 /// loads (`WebVerticalsUtils.b()`; audit W-39).
 pub const UI_PARAM: &str = "ui=webmobileapp.yandex";
-
-static TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]*>").unwrap());
-
-static NUMERIC_ENTITY_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"&#(x[0-9a-fA-F]+|[0-9]+);").unwrap());
 
 /// Extract the touch app's initial state: a JSON document stored,
 /// HTML-entity-escaped, in a `data-state="…"` attribute. Several elements
@@ -114,55 +109,6 @@ pub fn clean_text(s: &str) -> String {
     decode_entities(&without_markers).trim().to_string()
 }
 
-pub fn decode_entities(s: &str) -> String {
-    let named = s
-        .replace("&nbsp;", " ")
-        .replace("&middot;", "·")
-        .replace("&hellip;", "…")
-        .replace("&mdash;", "—")
-        .replace("&ndash;", "–")
-        .replace("&laquo;", "«")
-        .replace("&raquo;", "»")
-        .replace("&lsquo;", "\u{2018}")
-        .replace("&rsquo;", "\u{2019}")
-        .replace("&ldquo;", "\u{201c}")
-        .replace("&rdquo;", "\u{201d}")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&apos;", "'")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">");
-
-    let numeric = NUMERIC_ENTITY_RE.replace_all(&named, |caps: &regex::Captures| {
-        let raw = &caps[1];
-        let code = if let Some(hex) = raw.strip_prefix('x').or_else(|| raw.strip_prefix('X')) {
-            u32::from_str_radix(hex, 16).ok()
-        } else {
-            raw.parse::<u32>().ok()
-        };
-        code.and_then(char::from_u32)
-            .map(String::from)
-            .unwrap_or_else(|| caps[0].to_string())
-    });
-
-    // `&amp;` last so `&amp;lt;` does not collapse into a real `<`.
-    numeric.replace("&amp;", "&")
-}
-
-/// Percent-encode a string for use in a query value (RFC 3986 unreserved set).
-pub fn urlencode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() * 3);
-    for byte in s.as_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(*byte as char)
-            }
-            _ => out.push_str(&format!("%{:02X}", byte)),
-        }
-    }
-    out
-}
-
 pub fn get_str(v: &Value, key: &str) -> Option<String> {
     v.get(key)
         .and_then(|x| x.as_str())
@@ -189,11 +135,6 @@ pub fn get_path<'a>(v: &'a Value, path: &[&str]) -> Option<&'a Value> {
         cur = cur.get(key)?;
     }
     Some(cur)
-}
-
-/// Clamp a caller-supplied limit into a sane range.
-pub fn clamp_limit(limit: i64, max: i64) -> usize {
-    limit.clamp(1, max) as usize
 }
 
 #[cfg(test)]
