@@ -51,7 +51,8 @@ pub struct Providers {
 /// reqwest-based providers: reqwest is built with its system-proxy
 /// support, so a SOCKS5 proxy from the standard `all_proxy` /
 /// `ALL_PROXY` environment variables already routes those providers;
-/// Bilibili's hand-written transport gets the same treatment here.
+/// Bilibili's client ignores system proxy settings by design (a direct
+/// connection unless told otherwise), so it gets the same treatment here.
 /// Unset (or a non-SOCKS value) means a direct connection — no
 /// configuration is ever required.
 fn bilibili_client() -> bilibili_provider::BilibiliClient {

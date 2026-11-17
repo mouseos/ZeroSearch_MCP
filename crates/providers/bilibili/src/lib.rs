@@ -51,6 +51,11 @@ const PATH_RELATES: &str = "/bilibili.app.viewunite.v1.View/RelatesFeed";
 
 pub struct BilibiliClient {
     egress: Egress,
+    /// Built once per egress: owns the connection pool, so successive
+    /// calls reuse one HTTP/2 connection instead of a new TCP+TLS each.
+    /// A build failure (e.g. an unparsable proxy) surfaces on the first
+    /// call, as a connect failure did before.
+    http: std::result::Result<reqwest::Client, String>,
     send_metadata: bool,
     host: &'static str,
     extra_headers: Vec<(String, Vec<u8>)>,
@@ -70,8 +75,11 @@ impl BilibiliClient {
     /// the buvid is stable across runs, as on a real device.
     pub fn with_identity(identity: DeviceIdentity) -> Self {
         let buvid = identity.local_buvid();
+        let egress = Egress::Direct;
+        let http = transport::build_client(&egress).map_err(|e| format!("{e:#}"));
         Self {
-            egress: Egress::Direct,
+            egress,
+            http,
             send_metadata: true,
             host: GRPC_HOST,
             extra_headers: Vec::new(),
@@ -112,6 +120,7 @@ impl BilibiliClient {
     /// the caller — e.g. a region-appropriate egress — never a default).
     pub fn with_socks5(mut self, proxy: impl Into<String>) -> Self {
         self.egress = Egress::Socks5(proxy.into());
+        self.http = transport::build_client(&self.egress).map_err(|e| format!("{e:#}"));
         self
     }
 
@@ -203,7 +212,8 @@ impl BilibiliClient {
             vec![("env".to_string(), b"prod".to_vec())]
         };
         headers.extend(self.extra_headers.iter().cloned());
-        transport::grpc_unary(&self.egress, self.host, path, &headers, &msg).await
+        let http = self.http.as_ref().map_err(|e| anyhow::anyhow!("{e}"))?;
+        transport::grpc_unary(http, self.host, path, &headers, &msg).await
     }
 
     // ------------------------------------------------------------------
