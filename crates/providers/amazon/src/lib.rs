@@ -31,6 +31,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
+#[cfg(not(feature = "curl"))]
+use zs_tls::SharedTls;
 
 const HOST: &str = "https://www.amazon.co.jp";
 const USER_AGENT: &str = "Amazon.com/32.20.2.100 (Android/14/Pixel 8)";
@@ -892,6 +894,7 @@ fn dump_response(url: &str, status: u32, headers: &[String], html: &str) {
 #[cfg(not(feature = "curl"))]
 fn build_http_client() -> reqwest::Client {
     reqwest::Client::builder()
+        .shared_tls_http1()
         .http1_only()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(60))

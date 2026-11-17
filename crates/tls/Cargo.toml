@@ -1,0 +1,20 @@
+[package]
+name = "zero-search-tls"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Shared rustls configuration for every HTTP client in zero-search: the OS root store is loaded once per process instead of once per client."
+repository = "https://github.com/mouseos/ZeroSearch_MCP"
+
+[lib]
+name = "zs_tls"
+path = "src/lib.rs"
+
+[dependencies]
+reqwest = { workspace = true }
+# The same rustls, root-store loader and fallback roots reqwest itself
+# links (rustls 0.23 with ring, rustls-native-certs 0.8, webpki-roots
+# 1.0), so this crate adds no second TLS implementation.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-native-certs = "0.8"
+webpki-roots = "1"

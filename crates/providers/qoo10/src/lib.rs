@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::sync::LazyLock;
 use uuid::Uuid;
+use zs_tls::SharedTls;
 
 const API_BASE: &str =
     "https://mapi-move.qoo10.jp/GMKT.INC.Front.Mobile.ShoppingApiService/ShoppingApp.qapi";
@@ -511,6 +512,7 @@ impl Qoo10Client {
         );
         Self {
             client: Client::builder()
+                .shared_tls()
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .expect("failed to build HTTP client"),

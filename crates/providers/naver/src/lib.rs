@@ -94,6 +94,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
+use zs_tls::SharedTls;
 
 pub mod blog;
 pub mod cafe;
@@ -196,6 +197,7 @@ impl NaverSearchClient {
     /// and construction performs no network I/O.
     pub fn new() -> Self {
         let http = Client::builder()
+            .shared_tls()
             .user_agent(common::MOBILE_USER_AGENT)
             .timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(10))

@@ -80,6 +80,7 @@ use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, ACCEPT_LANGUAGE, REFERER};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
+use zs_tls::SharedTls;
 
 pub use common::{clean_text, decode_entities, urlencode, MOBILE_USER_AGENT, USER_AGENT};
 pub use image::{parse_image_results, ImageItem, ImageResults};
@@ -187,6 +188,7 @@ fn build_http(user_agent: &'static str) -> Result<reqwest::Client> {
         HeaderValue::from_static(common::ACCEPT_LANGUAGE),
     );
     Ok(reqwest::Client::builder()
+        .shared_tls()
         .default_headers(headers)
         .cookie_store(true)
         .timeout(Duration::from_secs(20))

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/server",
     "crates/facade",
+    "crates/tls",
     "crates/launcher",
     "crates/providers/baidu",
     "crates/providers/yahoo",
@@ -40,6 +41,7 @@ members = [
 exclude = ["crates/helpers/yahoo-us-image", "crates/helpers/goofish-signer"]
 
 [workspace.dependencies]
+zs_tls = { package = "zero-search-tls", path = "crates/tls" }
 tokio = { version = "1", features = ["full"] }
 # One TLS stack for the whole library: rustls with the OS-native root
 # store (the same backend the YouTube provider was verified with).

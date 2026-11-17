@@ -11,6 +11,7 @@ name = "bing_search"
 path = "src/lib.rs"
 
 [dependencies]
+zs_tls = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true, features = ["multipart"] }
 serde = { workspace = true }

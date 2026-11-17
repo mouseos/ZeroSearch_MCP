@@ -24,6 +24,7 @@ pub mod sign;
 
 use anyhow::{anyhow, Context};
 use serde_json::{json, Value};
+use zs_tls::SharedTls;
 
 pub const PROVIDER: &str = "csdn";
 
@@ -336,6 +337,7 @@ impl Default for CsdnClient {
 impl CsdnClient {
     pub fn new() -> Self {
         let http = reqwest::Client::builder()
+            .shared_tls()
             .user_agent(format!("CSDNApp/{}(Android)", sign::APP_VERSION))
             .timeout(std::time::Duration::from_secs(30))
             .build()

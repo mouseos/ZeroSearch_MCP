@@ -4,6 +4,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::LazyLock;
+use zs_tls::SharedTls;
 
 const BASE: &str = "https://paypayfleamarket.yahoo.co.jp";
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
@@ -174,6 +175,7 @@ impl YahooFleaClient {
     pub fn new() -> Self {
         Self {
             client: Client::builder()
+                .shared_tls()
                 .user_agent(USER_AGENT)
                 .redirect(reqwest::redirect::Policy::limited(10))
                 .build()

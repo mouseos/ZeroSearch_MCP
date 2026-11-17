@@ -26,6 +26,7 @@ use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use zs_tls::SharedTls;
 
 const BASE: &str = "https://shopping-appliproxy.yahooapis.jp";
 const APPID: &str = "dj00aiZpPWtHdjlEQk16eVA1ZCZzPWNvbnN1bWVyc2VjcmV0Jng9OGM-";
@@ -955,11 +956,13 @@ impl YahooShoppingClient {
     pub fn new() -> Self {
         Self {
             client: Client::builder()
+                .shared_tls()
                 .user_agent(USER_AGENT)
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .expect("failed to build HTTP client"),
             web_client: Client::builder()
+                .shared_tls()
                 .user_agent(WEBVIEW_USER_AGENT)
                 .cookie_store(true)
                 .timeout(std::time::Duration::from_secs(30))

@@ -42,6 +42,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use zs_tls::SharedTls;
 
 use protocol::RuntimeContext;
 use signing::{ServeSigner, SignRequest, Signer};
@@ -600,6 +601,7 @@ impl GoofishClient {
         // whole request budget, while the overall per-attempt
         // timeout stays at the historical 60s.
         let client = match reqwest::Client::builder()
+            .shared_tls()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(15))
             .build()

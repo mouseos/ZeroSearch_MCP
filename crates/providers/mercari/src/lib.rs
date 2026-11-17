@@ -7,6 +7,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use zs_tls::SharedTls;
 
 use dpop::DpopSigner;
 
@@ -452,6 +453,7 @@ impl MercariClient {
     pub fn new() -> Self {
         Self {
             client: Client::builder()
+                .shared_tls()
                 .user_agent(USER_AGENT)
                 .redirect(reqwest::redirect::Policy::limited(10))
                 .build()

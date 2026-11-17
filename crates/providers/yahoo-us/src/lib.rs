@@ -73,6 +73,7 @@ use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use zs_tls::SharedTls;
 
 pub mod common;
 pub mod helper;
@@ -218,6 +219,7 @@ impl YahooUsSearchClient {
     /// safe to share across tasks; one client per process is the norm.
     pub fn new() -> Self {
         let http = Client::builder()
+            .shared_tls()
             .user_agent(common::USER_AGENT)
             .timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(10))

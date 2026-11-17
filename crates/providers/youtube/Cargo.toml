@@ -11,6 +11,7 @@ name = "youtube_search"
 path = "src/lib.rs"
 
 [dependencies]
+zs_tls = { workspace = true }
 tokio = { workspace = true }
 # Kept on its own reqwest specification (not the workspace one): the
 # standalone crate was live-verified with a rustls transport using

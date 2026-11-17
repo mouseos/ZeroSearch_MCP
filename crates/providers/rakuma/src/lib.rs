@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::LazyLock;
+use zs_tls::SharedTls;
 
 const BASE: &str = "https://fril.jp";
 const ITEM_BASE: &str = "https://item.fril.jp";
@@ -222,6 +223,7 @@ impl RakumaClient {
     pub fn new() -> Self {
         Self {
             client: Client::builder()
+                .shared_tls()
                 .user_agent(USER_AGENT)
                 .redirect(reqwest::redirect::Policy::limited(10))
                 .build()

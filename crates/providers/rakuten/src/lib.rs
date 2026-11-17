@@ -17,6 +17,7 @@ use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use zs_tls::SharedTls;
 
 const BASE: &str = "https://app-ichiba-gateway.rakuten.co.jp/mobile-bff/";
 const CLIENT_ID: &str = "ichiba_android_long";
@@ -1420,6 +1421,7 @@ impl RakutenClient {
     pub fn new() -> Self {
         Self {
             client: Client::builder()
+                .shared_tls()
                 .user_agent(USER_AGENT)
                 .timeout(std::time::Duration::from_secs(30))
                 .build()

@@ -32,6 +32,7 @@ use serde::Serialize;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::Mutex;
+use zs_tls::SharedTls;
 
 pub const SUG_HOST: &str = "https://m.baidu.com";
 pub const INPUTBOX_URL: &str = "https://aigc.baidu.com/publisher/v1/ai/chat/inputbox";
@@ -337,6 +338,7 @@ impl SuggestClient {
     /// Create a suggest client with an explicit minimum interval between requests (seconds).
     pub fn new(min_interval: f64) -> Self {
         let client = reqwest::Client::builder()
+            .shared_tls()
             .cookie_store(true)
             .user_agent(urlbuild::USER_AGENT)
             .timeout(Duration::from_secs_f64(crate::client::DEFAULT_TIMEOUT_SECS))

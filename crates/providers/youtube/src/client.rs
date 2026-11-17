@@ -14,6 +14,7 @@
 //!   visitor-data provider. Nothing visitor-related is fabricated.
 
 use std::sync::Mutex;
+use zs_tls::SharedTls;
 
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -77,6 +78,7 @@ impl YoutubeClient {
     pub fn with_locale(hl: &str, gl: &str) -> Self {
         let profile = default_profile();
         let http = reqwest::Client::builder()
+            .shared_tls()
             .user_agent(profile.user_agent.clone())
             .timeout(std::time::Duration::from_secs(30))
             .build()

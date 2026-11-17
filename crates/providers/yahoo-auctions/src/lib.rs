@@ -5,6 +5,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::LazyLock;
+use zs_tls::SharedTls;
 
 /// Web base, used only for canonical item URLs and the seller rating page
 /// (reviews have no app-API equivalent and stay on the Web route).
@@ -804,12 +805,14 @@ impl YahooAuctionsClient {
         api_headers.insert("x-z-service", HeaderValue::from_static("auction"));
         Self {
             api_client: Client::builder()
+                .shared_tls()
                 .user_agent(APP_USER_AGENT)
                 .default_headers(api_headers)
                 .redirect(reqwest::redirect::Policy::limited(10))
                 .build()
                 .expect("failed to build API HTTP client"),
             web_client: Client::builder()
+                .shared_tls()
                 .user_agent(WEB_USER_AGENT)
                 .redirect(reqwest::redirect::Policy::limited(10))
                 .build()

@@ -29,6 +29,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
+use zs_tls::SharedTls;
 
 pub const DEFAULT_TIMEOUT_SECS: f64 = 25.0;
 pub const DEFAULT_MAX_PAGES_LIMIT: i64 = 10;
@@ -164,6 +165,7 @@ impl ReqwestFetcher {
             reqwest::header::HeaderValue::from_static("text/html,*/*"),
         );
         let client = reqwest::Client::builder()
+            .shared_tls()
             .cookie_store(true)
             .user_agent(crate::urlbuild::USER_AGENT)
             .default_headers(headers)

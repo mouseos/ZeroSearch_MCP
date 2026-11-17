@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::env;
 use std::sync::{Arc, LazyLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+use zs_tls::SharedTls;
 
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 const APP_KEY: &str = "12574478";
@@ -243,6 +244,7 @@ impl AliExpressClient {
             .unwrap_or_else(generate_device_id);
         let jar = Arc::new(Jar::default());
         let client = reqwest::Client::builder()
+            .shared_tls()
             .user_agent(USER_AGENT)
             .timeout(std::time::Duration::from_secs(20))
             .cookie_provider(Arc::clone(&jar))

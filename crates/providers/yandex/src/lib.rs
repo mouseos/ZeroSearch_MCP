@@ -88,6 +88,7 @@ use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use zs_tls::SharedTls;
 
 pub mod common;
 pub mod image;
@@ -252,6 +253,7 @@ impl YandexSearchClient {
     /// and safe to share across tasks; one client per process is the norm.
     pub fn new() -> Self {
         let http = Client::builder()
+            .shared_tls_http1()
             .user_agent(USER_AGENT)
             // HTTP/1.1 only. Measured 2026-11-17: over HTTP/2 every
             // touch-page load (with or without cookies) was redirected
