@@ -6,8 +6,8 @@ use crate::classifiers;
 use crate::dom;
 use crate::extractors;
 use crate::models::{
-    CardEntry, CardItem, PageInfo, RelatedSearch, ResultEntry, SearchPage, SiteLink,
-    UnknownElement, PARSER_VERSION,
+    CardEntry, CardItem, RelatedSearch, ResultEntry, SearchPage, SiteLink, UnknownElement,
+    PARSER_VERSION,
 };
 use crate::pagination::extract_pagination;
 use crate::urls as urltools;
@@ -288,6 +288,3 @@ pub fn parse_search_results(html: &str, query: Option<&str>, page_url: Option<&s
     page.diagnostics = serde_json::Value::Object(diagnostics);
     page
 }
-
-/// Keep the Python name for the page-info type reachable from here.
-pub type _PageInfoAlias = PageInfo;

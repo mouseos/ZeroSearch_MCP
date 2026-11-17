@@ -25,7 +25,6 @@ use crate::pagination::{validate_next_url, SeenUrls};
 use crate::parser;
 use crate::search_url;
 use crate::urls;
-use std::collections::HashMap;
 use std::future::Future;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -52,18 +51,16 @@ const DNS_MARKERS: &[&str] = &[
 pub struct TransportResponse {
     pub status_code: i64,
     pub final_url: String,
-    pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
     pub redirect_count: i64,
 }
 
 impl TransportResponse {
-    /// Create a response with empty headers and zero redirects.
+    /// Create a response with zero redirects.
     pub fn new(status_code: i64, final_url: String, body: Vec<u8>) -> Self {
         TransportResponse {
             status_code,
             final_url,
-            headers: HashMap::new(),
             body,
             redirect_count: 0,
         }
@@ -246,10 +243,6 @@ impl Fetcher for ReqwestFetcher {
         let status = resp.status().as_u16() as i64;
         let final_url = resp.url().to_string();
         let redirect_count: i64 = if final_url != url { 1 } else { 0 };
-        let mut headers = HashMap::new();
-        for (k, v) in resp.headers().iter() {
-            headers.insert(k.to_string(), v.to_str().unwrap_or_default().to_string());
-        }
         let final_host = urls::host_of(Some(&final_url));
         if redirect_count > 0 && !urls::is_baidu_host(final_host.as_deref()) {
             return Err(BaiduError::new(
@@ -307,7 +300,6 @@ impl Fetcher for ReqwestFetcher {
         Ok(TransportResponse {
             status_code: status,
             final_url,
-            headers,
             body,
             redirect_count,
         })
