@@ -64,7 +64,7 @@ pub fn parse_news_results(html: &str, limit: usize) -> Result<Vec<NewsItem>> {
             .select(&SNIPPET_SEL)
             .next()
             .map(|s| {
-                let text = clean_text(&s.text().collect::<String>());
+                let text = crate::common::collapse_whitespace(&s.text().collect::<String>());
                 if text.is_empty() {
                     s.value().attr("title").map(clean_text).unwrap_or_default()
                 } else {

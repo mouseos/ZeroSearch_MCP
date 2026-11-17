@@ -75,6 +75,14 @@ pub fn unsupported_page(vertical: &str, page: i64) -> anyhow::Error {
 
 /// Normalise a piece of page text: strip tags, decode entities and
 /// collapse whitespace.
+/// Collapse DOM text (or an attribute value) to a single line. The
+/// HTML parser has already decoded entities there, so unlike
+/// [`clean_text`] nothing is decoded or stripped again — doing so
+/// turned a page's literal `&lt;b&gt;` into `<b>` and then removed it.
+pub fn collapse_whitespace(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 pub fn clean_text(s: &str) -> String {
     let without_tags = TAG_RE.replace_all(s, "");
     let decoded = decode_entities(&without_tags);
@@ -160,7 +168,7 @@ pub fn resolve_url(href: &str, base: &str) -> String {
 
 /// All text under an element, normalised with [`clean_text`].
 pub fn element_text(el: ElementRef) -> String {
-    clean_text(&el.text().collect::<String>())
+    collapse_whitespace(&el.text().collect::<String>())
 }
 
 /// First Korean relative/absolute time stamp in `text`, if any.
@@ -247,6 +255,16 @@ pub fn card_for_unique<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn element_text_does_not_decode_entities_twice() {
+        // The page shows the literal text "&lt;b&gt;" (escaped once more
+        // in the source); the parser already decoded one level.
+        let doc = scraper::Html::parse_fragment("<p> a &amp;lt;b&amp;gt;  c </p>");
+        let sel = scraper::Selector::parse("p").unwrap();
+        let el = doc.select(&sel).next().unwrap();
+        assert_eq!(element_text(el), "a &lt;b&gt; c");
+    }
 
     #[test]
     fn clean_text_strips_tags_and_entities() {

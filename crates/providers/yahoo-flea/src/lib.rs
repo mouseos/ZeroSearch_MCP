@@ -9,8 +9,11 @@ use zs_tls::SharedTls;
 const BASE: &str = "https://paypayfleamarket.yahoo.co.jp";
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
-static SSR_JSON_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>"#).unwrap());
+// `(?s)`: without it `.` stops at a newline, so a pretty-printed
+// (multi-line) __NEXT_DATA__ block was silently not found.
+static SSR_JSON_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?s)<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>"#).unwrap()
+});
 
 /// [S1-33] Canonical sort vocabulary for `yflea_search_products`.
 /// Aliases (`relevance`/`ranking` for default, `lowest_price` /
@@ -631,6 +634,14 @@ fn normalize_detail_item(raw: &Value) -> Item {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssr_json_is_found_when_pretty_printed() {
+        let html = "<html><script id=\"__NEXT_DATA__\" type=\"application/json\">{
+  \"a\": 1
+}</script></html>";
+        assert_eq!(extract_ssr_json(html), Some(serde_json::json!({"a": 1})));
+    }
 
     #[test]
     fn test_sort_params() {

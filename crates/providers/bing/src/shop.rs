@@ -63,7 +63,7 @@ pub struct ShopResults {
 }
 
 fn element_text(el: scraper::ElementRef) -> String {
-    clean_text(&el.text().collect::<Vec<_>>().join(" "))
+    crate::common::collapse_whitespace(&el.text().collect::<Vec<_>>().join(" "))
 }
 
 fn parse_price_value(price_text: &str) -> Option<i64> {

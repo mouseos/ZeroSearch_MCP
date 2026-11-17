@@ -153,7 +153,7 @@ pub fn parse_image_results(html: &str, limit: usize) -> Vec<ImageItem> {
         let Some(url) = link
             .value()
             .attr("data-referenceurl")
-            .map(decode_entities)
+            .map(str::to_string)
             .filter(|u| u.starts_with("http"))
         else {
             continue;
@@ -161,7 +161,7 @@ pub fn parse_image_results(html: &str, limit: usize) -> Vec<ImageItem> {
         let image_url = link
             .value()
             .attr("data-origurl")
-            .map(decode_entities)
+            .map(str::to_string)
             .filter(|u| u.starts_with("http"))
             .or_else(|| image_url_from_href(link.value().attr("href")?));
         let Some(image_url) = image_url else {
@@ -176,7 +176,7 @@ pub fn parse_image_results(html: &str, limit: usize) -> Vec<ImageItem> {
             .unwrap_or_else(|| url.clone());
         let thumbnail = img
             .and_then(|el| el.value().attr("src"))
-            .map(decode_entities)
+            .map(str::to_string)
             .filter(|s| !s.is_empty());
         let source = tile
             .select(&DOMAIN_SEL)
@@ -185,7 +185,7 @@ pub fn parse_image_results(html: &str, limit: usize) -> Vec<ImageItem> {
             .filter(|s| !s.is_empty());
         let (width, height) = img
             .and_then(|el| el.value().attr("data-meta"))
-            .and_then(|m| serde_json::from_str::<serde_json::Value>(&decode_entities(m)).ok())
+            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
             .map(|v| {
                 (
                     v.get("ow").and_then(serde_json::Value::as_i64),
@@ -222,9 +222,10 @@ pub fn parse_image_results(html: &str, limit: usize) -> Vec<ImageItem> {
 /// viewer URL carries it as the `imgurl` query parameter) when the
 /// `data-origurl` attribute is absent.
 fn image_url_from_href(href: &str) -> Option<String> {
-    let decoded = decode_entities(href);
-    let start = decoded.find("imgurl=")? + "imgurl=".len();
-    let rest = &decoded[start..];
+    // `href` is an attribute value: the HTML parser already decoded its
+    // entities.
+    let start = href.find("imgurl=")? + "imgurl=".len();
+    let rest = &href[start..];
     let end = rest.find('&').unwrap_or(rest.len());
     let url = urldecode(&rest[..end], false);
     url.starts_with("http").then_some(url)

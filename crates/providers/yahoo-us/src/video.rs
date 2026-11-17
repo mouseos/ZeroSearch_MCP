@@ -105,7 +105,7 @@ pub fn parse_video_results(html: &str, limit: usize) -> Vec<VideoItem> {
         let Some(url) = link
             .value()
             .attr("data-referenceurl")
-            .map(decode_entities)
+            .map(str::to_string)
             .filter(|u| u.starts_with("http"))
         else {
             continue;
@@ -117,18 +117,18 @@ pub fn parse_video_results(html: &str, limit: usize) -> Vec<VideoItem> {
             .map(|el| element_text(&el))
             .filter(|t| !t.is_empty())
             .or_else(|| {
-                img.and_then(|el| el.value().attr("alt").map(decode_entities))
+                img.and_then(|el| el.value().attr("alt").map(str::to_string))
                     .filter(|t| !t.is_empty())
             })
             .unwrap_or_else(|| url.clone());
         let thumbnail = img
             .and_then(|el| el.value().attr("src"))
-            .map(decode_entities)
+            .map(str::to_string)
             .filter(|s| !s.is_empty());
         let embed_url = link
             .value()
             .attr("data-origurl")
-            .map(decode_entities)
+            .map(str::to_string)
             .filter(|s| !s.is_empty());
         let duration = tile
             .select(&TIME_SEL)

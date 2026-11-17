@@ -119,7 +119,7 @@ pub fn parse_news_results(html: &str, limit: usize) -> Vec<NewsItem> {
             .select(&THUMB_SEL)
             .next()
             .and_then(|el| el.value().attr("src"))
-            .map(decode_entities)
+            .map(str::to_string)
             .filter(|s| !s.is_empty());
         items.push(NewsItem {
             rank: items.len() as i64 + 1,

@@ -183,19 +183,27 @@ pub fn parse_related_queries(html: &str) -> Vec<String> {
         .collect()
 }
 
-/// Concatenated text of an element, cleaned the same way as [`clean_text`]
-/// but starting from already-parsed DOM text (no tags to strip).
+/// Concatenated text of an element, collapsed to a single line. The
+/// HTML parser has already decoded entities in DOM text, so it is not
+/// decoded again (that turned a literal `&lt;b&gt;` into `<b>`).
 pub fn element_text(el: &scraper::ElementRef) -> String {
     let raw: String = el.text().collect();
-    decode_entities(&raw)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    raw.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn element_text_does_not_decode_entities_twice() {
+        // The page shows the literal text "&lt;b&gt;" (escaped once more
+        // in the source); the parser already decoded one level.
+        let doc = scraper::Html::parse_fragment("<p> a &amp;lt;b&amp;gt;  c </p>");
+        let sel = scraper::Selector::parse("p").unwrap();
+        let el = doc.select(&sel).next().unwrap();
+        assert_eq!(element_text(&el), "a &lt;b&gt; c");
+    }
 
     #[test]
     fn clean_text_strips_tags_and_entities() {

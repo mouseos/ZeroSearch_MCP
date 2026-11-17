@@ -63,7 +63,7 @@ pub struct VideoResults {
 }
 
 fn text_of(el: &scraper::ElementRef) -> String {
-    clean_text(&el.text().collect::<String>())
+    crate::common::collapse_whitespace(&el.text().collect::<String>())
 }
 
 fn normalize_duration(raw: &str) -> Option<String> {
@@ -99,7 +99,7 @@ fn parse_source(unit: &scraper::ElementRef) -> Option<String> {
             }
             parts.push_str(&text_of(&child));
         }
-        let t = clean_text(&parts);
+        let t = crate::common::collapse_whitespace(&parts);
         if !t.is_empty() {
             return Some(t);
         }
@@ -143,7 +143,7 @@ pub fn parse_video_results(html: &str, limit: usize) -> Result<VideoResults> {
                 if attr.trim().is_empty() {
                     text_of(&t)
                 } else {
-                    clean_text(attr)
+                    crate::common::collapse_whitespace(attr)
                 }
             })
             .unwrap_or_default();

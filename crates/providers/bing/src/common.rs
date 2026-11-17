@@ -36,6 +36,14 @@ pub fn status_error(status: reqwest::StatusCode) -> anyhow::Error {
 /// Normalise a piece of page text: strip tags and Bing's highlight markers
 /// (web titles use `<strong>`, image descriptions use the private-use
 /// characters U+E000/U+E001), decode entities and collapse whitespace.
+/// Collapse DOM text (or an attribute value) to a single line. The
+/// HTML parser has already decoded entities there, so unlike
+/// [`clean_text`] nothing is decoded or stripped again — doing so
+/// turned a page's literal `&lt;b&gt;` into `<b>` and then removed it.
+pub fn collapse_whitespace(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 pub fn clean_text(s: &str) -> String {
     let without_tags = TAG_RE.replace_all(s, "");
     let without_markers = without_tags.replace(['\u{e000}', '\u{e001}'], "");
@@ -168,6 +176,17 @@ pub fn layout_error(vertical: &str) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collapse_whitespace_leaves_decoded_text_alone() {
+        assert_eq!(
+            collapse_whitespace(
+                " a &lt;b&gt;
+ c "
+            ),
+            "a &lt;b&gt; c"
+        );
+    }
 
     #[test]
     fn clean_text_strips_tags_markers_and_entities() {
