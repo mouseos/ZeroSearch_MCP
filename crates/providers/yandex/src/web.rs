@@ -142,6 +142,62 @@ static FAST_SUBTYPE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"data-fast-subtype="([^"]+)""#).unwrap());
 static HREF_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"href="([^"]+)""#).unwrap());
 
+/// Cap on a special card's `text`, in characters.
+const SPECIAL_TEXT_CHARS: usize = 1000;
+
+/// `clean_text(block)` cut to its first `max_chars` characters, computed
+/// from only as much of `block` as that needs.
+///
+/// A page's last card runs to the end of the page (scripts, styles: a
+/// quarter of a megabyte on the fixture), and cleaning all of it only to
+/// keep 1000 characters dominated [`parse_special_cards`]. Here the
+/// tag-stripped text is built incrementally and decoded once a prefix
+/// is long enough. The prefix is always cut just before ASCII
+/// whitespace of the stripped text: no entity (named or numeric) and no
+/// `&amp;` match spans whitespace, so decoding the prefix yields exactly
+/// a prefix of decoding the whole. Tags are removed with `TAG_RE`'s
+/// semantics (`<` up to the next `>`; a `<` with no later `>` is text).
+fn clean_text_capped(block: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let mut stripped = String::new();
+    let mut threshold = max_chars * 4 + 256;
+    let mut rest = block;
+    while !rest.is_empty() {
+        // Copy the text run before the next tag (BEL markers are
+        // dropped, as clean_text does after stripping tags).
+        let tag_at = rest
+            .find('<')
+            .filter(|&lt| rest[lt..].contains('>'))
+            .unwrap_or(rest.len());
+        stripped.extend(rest[..tag_at].chars().filter(|&c| c != '\u{7}'));
+        rest = &rest[tag_at..];
+        if !rest.is_empty() {
+            let close = rest.find('>').expect("a tag start has a later '>'");
+            rest = &rest[close + 1..];
+        }
+        if stripped.len() >= threshold {
+            if let Some(cut) = stripped.rfind([' ', '\n', '\t', '\r']) {
+                let decoded = decode_entities(&stripped[..cut]);
+                let text = decoded.trim_start();
+                // trim() of the whole keeps >= max_chars characters
+                // only when a non-space follows within them; then the
+                // answer is this prefix's first max_chars characters.
+                if text.chars().skip(max_chars - 1).any(|c| !c.is_whitespace()) {
+                    return text.chars().take(max_chars).collect();
+                }
+            }
+            threshold *= 2;
+        }
+    }
+    decode_entities(&stripped)
+        .trim()
+        .chars()
+        .take(max_chars)
+        .collect()
+}
+
 /// Parse the non-organic cards out of a saved touch SERP page, in
 /// page order (audit W-37).
 pub fn parse_special_cards(html: &str) -> Vec<SpecialCard> {
@@ -166,14 +222,7 @@ pub fn parse_special_cards(html: &str) -> Vec<SpecialCard> {
             .captures(block)
             .map(|c| clean_text(&c[1]))
             .filter(|t| !t.is_empty());
-        let text = {
-            let cleaned = clean_text(block);
-            if cleaned.is_empty() {
-                None
-            } else {
-                Some(cleaned.chars().take(1000).collect())
-            }
-        };
+        let text = Some(clean_text_capped(block, SPECIAL_TEXT_CHARS)).filter(|t| !t.is_empty());
         let url = HREF_RE.captures_iter(block).find_map(|c| {
             let url = decode_entities(&c[1]);
             if url.starts_with("http")
@@ -225,39 +274,7 @@ impl YandexSearchClient {
         page: i64,
         limit: i64,
     ) -> Result<SearchResult<WebItem>> {
-        let page = page.max(1);
-        let limit = clamp_limit(limit, PER_PAGE);
-        let query = query.trim();
-
-        let html = if page == 1 {
-            let body = self.get_page(&web_search_url(query, 1)).await?;
-            self.mark_session_started().await;
-            body
-        } else {
-            self.ensure_session(query).await?;
-            self.get_page(&web_search_url(query, page)).await?
-        };
-
-        let mut items = parse_web_results(&html, usize::MAX);
-        let total_found = items.len();
-        items.truncate(limit);
-        let mut result = SearchResult::new("web", query, page, items);
-        if total_found >= PER_PAGE as usize {
-            result = result.with_next_page(Some(page + 1));
-        }
-        let mut notes: Vec<String> = Vec::new();
-        if let Some(text) = approx_total_text(&html) {
-            notes.push(format!(
-                "Yandex reports approximately: {text} (estimate printed on the page; not exposed as total_hits)"
-            ));
-        }
-        if page > crate::VERIFIED_MAX_PAGE {
-            notes.push(crate::BEYOND_VERIFIED_NOTE.to_string());
-        }
-        if !notes.is_empty() {
-            result = result.with_note(&notes.join(" "));
-        }
-        Ok(result)
+        Ok(self.web_page(query, page, limit, false).await?.result)
     }
 
     /// Like [`Self::web_search`], but also returns the page's
@@ -268,6 +285,18 @@ impl YandexSearchClient {
         query: &str,
         page: i64,
         limit: i64,
+    ) -> Result<WebSearchPage> {
+        self.web_page(query, page, limit, true).await
+    }
+
+    /// Fetch and parse one web page; the special cards are parsed only
+    /// when `with_special_cards` (otherwise the list is empty).
+    async fn web_page(
+        &self,
+        query: &str,
+        page: i64,
+        limit: i64,
+        with_special_cards: bool,
     ) -> Result<WebSearchPage> {
         let page = page.max(1);
         let limit = clamp_limit(limit, PER_PAGE);
@@ -282,7 +311,11 @@ impl YandexSearchClient {
             self.get_page(&web_search_url(query, page)).await?
         };
 
-        let special_cards = parse_special_cards(&html);
+        let special_cards = if with_special_cards {
+            parse_special_cards(&html)
+        } else {
+            Vec::new()
+        };
         let mut items = parse_web_results(&html, usize::MAX);
         let total_found = items.len();
         items.truncate(limit);
@@ -351,6 +384,97 @@ mod tests {
         assert_eq!(cards[1].kind, "ad");
         assert_eq!(cards[1].title.as_deref(), Some("Ad Title"));
         assert!(cards[1].url.is_none(), "counter links are not destinations");
+    }
+
+    /// `parse_special_cards` as it was before `clean_text_capped`: the
+    /// reference the faster version must match.
+    fn special_cards_reference(html: &str) -> Vec<SpecialCard> {
+        let starts: Vec<usize> = html
+            .match_indices("<div class=\"serp-item")
+            .map(|(i, _)| i)
+            .collect();
+        let mut cards = Vec::new();
+        for (idx, &start) in starts.iter().enumerate() {
+            let end = starts.get(idx + 1).copied().unwrap_or(html.len());
+            let block = &html[start..end];
+            let tag_end = block.find('>').unwrap_or(block.len());
+            let opening = &block[..tag_end];
+            let fast_name = FAST_NAME_RE.captures(opening).map(|c| c[1].to_string());
+            let is_labelled_ad = block.contains("Organic_withAdvLabel");
+            if fast_name.is_none() && !is_labelled_ad {
+                continue;
+            }
+            let cleaned = clean_text(block);
+            cards.push(SpecialCard {
+                kind: fast_name.unwrap_or_else(|| "ad".to_string()),
+                subtype: FAST_SUBTYPE_RE.captures(opening).map(|c| c[1].to_string()),
+                title: TITLE_TEXT_RE
+                    .captures(block)
+                    .map(|c| clean_text(&c[1]))
+                    .filter(|t| !t.is_empty()),
+                text: if cleaned.is_empty() {
+                    None
+                } else {
+                    Some(cleaned.chars().take(1000).collect())
+                },
+                url: HREF_RE.captures_iter(block).find_map(|c| {
+                    let url = decode_entities(&c[1]);
+                    (url.starts_with("http")
+                        && !url.contains("/an/count/")
+                        && !url.contains("yabs.yandex.ru/count"))
+                    .then_some(url)
+                }),
+            });
+        }
+        cards
+    }
+
+    fn fixture_web_p1() -> String {
+        std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/fixture-web-p1.html"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn special_cards_match_the_reference_on_the_fixture() {
+        let page = fixture_web_p1();
+        for html in [page.clone(), page.repeat(4)] {
+            let new = serde_json::to_value(parse_special_cards(&html)).unwrap();
+            let old = serde_json::to_value(special_cards_reference(&html)).unwrap();
+            assert!(new.as_array().is_some_and(|a| !a.is_empty()));
+            assert_eq!(new, old);
+        }
+    }
+
+    #[test]
+    fn capped_clean_text_equals_cut_clean_text() {
+        let page = fixture_web_p1();
+        let mut cases: Vec<String> = page
+            .match_indices("<div class=\"serp-item")
+            .map(|(i, _)| page[i..].to_string())
+            .collect();
+        cases.push(page.clone());
+        cases.extend(
+            [
+                "",
+                "   ",
+                "<b>a</b> &amp;amp; &#38;amp; &am<i>p; x &lt;b&gt; a<b c",
+                "x <unclosed &nbsp;&nbsp; y",
+                "\u{7}a\u{7} <p>b</p>   ",
+            ]
+            .map(str::to_string),
+        );
+        // Long text in which the cut lands among entities and padding.
+        cases.push("&amp;amp; <i>x</i>&#38;amp;   &nbsp; ".repeat(400) + "   ");
+        cases.push(format!("{}{}", "word ".repeat(199), " ".repeat(20_000)));
+        for case in &cases {
+            for max in [1, 7, 1000, 3000, 10_000] {
+                let want: String = clean_text(case).chars().take(max).collect();
+                assert_eq!(clean_text_capped(case, max), want, "max {max}");
+            }
+        }
     }
 
     #[test]

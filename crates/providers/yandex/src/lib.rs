@@ -238,7 +238,10 @@ impl<T> SearchResult<T> {
 #[derive(Clone)]
 pub struct YandexSearchClient {
     http: Client,
-    session_started: std::sync::Arc<tokio::sync::Mutex<bool>>,
+    /// Set once the session exists. A OnceCell rather than a flag:
+    /// concurrent first calls wait for one session load instead of each
+    /// seeing "not started" and loading the page themselves.
+    session_started: std::sync::Arc<tokio::sync::OnceCell<()>>,
 }
 
 impl Default for YandexSearchClient {
@@ -270,7 +273,7 @@ impl YandexSearchClient {
 
         Self {
             http,
-            session_started: std::sync::Arc::new(tokio::sync::Mutex::new(false)),
+            session_started: std::sync::Arc::new(tokio::sync::OnceCell::new()),
         }
     }
 
@@ -307,19 +310,23 @@ impl YandexSearchClient {
 
     /// Establish the cookie session by loading web touch page 1 for `query`
     /// — the same first request the app makes. No-op once established.
+    /// Concurrent callers share one load; a failed load leaves the
+    /// session unset, so the next call tries again.
     pub(crate) async fn ensure_session(&self, query: &str) -> Result<()> {
-        if *self.session_started.lock().await {
-            return Ok(());
-        }
-        let url = web::web_search_url(query, 1);
-        let _ = self.get_page(&url).await?;
-        self.mark_session_started().await;
+        self.session_started
+            .get_or_try_init(|| async {
+                let url = web::web_search_url(query, 1);
+                self.get_page(&url).await.map(|_| ())
+            })
+            .await?;
         Ok(())
     }
 
     /// Record that a page-1 load already established the session.
     pub(crate) async fn mark_session_started(&self) {
-        *self.session_started.lock().await = true;
+        // Err only if already set or being set by a concurrent load;
+        // either way the session is (about to be) established.
+        let _ = self.session_started.set(());
     }
 }
 
