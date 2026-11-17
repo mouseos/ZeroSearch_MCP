@@ -117,6 +117,8 @@ pub struct Machine {
     pub futex_waiters: HashMap<u64, Vec<usize>>,
     /// string/array arena bump pointer
     pub arena_next: u64,
+    /// end of the guest memory currently mapped for the arena
+    pub arena_mapped_end: u64,
     /// TLS block bump pointer
     pub tls_next: u64,
     /// last invalid-memory fault (addr, size, write?)
@@ -160,6 +162,7 @@ impl Machine {
             next_tramp: TRAMP_BASE,
             futex_waiters: HashMap::new(),
             arena_next: ARENA_BASE,
+            arena_mapped_end: ARENA_BASE + ARENA_SIZE,
             tls_next: TLS_BASE + 0x1_0000,
             last_fault: None,
             start_time: std::time::Instant::now(),
@@ -175,6 +178,28 @@ impl Machine {
     pub fn alloc_arena(&mut self, size: u64) -> u64 {
         let a = (self.arena_next + 15) & !15;
         self.arena_next = a + size.max(1);
+        a
+    }
+
+    /// [`Self::alloc_arena`], mapping more guest memory when the bump
+    /// pointer passes the end of the arena. The arena is never freed
+    /// (JNI strings and arrays handed to the guest), so a long-running
+    /// harness eventually passed the initial 16 MiB; the guest's
+    /// writes then landed in unmapped memory, the next sign failed,
+    /// and the provider latched the signer as broken. Memory above the
+    /// arena is unused, so it grows upward in 1 MiB steps.
+    pub fn alloc_arena_mapped<D>(&mut self, uc: &mut Unicorn<'_, D>, size: u64) -> u64 {
+        let a = self.alloc_arena(size);
+        let need = align_up(self.arena_next, 0x10_0000);
+        if need > self.arena_mapped_end {
+            let grow = need - self.arena_mapped_end;
+            if uc
+                .mem_map(self.arena_mapped_end, grow, Prot::READ | Prot::WRITE)
+                .is_ok()
+            {
+                self.arena_mapped_end = need;
+            }
+        }
         a
     }
 

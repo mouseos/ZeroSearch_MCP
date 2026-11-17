@@ -366,6 +366,32 @@ fn runtime_complete(rt: &Path, payload: &PayloadInfo) -> bool {
     staged_ok && rt.join("libs").join(&payload.main_so).is_file()
 }
 
+/// True when `serve_command` is the serve script of the runtime this
+/// module assembles in the data directory, a payload is shipped, and
+/// that runtime is not the current one (an older version's
+/// full-package or JVM-era runtime, whose serve script is still
+/// present). Without this check the old script was discovered first
+/// and the runtime was never re-assembled.
+pub(crate) fn data_dir_runtime_stale(serve_command: &str) -> bool {
+    let (Some(dir), Some(rt)) = (payload_dir(), runtime_dir()) else {
+        return false;
+    };
+    let Ok(payload) = load_payload(&dir) else {
+        return false;
+    };
+    let in_runtime = Path::new(serve_command)
+        .parent()
+        .is_some_and(|p| same_dir(p, &rt));
+    in_runtime && !runtime_complete(&rt, &payload)
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
+    }
+}
+
 static PROVISION_LOCK: Mutex<()> = Mutex::new(());
 
 /// Assemble the runtime in the data directory. Idempotent and

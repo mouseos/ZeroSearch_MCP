@@ -712,7 +712,7 @@ fn dispatch_jni(uc: &mut Uc<'_>, mrc: &std::rc::Rc<std::cell::RefCell<Machine>>,
                 }
             }
             let s = string_content(&m, x1);
-            let addr = m.alloc_arena(s.len() as u64 + 1);
+            let addr = m.alloc_arena_mapped(uc, s.len() as u64 + 1);
             let mut b = s.into_bytes();
             b.push(0);
             let _ = uc.mem_write(addr, &b);
@@ -741,7 +741,7 @@ fn dispatch_jni(uc: &mut Uc<'_>, mrc: &std::rc::Rc<std::cell::RefCell<Machine>>,
         }
         idx::GET_STRING_CHARS => {
             let s = string_content(&m, x1);
-            let addr = m.alloc_arena((s.len() as u64 + 1) * 2);
+            let addr = m.alloc_arena_mapped(uc, (s.len() as u64 + 1) * 2);
             let mut b = Vec::new();
             for u in s.encode_utf16() {
                 b.extend_from_slice(&u.to_le_bytes());
@@ -826,7 +826,7 @@ fn dispatch_jni(uc: &mut Uc<'_>, mrc: &std::rc::Rc<std::cell::RefCell<Machine>>,
         183..=190 => {
             // Get*ArrayElements
             let data = array_data(&m, x1);
-            let addr = m.alloc_arena(data.len() as u64);
+            let addr = m.alloc_arena_mapped(uc, data.len() as u64);
             let _ = uc.mem_write(addr, &data);
             if let Some(id) = m.jni.obj_id_of_handle(x1) {
                 m.jni.pinned.insert(addr, id);
@@ -891,7 +891,7 @@ fn dispatch_jni(uc: &mut Uc<'_>, mrc: &std::rc::Rc<std::cell::RefCell<Machine>>,
         222 => {
             // GetPrimitiveArrayCritical
             let data = array_data(&m, x1);
-            let addr = m.alloc_arena(data.len() as u64);
+            let addr = m.alloc_arena_mapped(uc, data.len() as u64);
             let _ = uc.mem_write(addr, &data);
             if let Some(id) = m.jni.obj_id_of_handle(x1) {
                 m.jni.pinned.insert(addr, id);
@@ -905,7 +905,7 @@ fn dispatch_jni(uc: &mut Uc<'_>, mrc: &std::rc::Rc<std::cell::RefCell<Machine>>,
         224 => {
             // GetStringCritical
             let s = string_content(&m, x1);
-            let addr = m.alloc_arena((s.len() as u64 + 1) * 2);
+            let addr = m.alloc_arena_mapped(uc, (s.len() as u64 + 1) * 2);
             let mut b = Vec::new();
             for u in s.encode_utf16() {
                 b.extend_from_slice(&u.to_le_bytes());

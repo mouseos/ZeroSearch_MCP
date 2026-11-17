@@ -1380,7 +1380,11 @@ static PROVISION_ERROR: Mutex<Option<String>> = Mutex::new(None);
 /// first use); async callers run it on a blocking thread.
 fn resolve_runtime_with_provision() -> RuntimeSettings {
     let runtime = resolve_runtime();
-    if runtime.serve_command.is_some() || !provision::payload_available() {
+    let stale = runtime
+        .serve_command
+        .as_deref()
+        .is_some_and(provision::data_dir_runtime_stale);
+    if (runtime.serve_command.is_some() && !stale) || !provision::payload_available() {
         return runtime;
     }
     match provision::ensure_provisioned() {

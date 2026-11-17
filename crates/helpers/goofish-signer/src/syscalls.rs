@@ -93,14 +93,18 @@ pub fn read_cstr(uc: &Uc<'_>, addr: u64, max: usize) -> Option<String> {
     let mut out = Vec::new();
     let mut a = addr;
     while out.len() < max {
-        let b = uc.mem_read_as_vec(a, 64).ok()?;
+        // Read up to the next page boundary at most: a fixed 64-byte
+        // read failed (and the whole string was lost) whenever the
+        // string ended within 64 bytes of the end of its mapping.
+        let chunk = (0x1000 - (a & 0xfff)).min(256);
+        let b = uc.mem_read_as_vec(a, chunk as usize).ok()?;
         for &c in &b {
             if c == 0 {
                 return Some(String::from_utf8_lossy(&out).into_owned());
             }
             out.push(c);
         }
-        a += 64;
+        a += chunk;
     }
     Some(String::from_utf8_lossy(&out).into_owned())
 }

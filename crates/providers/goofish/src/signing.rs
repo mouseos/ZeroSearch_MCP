@@ -476,9 +476,11 @@ fn describe_exit(status: &std::process::ExitStatus) -> String {
     }
 }
 
-/// How many times one signer restarts a harness that *died*
-/// (process exit) before giving up and latching the death as its
-/// error. Deterministic failures never consume restarts.
+/// How many times in a row one signer restarts a harness that died
+/// (process exit), reported a request error or timed out on a sign,
+/// before giving up and latching the failure as its error. A
+/// successful sign resets the count. Other failures (startup errors,
+/// malformed replies) are deterministic and latch at once.
 const MAX_HARNESS_RESTARTS: u32 = 3;
 
 pub struct ServeSigner {
@@ -868,7 +870,13 @@ impl Signer for ServeSigner {
         }
         loop {
             match self.sign_locked(&mut inner, request) {
-                Ok(r) => return Ok(r),
+                Ok(r) => {
+                    // The restart budget bounds *consecutive* failures:
+                    // a lifetime count let a long-running server latch
+                    // after its fourth harness death, however far apart.
+                    inner.restarts_used = 0;
+                    return Ok(r);
+                }
                 Err(e) => {
                     // A harness that *died* (process exit — see
                     // HarnessDied) is restarted in place, bounded
@@ -881,8 +889,18 @@ impl Signer for ServeSigner {
                     // way — and latches exactly as before.
                     let died = e.downcast_ref::<HarnessDied>().is_some();
                     let msg = e.to_string();
+                    // A request the running harness answered with an
+                    // error, or did not answer in time, also gets a fresh
+                    // harness (within the same budget) instead of
+                    // latching at once: such failures come from the
+                    // harness's accumulated state (e.g. its JNI arena)
+                    // rather than from the request, and a fresh boot
+                    // takes about a second with the slim package.
+                    let restartable = died
+                        || msg.ends_with(": protocol")
+                        || msg.contains("timed out during sign after");
                     Self::shutdown(&mut inner);
-                    if died && inner.restarts_used < MAX_HARNESS_RESTARTS {
+                    if restartable && inner.restarts_used < MAX_HARNESS_RESTARTS {
                         inner.restarts_used += 1;
                         continue;
                     }
