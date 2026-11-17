@@ -1,6 +1,7 @@
 //! JNI environment emulation: object/class/method/field registries,
 //! the JNINativeInterface trampoline table, and the Java-side stubs
-//! ported from SgHarness.java (round19).
+//! ported from SgHarness.java (round19; the JVM harness, kept in the
+//! git history under runtime/goofish/harness/, e.g. at commit f6fff7c).
 //!
 //! Object model: every Java object is a host-side `Obj` in a registry;
 //! a jobject handle is a guest address of a per-object cell (like real

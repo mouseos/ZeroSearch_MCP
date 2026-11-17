@@ -1019,7 +1019,7 @@ pub fn string_content(m: &Machine, handle: u64) -> String {
 }
 
 // ---------- Java object construction + method/field stubs ----------
-// Faithful port of SgHarness.java (round19) dispatch tables, plus the
+// Faithful port of SgHarness.java (round19; see jni.rs for where it lives) dispatch tables, plus the
 // unidbg built-ins the happy path relies on (String/Map plumbing).
 
 const PKG: &str = "com.taobao.idlefish";

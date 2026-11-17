@@ -23,11 +23,10 @@ a JSON-lines "serve" protocol:
 
 (`appKey` may be included in a request; the harness uses its own
 initialised appKey either way.) Through v0.4.0 the same protocol
-was served by a JVM + unidbg harness; the Rust harness replaced
-it after it was verified to produce byte-identical signatures for
+was served by a JVM + unidbg harness (see History below); the Rust
+harness replaced it after it was verified to produce byte-identical signatures for
 the fixed test input (the golden vector both harnesses share) and
-to have a live search accepted by Goofish's servers. The JVM
-sources are kept under `harness/` as a development reference.
+to have a live search accepted by Goofish's servers.
 
 ## How a release install works (zero configuration)
 
@@ -146,15 +145,15 @@ must never be able to break the main workspace build — the same
 isolation pattern as the Yahoo US image helper. Unicorn is built
 for AArch64 only, the one architecture the harness emulates.
 
-## Legacy paths: `bootstrap.sh` and the JVM harness
+## History: the JVM harness
 
-`bootstrap.sh` is the older, manual assembly route: given an APK
-you supply, a JDK 8 and Maven, it builds a self-contained
-`goofish-runtime/` bundle around the JVM harness. It is kept for
-development; release installs do not use it, and the server
-re-assembles bootstrap/JVM-era runtimes into the Rust form on
-first use (see the marker note above). `verify-bundle.sh` below
-applies to bootstrap-assembled bundles only.
+Through v0.4.0 signatures came from a JVM + unidbg harness, assembled
+by hand with `bootstrap.sh` (and checked with `verify-bundle.sh`). Its
+sources were kept here as a reference after the Rust harness replaced
+it; they are removed now and remain in the git history (for example at
+commit `f6fff7c`, `runtime/goofish/harness/` and the two scripts). The
+server still recognises and re-assembles runtimes from that era on
+first use (see the marker note above).
 
 ## Layout of an assembled runtime
 
@@ -167,27 +166,12 @@ goofish-runtime/          (in the server's data directory)
                           #   provisioning (incl. the base.apk link)
   state/                  # SDK working files + request latch
   logs/                   # harness stderr
-  provision.json          # provisioning marker (format 2)
+  provision.json          # provisioning marker (format 3)
 ```
 
-## Verifying a bootstrap-assembled bundle
+## Verifying a runtime
 
-For bundles assembled by `bootstrap.sh` (the legacy JVM path):
-
-```sh
-./verify-bundle.sh /path/to/goofish-runtime
-```
-
-The checks are static (the harness is not started): `serve.sh`
-exists and is executable; `goofish.apk` is a readable zip carrying
-the arm64 SecurityGuard libraries; the compiled `SgHarness` class
-and the patched classes exist; every jar on `serve.sh`'s classpath
-exists under `m2repo/`; `libs/` holds the extracted SecurityGuard
-`.so` set; `rootfs/` exists; and a JDK 8 is resolvable the same way
-`serve.sh` resolves it. Each check prints `[OK]` or `[FAIL]` with
-the offending item named, and the script exits non-zero on any
-failure. Server-assembled (Rust) runtimes are instead verified by
-the golden-vector gate before any live use: the fixed synthetic
-INPUT shared by both harnesses must sign to the recorded value —
-a mismatch means the emulation drifted and live calls must not
-proceed.
+Server-assembled runtimes are verified by the golden-vector gate
+before any live use: the fixed synthetic INPUT must sign to the
+recorded value — a mismatch means the emulation drifted and live
+calls must not proceed.

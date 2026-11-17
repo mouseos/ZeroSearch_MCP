@@ -66,7 +66,7 @@ const DEFAULT_APK_SIZE: u64 = 268_743_306;
 const DEFAULT_MAIN_SO: &str = "libsgmainso-6.7.260202.so";
 /// APK entries extracted into the runtime's `libs/`: the
 /// SecurityGuard library set the harness and the plugin load (the
-/// same set `bootstrap.sh` extracted).
+/// same set the retired JVM-era `bootstrap.sh` extracted).
 const SO_PREFIXES: [&str; 5] = [
     "libsgmainso",
     "libsgmain.so",
