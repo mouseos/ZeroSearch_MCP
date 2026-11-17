@@ -6007,6 +6007,7 @@ dependencies = [
  "bilibili-provider",
  "bing-mcp-provider",
  "csdn-provider",
+ "futures-util",
  "naver-mcp-provider",
  "serde",
  "serde_json",

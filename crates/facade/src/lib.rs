@@ -678,14 +678,17 @@ impl Client {
     }
 
     /// Search every web engine with the same query. Engines run
-    /// sequentially; each engine's success or failure is reported
+    /// concurrently; each engine's success or failure is reported
     /// separately in its [`EngineOutcome`].
     pub async fn search_all(&self, query: &str) -> Vec<EngineOutcome> {
-        let mut out = Vec::with_capacity(WebEngine::all().len());
-        for &engine in WebEngine::all() {
-            out.push(self.search_outcome(engine, query).await);
-        }
-        out
+        // Every engine is a different host, so they are queried
+        // concurrently; the result keeps the order of `WebEngine::all()`.
+        futures_util::future::join_all(
+            WebEngine::all()
+                .iter()
+                .map(|&engine| self.search_outcome(engine, query)),
+        )
+        .await
     }
 
     async fn search_outcome(&self, engine: WebEngine, query: &str) -> EngineOutcome {
@@ -847,42 +850,23 @@ impl Client {
 
     /// Search every shopping provider with the same query. Each
     /// provider's success or failure is reported separately.
-    /// Providers run sequentially and each performs a live request,
+    /// Providers run concurrently and each performs a live request,
     /// so callers should treat this as ten searches, not one.
     pub async fn search_products_all(&self, query: &str, limit: i64) -> Vec<ShopOutcome> {
-        let mut out = Vec::with_capacity(ShopProvider::all().len());
-        for &provider in ShopProvider::all() {
-            let outcome = match self.search_products(provider, query, limit).await {
-                Ok(result) => {
-                    let ok = result.get("ok").and_then(Value::as_bool).unwrap_or(true);
-                    let error = if ok {
-                        None
-                    } else {
-                        payload_error_message(&result)
-                    };
-                    let error_kind = error.as_deref().map(ErrorKind::from_error_message);
-                    ShopOutcome {
-                        provider,
-                        ok,
-                        result: Some(result),
-                        error,
-                        error_kind,
-                    }
-                }
-                Err(e) => {
-                    let message = format!("{e:#}");
-                    ShopOutcome {
-                        provider,
-                        ok: false,
-                        result: None,
-                        error_kind: Some(ErrorKind::from_error_message(&message)),
-                        error: Some(message),
-                    }
-                }
-            };
-            out.push(outcome);
-        }
-        out
+        // Each provider is a different host, so they are queried
+        // concurrently; the result keeps the order of `ShopProvider::all()`.
+        let runs = ShopProvider::all().iter().map(|&provider| async move {
+            let (ok, result, error, error_kind) =
+                outcome_parts(self.search_products(provider, query, limit).await);
+            ShopOutcome {
+                provider,
+                ok,
+                result,
+                error,
+                error_kind,
+            }
+        });
+        futures_util::future::join_all(runs).await
     }
 
     /// Search one media provider. The returned JSON is the
@@ -970,42 +954,23 @@ impl Client {
 
     /// Search every media provider with the same query. Each
     /// provider's success or failure is reported separately.
-    /// Providers run sequentially and each performs a live request,
+    /// Providers run concurrently and each performs a live request,
     /// so callers should treat this as two searches, not one.
     pub async fn search_media_all(&self, query: &str, limit: i64) -> Vec<MediaOutcome> {
-        let mut out = Vec::with_capacity(MediaProvider::all().len());
-        for &provider in MediaProvider::all() {
-            let outcome = match self.search_media(provider, query, limit).await {
-                Ok(result) => {
-                    let ok = result.get("ok").and_then(Value::as_bool).unwrap_or(true);
-                    let error = if ok {
-                        None
-                    } else {
-                        payload_error_message(&result)
-                    };
-                    let error_kind = error.as_deref().map(ErrorKind::from_error_message);
-                    MediaOutcome {
-                        provider,
-                        ok,
-                        result: Some(result),
-                        error,
-                        error_kind,
-                    }
-                }
-                Err(e) => {
-                    let message = format!("{e:#}");
-                    MediaOutcome {
-                        provider,
-                        ok: false,
-                        result: None,
-                        error_kind: Some(ErrorKind::from_error_message(&message)),
-                        error: Some(message),
-                    }
-                }
-            };
-            out.push(outcome);
-        }
-        out
+        // Each provider is a different host, so they are queried
+        // concurrently; the result keeps the order of `MediaProvider::all()`.
+        let runs = MediaProvider::all().iter().map(|&provider| async move {
+            let (ok, result, error, error_kind) =
+                outcome_parts(self.search_media(provider, query, limit).await);
+            MediaOutcome {
+                provider,
+                ok,
+                result,
+                error,
+                error_kind,
+            }
+        });
+        futures_util::future::join_all(runs).await
     }
 
     /// Search one article provider. The returned JSON is the
@@ -1052,39 +1017,20 @@ impl Client {
     /// provider's success or failure is reported separately.
     /// Providers run sequentially and each performs a live request.
     pub async fn search_articles_all(&self, query: &str, limit: i64) -> Vec<ArticleOutcome> {
-        let mut out = Vec::with_capacity(ArticleProvider::all().len());
-        for &provider in ArticleProvider::all() {
-            let outcome = match self.search_articles(provider, query, limit).await {
-                Ok(result) => {
-                    let ok = result.get("ok").and_then(Value::as_bool).unwrap_or(true);
-                    let error = if ok {
-                        None
-                    } else {
-                        payload_error_message(&result)
-                    };
-                    let error_kind = error.as_deref().map(ErrorKind::from_error_message);
-                    ArticleOutcome {
-                        provider,
-                        ok,
-                        result: Some(result),
-                        error,
-                        error_kind,
-                    }
-                }
-                Err(e) => {
-                    let message = format!("{e:#}");
-                    ArticleOutcome {
-                        provider,
-                        ok: false,
-                        result: None,
-                        error_kind: Some(ErrorKind::from_error_message(&message)),
-                        error: Some(message),
-                    }
-                }
-            };
-            out.push(outcome);
-        }
-        out
+        // Each provider is a different host, so they are queried
+        // concurrently; the result keeps the order of `ArticleProvider::all()`.
+        let runs = ArticleProvider::all().iter().map(|&provider| async move {
+            let (ok, result, error, error_kind) =
+                outcome_parts(self.search_articles(provider, query, limit).await);
+            ArticleOutcome {
+                provider,
+                ok,
+                result,
+                error,
+                error_kind,
+            }
+        });
+        futures_util::future::join_all(runs).await
     }
 
     /// Search a whole category with one query: every web engine for
@@ -1137,45 +1083,84 @@ pub fn media_next_token(provider: MediaProvider, result: &Value) -> Option<Strin
         .map(str::to_string)
 }
 
+/// Success/failure parts shared by the `*_all` outcome types: a
+/// payload whose `ok` is false counts as a failure with the payload's
+/// own error message.
+fn outcome_parts(
+    result: Result<Value>,
+) -> (bool, Option<Value>, Option<String>, Option<ErrorKind>) {
+    match result {
+        Ok(result) => {
+            let ok = result.get("ok").and_then(Value::as_bool).unwrap_or(true);
+            let error = if ok {
+                None
+            } else {
+                payload_error_message(&result)
+            };
+            let error_kind = error.as_deref().map(ErrorKind::from_error_message);
+            (ok, Some(result), error, error_kind)
+        }
+        Err(e) => {
+            let message = format!("{e:#}");
+            let kind = ErrorKind::from_error_message(&message);
+            (false, None, Some(message), Some(kind))
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
-// Free functions (build a Client per call — the zero-config shortcut)
+// Free functions (one process-wide Client — the zero-config shortcut)
 // ---------------------------------------------------------------------------
 
-/// Search one web engine with a throwaway client. Harnesses that
+/// The process-wide client behind the free functions. Built on first
+/// use and kept: building a [`Client`] creates every provider's HTTP
+/// client and session state, so the shared client per call repeated
+/// that work (and, for AliExpress, a token round trip) on every call.
+static SHARED: std::sync::OnceLock<Client> = std::sync::OnceLock::new();
+
+fn shared() -> Result<&'static Client> {
+    if let Some(client) = SHARED.get() {
+        return Ok(client);
+    }
+    let client = Client::new()?;
+    Ok(SHARED.get_or_init(|| client))
+}
+
+/// Search one web engine with the shared client. Harnesses that
 /// search repeatedly should keep a [`Client`] instead.
 pub async fn search(engine: WebEngine, query: &str) -> Result<Vec<SearchItem>> {
-    Client::new()?.search(engine, query).await
+    shared()?.search(engine, query).await
 }
 
-/// Search every web engine with a throwaway client.
+/// Search every web engine with the shared client.
 pub async fn search_all(query: &str) -> Result<Vec<EngineOutcome>> {
-    Ok(Client::new()?.search_all(query).await)
+    Ok(shared()?.search_all(query).await)
 }
 
-/// Search one shopping provider with a throwaway client.
+/// Search one shopping provider with the shared client.
 pub async fn search_products(provider: ShopProvider, query: &str, limit: i64) -> Result<Value> {
-    Client::new()?.search_products(provider, query, limit).await
+    shared()?.search_products(provider, query, limit).await
 }
 
-/// Search one media provider with a throwaway client.
+/// Search one media provider with the shared client.
 pub async fn search_media(provider: MediaProvider, query: &str, limit: i64) -> Result<Value> {
-    Client::new()?.search_media(provider, query, limit).await
+    shared()?.search_media(provider, query, limit).await
 }
 
-/// Search one article provider with a throwaway client.
+/// Search one article provider with the shared client.
 pub async fn search_articles(provider: ArticleProvider, query: &str, limit: i64) -> Result<Value> {
-    Client::new()?.search_articles(provider, query, limit).await
+    shared()?.search_articles(provider, query, limit).await
 }
 
 /// Search one media provider, following a pagination token, with
-/// a throwaway client.
+/// the shared client.
 pub async fn search_media_paged(
     provider: MediaProvider,
     query: &str,
     limit: i64,
     page_token: &str,
 ) -> Result<Value> {
-    Client::new()?
+    shared()?
         .search_media_paged(provider, query, limit, page_token)
         .await
 }
@@ -1188,7 +1173,7 @@ pub async fn search_articles_paged(
     page: u32,
     limit: i64,
 ) -> Result<Value> {
-    Client::new()?
+    shared()?
         .search_articles_paged(provider, query, page, limit)
         .await
 }

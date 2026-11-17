@@ -15,6 +15,8 @@ tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+# join_all for the concurrent `*_all` searches (already in the graph via reqwest).
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 
 baidu_search = { package = "baidu-mcp-provider", path = "../providers/baidu" }
 yahoo_search = { package = "yahoo-search-mcp-provider", path = "../providers/yahoo" }
