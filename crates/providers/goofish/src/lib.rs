@@ -301,6 +301,10 @@ fn build_signer(serve_command: &[String]) -> Result<ServeSigner, String> {
 pub struct GoofishClient {
     halt: Mutex<Option<String>>,
     signer: Mutex<Option<ServeSigner>>,
+    /// The MTOP HTTP client, built on first use and reused: a client
+    /// per call paid a new TCP connect, proxy CONNECT and TLS
+    /// handshake on every request.
+    http: std::sync::OnceLock<reqwest::Client>,
 }
 
 impl Default for GoofishClient {
@@ -369,7 +373,25 @@ impl GoofishClient {
         Self {
             halt: Mutex::new(None),
             signer: Mutex::new(None),
+            http: std::sync::OnceLock::new(),
         }
+    }
+
+    fn http_client(&self) -> Result<&reqwest::Client, reqwest::Error> {
+        if let Some(client) = self.http.get() {
+            return Ok(client);
+        }
+        // Timeouts are split (issue #2, item 6): the connect timeout
+        // is 15s so a connection-establishment failure — the only
+        // retryable kind — surfaces quickly instead of consuming the
+        // whole request budget, while the overall per-attempt
+        // timeout stays at the historical 60s (set per request).
+        let client = reqwest::Client::builder()
+            .shared_tls()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(15))
+            .build()?;
+        Ok(self.http.get_or_init(|| client))
     }
 
     /// Pre-warm: resolve the runtime and start the signing harness
@@ -595,17 +617,7 @@ impl GoofishClient {
         // explicitly, issue #2; see `diagnostics.proxy` in the
         // result for what was detected at runtime).
         //
-        // Timeouts are split (issue #2, item 6): the connect timeout
-        // is 15s so a connection-establishment failure — the only
-        // retryable kind — surfaces quickly instead of consuming the
-        // whole request budget, while the overall per-attempt
-        // timeout stays at the historical 60s.
-        let client = match reqwest::Client::builder()
-            .shared_tls()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(15))
-            .build()
-        {
+        let client = match self.http_client() {
             Ok(c) => c,
             Err(e) => {
                 return meta.attach(error_value(
