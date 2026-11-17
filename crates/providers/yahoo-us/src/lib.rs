@@ -205,6 +205,11 @@ impl<T> SearchResult<T> {
 #[derive(Clone)]
 pub struct YahooUsSearchClient {
     http: Client,
+    /// Set once a direct fetch failed and the helper served the page:
+    /// later fetches go to the helper first instead of paying for a
+    /// direct request that this egress has already shown it refuses.
+    /// A helper failure still falls back to a direct fetch.
+    prefer_helper: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Default for YahooUsSearchClient {
@@ -226,7 +231,20 @@ impl YahooUsSearchClient {
             .build()
             .expect("failed to build HTTP client");
 
-        Self { http }
+        Self {
+            http,
+            prefer_helper: Default::default(),
+        }
+    }
+
+    fn helper_preferred(&self) -> bool {
+        self.prefer_helper
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn remember_helper(&self) {
+        self.prefer_helper
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// GET a Yahoo page as text, with the headers their edge expects.
@@ -240,11 +258,17 @@ impl YahooUsSearchClient {
     /// the direct fetch works it is used untouched, and where no
     /// helper is installed the original error surfaces unchanged.
     pub(crate) async fn get_html(&self, url: &str, referer: &str) -> Result<String> {
+        if self.helper_preferred() && helper::helper_path().is_some() {
+            if let Ok(html) = helper::fetch_page_html(url).await {
+                return Ok(html);
+            }
+        }
         match self.get_html_direct(url, referer).await {
             Ok(html) => Ok(html),
             Err(direct_err) => {
                 if helper::helper_path().is_some() {
                     if let Ok(html) = helper::fetch_page_html(url).await {
+                        self.remember_helper();
                         return Ok(html);
                     }
                 }
@@ -281,6 +305,13 @@ impl YahooUsSearchClient {
     }
 
     pub(crate) async fn get_json(&self, url: &str, referer: &str) -> Result<serde_json::Value> {
+        if self.helper_preferred() && helper::helper_path().is_some() {
+            if let Ok(body) = helper::fetch_page_html(url).await {
+                if let Ok(value) = serde_json::from_str(&body) {
+                    return Ok(value);
+                }
+            }
+        }
         match self.get_json_direct(url, referer).await {
             Ok(value) => Ok(value),
             Err(direct_err) => {
@@ -289,6 +320,7 @@ impl YahooUsSearchClient {
                 if helper::helper_path().is_some() {
                     if let Ok(body) = helper::fetch_page_html(url).await {
                         if let Ok(value) = serde_json::from_str(&body) {
+                            self.remember_helper();
                             return Ok(value);
                         }
                     }

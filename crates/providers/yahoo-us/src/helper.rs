@@ -95,6 +95,18 @@ fn decode_response(line: &str) -> Result<(u16, String)> {
 /// matched), then the working-directory-relative `target/`
 /// directories (development fallback).
 pub fn helper_path() -> Option<PathBuf> {
+    // A found helper is remembered for the process: the search below
+    // stats up to ~10 paths and ran twice per helper fetch. A miss is
+    // not cached, so a helper installed later is still picked up.
+    static FOUND: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    if let Some(p) = FOUND.get() {
+        return Some(p.clone());
+    }
+    let found = find_helper()?;
+    Some(FOUND.get_or_init(|| found).clone())
+}
+
+fn find_helper() -> Option<PathBuf> {
     if let Ok(p) = std::env::var(HELPER_ENV) {
         let p = p.trim();
         if !p.is_empty() {
