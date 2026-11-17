@@ -1,5 +1,4 @@
 mod dpop;
-mod proto;
 
 use anyhow::Result;
 use regex::Regex;
@@ -44,8 +43,6 @@ static STATUS_ENUMS: &[&str] = &[
     "STATUS_TRADING",
     "STATUS_SOLD_OUT",
 ];
-#[allow(dead_code)]
-static ITEM_TYPE_ENUMS: &[&str] = &["ITEM_TYPE_MERCARI", "ITEM_TYPE_BEYOND"];
 
 fn enum_at<'a>(table: &'a [&'a str], idx: usize) -> &'a str {
     table.get(idx).unwrap_or(&table[0])
