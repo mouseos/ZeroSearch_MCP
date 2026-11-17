@@ -175,17 +175,45 @@ async fn main() {
         }
     }
 
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-    let mut reader = stdin.lock();
-    let mut line = String::new();
-
-    loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) | Err(_) => break,
-            Ok(_) => {}
+    // Requests are read on their own, every tools/call runs as its own
+    // task, and one writer task serialises the replies (JSON-RPC
+    // matches them by id, so they may complete out of order). Before,
+    // the loop awaited each call before reading the next line, so one
+    // slow call (a Goofish signer boot, a slow host) held up every
+    // later request, `ping` included.
+    let providers = std::sync::Arc::new(providers);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+    let writer = tokio::task::spawn_blocking(move || {
+        let mut stdout = io::stdout();
+        while let Some(response) = rx.blocking_recv() {
+            let Ok(out) = serde_json::to_string(&response) else {
+                continue;
+            };
+            let _ = writeln!(stdout, "{out}");
+            let _ = stdout.flush();
         }
+    });
+    let mut calls = tokio::task::JoinSet::new();
+    let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    // stdin is read on a plain thread: a blocking read inside the async
+    // runtime would park a worker.
+    std::thread::spawn(move || {
+        let stdin = io::stdin();
+        let mut reader = stdin.lock();
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            if line_tx.send(line.clone()).is_err() {
+                break;
+            }
+        }
+    });
+
+    while let Some(line) = line_rx.recv().await {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -203,8 +231,14 @@ async fn main() {
             "ping" => json_rpc_response(&id, json!({})),
             "tools/list" => handle_tools_list(&id),
             "tools/call" => {
-                let params = request.get("params").cloned().unwrap_or(json!({}));
-                handle_tools_call(&id, &params, &providers).await
+                let providers = providers.clone();
+                let tx = tx.clone();
+                calls.spawn(async move {
+                    let params = request.get("params").unwrap_or(&Value::Null);
+                    let response = handle_tools_call(&id, params, &providers).await;
+                    let _ = tx.send(response);
+                });
+                continue;
             }
             "resources/list" => json_rpc_response(&id, json!({"resources": []})),
             "prompts/list" => json_rpc_response(&id, json!({"prompts": []})),
@@ -216,13 +250,14 @@ async fn main() {
                 json_rpc_error(&id, -32601, &format!("Method not found: {method}"))
             }
         };
-
-        let Ok(out) = serde_json::to_string(&response) else {
-            continue;
-        };
-        let _ = writeln!(stdout, "{out}");
-        let _ = stdout.flush();
+        let _ = tx.send(response);
     }
+
+    // stdin closed: let the calls already received finish and their
+    // replies be written before exiting.
+    while calls.join_next().await.is_some() {}
+    drop(tx);
+    let _ = writer.await;
 }
 
 fn handle_initialize(id: &Option<Value>) -> Value {
@@ -243,9 +278,10 @@ fn handle_tools_list(id: &Option<Value>) -> Value {
 
 async fn handle_tools_call(id: &Option<Value>, params: &Value, providers: &Providers) -> Value {
     let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
-    let args = params.get("arguments").cloned().unwrap_or(json!({}));
+    let empty = json!({});
+    let args = params.get("arguments").unwrap_or(&empty);
 
-    match tools::dispatch(tool_name, &args, providers).await {
+    match tools::dispatch(tool_name, args, providers).await {
         Ok(content) => {
             let text = serde_json::to_string(&content).unwrap_or_default();
             let mut blocks = vec![json!({"type": "text", "text": text})];
