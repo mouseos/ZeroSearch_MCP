@@ -172,12 +172,9 @@ pub fn build_headers(
 }
 
 fn md5_hex(data: &[u8]) -> String {
-    use md5::{Digest, Md5};
-    let mut hasher = Md5::new();
-    hasher.update(data);
-    let digest = hasher.finalize();
+    let digest = md5::compute(data);
     let mut out = String::with_capacity(32);
-    for b in digest {
+    for b in digest.0 {
         out.push_str(&format!("{b:02x}"));
     }
     out
@@ -186,6 +183,12 @@ fn md5_hex(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn md5_hex_is_lowercase_and_zero_padded() {
+        assert_eq!(md5_hex(b""), "d41d8cd98f00b204e9800998ecf8427e");
+        assert_eq!(md5_hex(&[b'a'; 64]), "014842d480b571495a4a0363793f7367");
+    }
 
     #[test]
     fn canonical_sorts_params_and_bares_empty_values() {

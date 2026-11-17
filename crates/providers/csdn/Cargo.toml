@@ -21,4 +21,4 @@ uuid = { workspace = true }
 hmac = "0.12"
 sha2 = "0.10"
 base64 = { workspace = true }
-md-5 = "0.10"
+md5 = "0.7"

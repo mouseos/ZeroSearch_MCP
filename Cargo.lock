@@ -520,7 +520,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "hpack",
- "md-5",
+ "md5",
  "prost",
  "rand 0.8.8",
  "rustls",
@@ -1011,7 +1011,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "hmac",
- "md-5",
+ "md5",
  "reqwest",
  "serde",
  "serde_json",
@@ -2554,16 +2554,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "md-5"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
-dependencies = [
- "cfg-if",
- "digest",
 ]
 
 [[package]]
@@ -4137,6 +4127,7 @@ name = "shopping-mcp-aliexpress"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "md5",
  "regex",
  "reqwest",
  "serde",

@@ -3978,10 +3978,10 @@ fn canonical_product_url(product_id: &str) -> String {
     format!("https://www.aliexpress.com/item/{}.html", product_id)
 }
 
+/// MD5 digest as a big-endian `u128`. The sign is formatted from it with
+/// `{:x}`, i.e. without leading zeros; that format is kept as it was.
 fn md5_hash(data: &[u8]) -> u128 {
-    // Simple MD5 implementation using the md-5 algorithm
-    // We compute MD5 manually since we don't want to add another dependency
-    md5_compute(data)
+    u128::from_be_bytes(md5::compute(data).0)
 }
 
 fn urlencoding_encode(s: &str) -> String {
@@ -3997,86 +3997,6 @@ fn urlencoding_encode(s: &str) -> String {
         }
     }
     result
-}
-
-fn md5_compute(data: &[u8]) -> u128 {
-    // MD5 constants
-    const S: [u32; 64] = [
-        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5,
-        9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10,
-        15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
-    ];
-    const K: [u32; 64] = [
-        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613,
-        0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193,
-        0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d,
-        0x02441453, 0xd8a1e681, 0xe7d3fbc8, 0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
-        0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122,
-        0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa,
-        0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665, 0xf4292244,
-        0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb,
-        0xeb86d391,
-    ];
-
-    let orig_len_bits = (data.len() as u64) * 8;
-    let mut msg = data.to_vec();
-    msg.push(0x80);
-    while msg.len() % 64 != 56 {
-        msg.push(0);
-    }
-    msg.extend_from_slice(&orig_len_bits.to_le_bytes());
-
-    let mut a0: u32 = 0x67452301;
-    let mut b0: u32 = 0xefcdab89;
-    let mut c0: u32 = 0x98badcfe;
-    let mut d0: u32 = 0x10325476;
-
-    for chunk in msg.chunks(64) {
-        let mut m = [0u32; 16];
-        for (i, word) in chunk.chunks(4).enumerate() {
-            m[i] = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
-        }
-
-        let (mut a, mut b, mut c, mut d) = (a0, b0, c0, d0);
-        for i in 0..64 {
-            let (f, g) = match i {
-                0..=15 => ((b & c) | ((!b) & d), i),
-                16..=31 => ((d & b) | ((!d) & c), (5 * i + 1) % 16),
-                32..=47 => (b ^ c ^ d, (3 * i + 5) % 16),
-                _ => (c ^ (b | (!d)), (7 * i) % 16),
-            };
-            let f = f.wrapping_add(a).wrapping_add(K[i]).wrapping_add(m[g]);
-            a = d;
-            d = c;
-            c = b;
-            b = b.wrapping_add(f.rotate_left(S[i]));
-        }
-        a0 = a0.wrapping_add(a);
-        b0 = b0.wrapping_add(b);
-        c0 = c0.wrapping_add(c);
-        d0 = d0.wrapping_add(d);
-    }
-
-    let bytes: [u8; 16] = [
-        a0 as u8,
-        (a0 >> 8) as u8,
-        (a0 >> 16) as u8,
-        (a0 >> 24) as u8,
-        b0 as u8,
-        (b0 >> 8) as u8,
-        (b0 >> 16) as u8,
-        (b0 >> 24) as u8,
-        c0 as u8,
-        (c0 >> 8) as u8,
-        (c0 >> 16) as u8,
-        (c0 >> 24) as u8,
-        d0 as u8,
-        (d0 >> 8) as u8,
-        (d0 >> 16) as u8,
-        (d0 >> 24) as u8,
-    ];
-    u128::from_be_bytes(bytes)
 }
 
 #[cfg(test)]
@@ -4120,16 +4040,39 @@ mod tests {
         assert_eq!(extract_product_id("hello world"), None);
     }
 
+    /// Digests the hand-written MD5 this crate used to carry produced
+    /// (checked against it before it was replaced by the `md5` crate).
     #[test]
-    fn test_md5() {
-        let hash = md5_compute(b"");
-        assert_eq!(format!("{:032x}", hash), "d41d8cd98f00b204e9800998ecf8427e");
-    }
-
-    #[test]
-    fn test_md5_hello() {
-        let hash = md5_compute(b"hello");
-        assert_eq!(format!("{:032x}", hash), "5d41402abc4b2a76b9719d911017c592");
+    fn md5_hash_matches_previous_digests() {
+        let long: Vec<u8> = b"0123456789abcdef"
+            .repeat(9)
+            .into_iter()
+            .chain(*b"xyz")
+            .collect();
+        let cases: [(&[u8], &str); 8] = [
+            (b"", "d41d8cd98f00b204e9800998ecf8427e"),
+            (b"hello", "5d41402abc4b2a76b9719d911017c592"),
+            (
+                "日本語テキスト🎉".as_bytes(),
+                "af91e7698b2586a0dba9c8d6a44d1d4d",
+            ),
+            (&[b'a'; 55], "ef1772b6dff9a122358552954ad0df65"),
+            (&[b'a'; 56], "3b0c8ac703f828b04c6c197006d17218"),
+            (&[b'a'; 64], "014842d480b571495a4a0363793f7367"),
+            (&long, "0e4480aaef0452aec45393f4da70490c"),
+            (
+                b"abc123&1700000000000&12574478&{\"q\":\"test\"}",
+                "b2dea023df5a7084082e67eb2ea5b8b6",
+            ),
+        ];
+        for (input, hex) in cases {
+            assert_eq!(format!("{:032x}", md5_hash(input)), hex, "input: {input:?}");
+        }
+        // The sign uses `{:x}`: a leading zero nibble is dropped.
+        assert_eq!(
+            format!("{:x}", md5_hash(&[b'a'; 64])),
+            "14842d480b571495a4a0363793f7367"
+        );
     }
 
     #[test]
@@ -4160,15 +4103,6 @@ mod tests {
     fn test_urlencoding() {
         assert_eq!(urlencoding_encode("hello world"), "hello%20world");
         assert_eq!(urlencoding_encode("a=b&c=d"), "a%3Db%26c%3Dd");
-    }
-
-    #[test]
-    fn test_md5_sign_source() {
-        let sign_source = "abc123&1700000000000&12574478&{\"q\":\"test\"}";
-        let hash = md5_compute(sign_source.as_bytes());
-        let hex = format!("{:032x}", hash);
-        assert_eq!(hex.len(), 32);
-        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]

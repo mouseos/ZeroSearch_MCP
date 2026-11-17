@@ -22,7 +22,7 @@ webpki-roots = "0.26"
 tokio-socks = "0.5"
 hpack = "0.3"
 prost = "0.13"
-md-5 = "0.10"
+md5 = "0.7"
 
 [[example]]
 name = "live_check"

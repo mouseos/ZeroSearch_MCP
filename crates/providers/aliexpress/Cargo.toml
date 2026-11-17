@@ -12,3 +12,4 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 regex = { workspace = true }
 uuid = { workspace = true }
+md5 = "0.7"

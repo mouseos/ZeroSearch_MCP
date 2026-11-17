@@ -26,7 +26,6 @@
 //! this local value when the fetch fails or has not completed; the local
 //! value is a first-class input to the gRPC metadata.
 
-use md5::{Digest, Md5};
 use rand::Rng;
 
 /// The device identity this client presents, mirroring the values the app
@@ -80,10 +79,8 @@ impl DeviceIdentity {
 /// One provider step of the app algorithm:
 /// `prefix + md5[2] + md5[12] + md5[22] + md5` over the content string.
 pub fn buvid_from(prefix: &str, content: &str) -> String {
-    let mut hasher = Md5::new();
-    hasher.update(content.as_bytes());
-    let digest = hasher.finalize();
-    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    let digest = md5::compute(content.as_bytes());
+    let hex: String = digest.0.iter().map(|b| format!("{b:02x}")).collect();
     let chars: Vec<char> = hex.chars().collect();
     let mut out = String::with_capacity(37);
     out.push_str(prefix);
@@ -101,4 +98,18 @@ pub fn fawkes_session_id() -> String {
     (0..8)
         .map(|_| CHARS[rng.gen_range(0..CHARS.len())] as char)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn buvid_from_uses_lowercase_md5_hex() {
+        // md5("hello") = 5d41402abc4b2a76b9719d911017c592
+        assert_eq!(
+            buvid_from("XY", "hello"),
+            "XY4295d41402abc4b2a76b9719d911017c592"
+        );
+    }
 }
