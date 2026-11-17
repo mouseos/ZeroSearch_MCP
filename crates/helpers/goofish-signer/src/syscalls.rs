@@ -19,6 +19,23 @@ pub enum FdKind {
         guest_path: String,
     },
     Socket, // placeholder: network is stubbed at the Java layer in the oracle
+    /// `/dev/urandom` on hosts without one (Windows): reads return
+    /// host random bytes.
+    Random,
+}
+
+/// Host random bytes without `/dev/urandom` (Windows). Not a CSPRNG
+/// requirement: the signature does not depend on guest randomness;
+/// `RandomState` is seeded from the OS RNG.
+fn host_random(buf: &mut [u8]) {
+    use std::hash::{BuildHasher, Hasher};
+    let state = std::collections::hash_map::RandomState::new();
+    for (i, chunk) in buf.chunks_mut(8).enumerate() {
+        let mut h = state.build_hasher();
+        h.write_usize(i);
+        let bytes = h.finish().to_le_bytes();
+        chunk.copy_from_slice(&bytes[..chunk.len()]);
+    }
 }
 
 pub struct FdEntry {
@@ -461,8 +478,11 @@ pub fn dispatch(uc: &mut Uc<'_>, m: &mut Machine) {
             let mut buf = vec![0u8; n];
             // Deterministic source is fine: the oracle's signature is
             // independent of randomness; use the host OS RNG anyway.
-            if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-                let _ = f.read_exact(&mut buf);
+            match std::fs::File::open("/dev/urandom") {
+                Ok(mut f) => {
+                    let _ = f.read_exact(&mut buf);
+                }
+                Err(_) => host_random(&mut buf),
             }
             let _ = uc.mem_write(a0, &buf);
             n as u64
@@ -587,7 +607,11 @@ fn sys_openat(
         m.fds.insert(
             fd,
             FdEntry {
-                kind: FdKind::File(std::fs::File::open("/dev/null").unwrap()),
+                // `NUL` is the null device on Windows, where opening
+                // `/dev/null` fails (and unwrap() aborted the harness).
+                kind: FdKind::File(
+                    std::fs::File::open(if cfg!(windows) { "NUL" } else { "/dev/null" }).unwrap(),
+                ),
                 guest_path: path.clone(),
                 append: false,
             },
@@ -600,7 +624,10 @@ fn sys_openat(
         m.fds.insert(
             fd,
             FdEntry {
-                kind: FdKind::File(std::fs::File::open("/dev/urandom").unwrap()),
+                kind: match std::fs::File::open("/dev/urandom") {
+                    Ok(f) => FdKind::File(f),
+                    Err(_) => FdKind::Random,
+                },
                 guest_path: path.clone(),
                 append: false,
             },
@@ -701,6 +728,15 @@ fn sys_read(uc: &mut Uc<'_>, m: &mut Machine, fd: i32, buf: u64, count: u64) -> 
             kind: FdKind::Socket,
             ..
         }) => 0, // EOF
+        Some(FdEntry {
+            kind: FdKind::Random,
+            ..
+        }) => {
+            let mut b = vec![0u8; count as usize];
+            host_random(&mut b);
+            let _ = uc.mem_write(buf, &b);
+            count
+        }
         Some(FdEntry {
             kind: FdKind::File(f),
             ..

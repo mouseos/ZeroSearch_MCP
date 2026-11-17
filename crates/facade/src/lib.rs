@@ -376,11 +376,7 @@ fn payload_error_message(result: &Value) -> Option<String> {
             .get("message")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .or_else(|| {
-                map.get("kind")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            }),
+            .or_else(|| map.get("kind").and_then(Value::as_str).map(str::to_string)),
         _ => None,
     }
 }
@@ -859,10 +855,12 @@ impl Client {
             let outcome = match self.search_products(provider, query, limit).await {
                 Ok(result) => {
                     let ok = result.get("ok").and_then(Value::as_bool).unwrap_or(true);
-                    let error = if ok { None } else { payload_error_message(&result) };
-                    let error_kind = error
-                        .as_deref()
-                        .map(ErrorKind::from_error_message);
+                    let error = if ok {
+                        None
+                    } else {
+                        payload_error_message(&result)
+                    };
+                    let error_kind = error.as_deref().map(ErrorKind::from_error_message);
                     ShopOutcome {
                         provider,
                         ok,
@@ -980,10 +978,12 @@ impl Client {
             let outcome = match self.search_media(provider, query, limit).await {
                 Ok(result) => {
                     let ok = result.get("ok").and_then(Value::as_bool).unwrap_or(true);
-                    let error = if ok { None } else { payload_error_message(&result) };
-                    let error_kind = error
-                        .as_deref()
-                        .map(ErrorKind::from_error_message);
+                    let error = if ok {
+                        None
+                    } else {
+                        payload_error_message(&result)
+                    };
+                    let error_kind = error.as_deref().map(ErrorKind::from_error_message);
                     MediaOutcome {
                         provider,
                         ok,
@@ -1057,10 +1057,12 @@ impl Client {
             let outcome = match self.search_articles(provider, query, limit).await {
                 Ok(result) => {
                     let ok = result.get("ok").and_then(Value::as_bool).unwrap_or(true);
-                    let error = if ok { None } else { payload_error_message(&result) };
-                    let error_kind = error
-                        .as_deref()
-                        .map(ErrorKind::from_error_message);
+                    let error = if ok {
+                        None
+                    } else {
+                        payload_error_message(&result)
+                    };
+                    let error_kind = error.as_deref().map(ErrorKind::from_error_message);
                     ArticleOutcome {
                         provider,
                         ok,

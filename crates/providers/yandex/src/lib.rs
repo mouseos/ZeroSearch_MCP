@@ -253,6 +253,13 @@ impl YandexSearchClient {
     pub fn new() -> Self {
         let http = Client::builder()
             .user_agent(USER_AGENT)
+            // HTTP/1.1 only. Measured 2026-11-17: over HTTP/2 every
+            // touch-page load (with or without cookies) was redirected
+            // to `showcaptcha`, while the same request over HTTP/1.1 —
+            // the protocol the curl tool uses — was served the normal
+            // result page. A captcha that is served is still reported
+            // as `access_restricted` and never worked around.
+            .http1_only()
             .cookie_store(true)
             .timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(10))

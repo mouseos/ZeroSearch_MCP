@@ -29,11 +29,11 @@ pub mod netdiag;
 pub mod parse;
 pub mod protocol;
 mod provision;
-mod slimapk;
 pub mod registry;
 pub mod requests;
 pub mod search_session;
 pub mod signing;
+mod slimapk;
 pub mod transport;
 pub mod util;
 

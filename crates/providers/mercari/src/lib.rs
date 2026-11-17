@@ -1129,12 +1129,7 @@ fn normalize_shop_detail(data: &Value) -> Value {
     let variants = &detail["variants"];
     let all_variants_sold_out = variants
         .as_array()
-        .map(|arr| {
-            !arr.is_empty()
-                && arr
-                    .iter()
-                    .all(|v| v["soldOut"].as_bool() == Some(true))
-        })
+        .map(|arr| !arr.is_empty() && arr.iter().all(|v| v["soldOut"].as_bool() == Some(true)))
         .unwrap_or(false);
     // Status vocabulary mirrors the search normalization labels.
     // Sold-out Shops products carry the `sold_out` tag (live-verified);
@@ -1567,7 +1562,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn test_shops_url_and_route() {
         assert_eq!(
             shops_url("2JYr3K454Ks8q9XoSdCrhD"),
@@ -1589,10 +1583,7 @@ mod tests {
             DetailRoute::Personal
         );
         assert_eq!(
-            detail_route(
-                "https://jp.mercari.com/item/m1234567890",
-                "m1234567890"
-            ),
+            detail_route("https://jp.mercari.com/item/m1234567890", "m1234567890"),
             DetailRoute::Personal
         );
         assert_eq!(
@@ -1715,10 +1706,7 @@ mod tests {
         assert_eq!(out["auction"]["highest_bid"], 2500);
         assert_eq!(out["auction"]["total_bids"], 3);
         assert_eq!(out["auction"]["state"], "AUCTION_STATE_ACTIVE");
-        assert_eq!(
-            out["auction"]["expected_end_time"],
-            "2026-11-20T11:11:00Z"
-        );
+        assert_eq!(out["auction"]["expected_end_time"], "2026-11-20T11:11:00Z");
     }
 
     #[test]
@@ -1998,13 +1986,20 @@ mod tests {
             .expect("no beyond (Shops) item found in search results");
         let pid = shop_item["product_id"].as_str().unwrap().to_string();
         assert!(
-            shop_item["url"].as_str().unwrap().contains("/shops/product/"),
+            shop_item["url"]
+                .as_str()
+                .unwrap()
+                .contains("/shops/product/"),
             "search url for a Shops item must use /shops/product/: {}",
             shop_item["url"]
         );
 
         let detail = client.get_product(&pid).await.unwrap();
-        assert_eq!(detail["ok"], true, "get_product FAILED for Shops {}: {}", pid, detail);
+        assert_eq!(
+            detail["ok"], true,
+            "get_product FAILED for Shops {}: {}",
+            pid, detail
+        );
         let item = &detail["item"];
         assert_eq!(item["product_id"], pid);
         assert_eq!(item["item_type"], "beyond");
@@ -2012,13 +2007,16 @@ mod tests {
             .as_str()
             .unwrap()
             .contains(&format!("/shops/product/{pid}")));
-        assert!(item["price"].as_i64().is_some(), "price missing: {:?}", item);
+        assert!(
+            item["price"].as_i64().is_some(),
+            "price missing: {:?}",
+            item
+        );
         assert!(item["title"].is_string(), "title missing: {:?}", item);
         assert!(item["photos"].is_array(), "photos missing: {:?}", item);
         assert!(
-            ["on_sale", "sold_out", "trading", "stop", "cancel"].contains(
-                &item["status"].as_str().unwrap_or("")
-            ),
+            ["on_sale", "sold_out", "trading", "stop", "cancel"]
+                .contains(&item["status"].as_str().unwrap_or("")),
             "unexpected status: {:?}",
             item["status"]
         );
@@ -2029,7 +2027,11 @@ mod tests {
             .get_product(&format!("https://jp.mercari.com/shops/product/{pid}"))
             .await
             .unwrap();
-        assert_eq!(by_url["ok"], true, "get_product by Shops URL failed: {}", by_url);
+        assert_eq!(
+            by_url["ok"], true,
+            "get_product by Shops URL failed: {}",
+            by_url
+        );
         assert_eq!(by_url["item"]["product_id"], pid);
     }
 

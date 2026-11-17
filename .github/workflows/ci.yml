@@ -95,6 +95,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # Yahoo US image search runs through the helper binary; the
+      # provider finds it under the helper crate's target directory.
+      - name: Build Yahoo US image helper
+        run: cargo build --manifest-path crates/helpers/yahoo-us-image/Cargo.toml
+
       - name: Run live end-to-end tests
         run: cargo test -p zero-search-mcp-server -- e2e_ --test-threads=1
 

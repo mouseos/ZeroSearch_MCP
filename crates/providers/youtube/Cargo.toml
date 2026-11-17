@@ -15,9 +15,8 @@ tokio = { workspace = true }
 # Kept on its own reqwest specification (not the workspace one): the
 # standalone crate was live-verified with a rustls transport using
 # the OS-native root store, and the client selects rustls explicitly
-# (see client.rs) so workspace feature unification with the
-# native-tls build used by the other providers cannot silently
-# change this provider's TLS backend.
+# (see client.rs) so a change to the workspace's reqwest
+# specification cannot silently change this provider's TLS backend.
 reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "rustls-tls-native-roots", "socks", "system-proxy"] }
 base64 = { workspace = true }
 serde = { workspace = true }

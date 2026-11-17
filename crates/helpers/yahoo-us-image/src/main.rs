@@ -10,10 +10,9 @@
 //! client (wreq with a Firefox emulation profile): same URL, same
 //! server-rendered page, no browser driven.
 //!
-//! That client's TLS stack (BoringSSL) exports the same libssl /
-//! libcrypto symbols as the OpenSSL the main server binary links
-//! (via reqwest/native-tls and the Amazon provider's libcurl), and
-//! the two cannot coexist in one binary — hence this separate
+//! That client's TLS stack (BoringSSL) is kept out of the main
+//! server binary and the zero-search library, which use rustls only
+//! (one TLS implementation for embedders) — hence this separate
 //! helper process, spawned per request by the Yahoo US provider,
 //! mirroring how the Goofish provider already shells out to its
 //! signing harness.

@@ -694,7 +694,8 @@ mod tests {
     // seller_hash and broke review lookups for their items.
     #[test]
     fn test_seller_shop_id_forms() {
-        let hex_page = r#"<a href="https://fril.jp/shop/03a7da03a4853007948264b5b7aa3dfa">shop</a>"#;
+        let hex_page =
+            r#"<a href="https://fril.jp/shop/03a7da03a4853007948264b5b7aa3dfa">shop</a>"#;
         let slug_page = r#"<a href="https://fril.jp/shop/star55">shop</a><a href="https://fril.jp/shop/star55/review">reviews</a>"#;
         assert_eq!(
             SELLER_HASH_RE.captures(hex_page).unwrap()[1].to_string(),

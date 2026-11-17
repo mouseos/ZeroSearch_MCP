@@ -232,6 +232,22 @@ pub fn build_rh(params: &SearchParams) -> String {
     parts.join(",")
 }
 
+/// Drop items whose displayed price lies outside the requested
+/// band. Amazon's `p_36` facet also matches an item on a price other
+/// than the one it is sold at (measured 2026-11-17: a 3000-5000 search
+/// returned an item selling at 2,695 with a 3,500 reference price), so
+/// the band is enforced on the price the result shows. Items without a
+/// parsed price are kept: nothing says they are outside the band.
+pub fn retain_price_band(items: &mut Vec<Item>, min: Option<i64>, max: Option<i64>) {
+    if min.is_none() && max.is_none() {
+        return;
+    }
+    items.retain(|item| match item.price.as_ref().map(|p| p.value) {
+        Some(v) => min.is_none_or(|m| v >= m) && max.is_none_or(|m| v <= m),
+        None => true,
+    });
+}
+
 /// Build the search URL. Pure; unit-tested.
 pub fn build_search_url(params: &SearchParams) -> String {
     let mut url = format!("{HOST}/s?k={}", url_encode(&params.query));
@@ -724,7 +740,9 @@ impl AmazonClient {
         } else {
             usize::MAX
         };
-        let items = parse_search_html(&html, limit);
+        let mut items = parse_search_html(&html, usize::MAX);
+        retain_price_band(&mut items, params.price_min, params.price_max);
+        items.truncate(limit);
         Ok(SearchResult {
             provider: "amazon".into(),
             ok: true,
@@ -1374,6 +1392,28 @@ mod tests {
                 "unexpected reviews error: {r}"
             );
         }
+    }
+
+    #[test]
+    fn price_band_is_enforced_on_the_shown_price() {
+        let item = |id: &str, v: Option<i64>| Item {
+            product_id: id.into(),
+            price: v.map(Price::yen),
+            ..Default::default()
+        };
+        let mut items = vec![
+            item("low", Some(2695)),
+            item("in", Some(3778)),
+            item("edge", Some(5000)),
+            item("high", Some(5001)),
+            item("none", None),
+        ];
+        retain_price_band(&mut items, Some(3000), Some(5000));
+        let ids: Vec<_> = items.iter().map(|i| i.product_id.as_str()).collect();
+        assert_eq!(ids, ["in", "edge", "none"]);
+        let mut all = vec![item("a", Some(1))];
+        retain_price_band(&mut all, None, None);
+        assert_eq!(all.len(), 1);
     }
 
     #[test]

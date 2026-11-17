@@ -15,8 +15,8 @@
 //! pages are therefore fetched by the bundled helper process running a
 //! browser-grade client (wreq with a Firefox emulation profile): same
 //! URL, same server-rendered page, no browser driven. The helper is a
-//! separate binary because its TLS stack (BoringSSL) cannot link into
-//! the server alongside OpenSSL — see [`crate::helper`]. All other
+//! separate binary so its TLS stack (BoringSSL) stays out of the
+//! rustls-only server and library — see [`crate::helper`]. All other
 //! verticals keep using the shared reqwest client.
 
 use anyhow::{anyhow, Result};

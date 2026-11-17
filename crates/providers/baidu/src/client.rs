@@ -94,6 +94,11 @@ pub fn classify_error_chain(
         || lower.contains("ssl")
         || lower.contains("tls")
         || lower.contains("rustls")
+        // rustls handshake verdicts carry none of the words above.
+        || lower.contains("received corrupt message")
+        || lower.contains("peer is incompatible")
+        || lower.contains("peer misbehaved")
+        || lower.contains("received fatal alert")
     {
         return BaiduError::new(KIND_TLS_ERROR, format!("TLS error: {}", display))
             .with_url(url.to_string());

@@ -251,17 +251,50 @@ fn slim_wanted(name: &str) -> bool {
 /// the whole-package SHA-256 check now that the whole package is no
 /// longer downloaded: each piece used is still authenticated.
 const PINNED_PARTS_SHA256: [(&str, &str); 11] = [
-    ("META-INF/CERT.RSA", "6da9296d0db8ad816402c42f7c887b8bac06dbdaf0418b83c8025b14e380b2f3"),
-    ("lib/arm64-v8a/libsgcore.so", "2757f8a62a6ad9436d570d4b895db0e54e32fd93032a81d3f9ec266a7bde8957"),
-    ("lib/arm64-v8a/libsgmain.so", "396d9cda681f28ff2f92ae68c329f0967d27cb51dcdb3b3d33f38b0af1fe1921"),
-    ("lib/arm64-v8a/libsgmainso-6.7.260202.so", "7d2ae8a83d8b0e567805079b68f876397341330d3efbd2b86c5d957863843400"),
-    ("lib/arm64-v8a/libsgmainso.version.so", "ec25ccafe8896e3b55a4ccd014790a7b98f6c2274822035aaeb4222a8c252a71"),
-    ("lib/arm64-v8a/libsgmisc.so", "deb277ae144520853ea779516a38657c4279c4e00976268c4417bd890c617a1c"),
-    ("lib/arm64-v8a/libsgmiscso-6.5.9.so", "d1f6c43da92119f6b9183edfa818f01c22610ff4a0dd15658624ddd494a3bc3e"),
-    ("lib/arm64-v8a/libsgnocaptcha.so", "14de624829a30d72f9145f7c8ad88c34fddbad8ec3e0dc1747073e24562e8f86"),
-    ("lib/arm64-v8a/libsgnocaptchaso-6.5.8.so", "1b74eba2c62c0251110ba69637dbcf492c1ee0606243e4a2976d2c1120633e47"),
-    ("res/drawable/yw_1222.jpg", "deda6274114c3ad35c809df7bd8dc83a5c49c74fe48f3188a13fc13fd9382063"),
-    (SIGNING_BLOCK_KEY, "4914e849f5ff27a9037c96dbe7b4c1fb8669fcd7b4eb0591d439b9960482f389"),
+    (
+        "META-INF/CERT.RSA",
+        "6da9296d0db8ad816402c42f7c887b8bac06dbdaf0418b83c8025b14e380b2f3",
+    ),
+    (
+        "lib/arm64-v8a/libsgcore.so",
+        "2757f8a62a6ad9436d570d4b895db0e54e32fd93032a81d3f9ec266a7bde8957",
+    ),
+    (
+        "lib/arm64-v8a/libsgmain.so",
+        "396d9cda681f28ff2f92ae68c329f0967d27cb51dcdb3b3d33f38b0af1fe1921",
+    ),
+    (
+        "lib/arm64-v8a/libsgmainso-6.7.260202.so",
+        "7d2ae8a83d8b0e567805079b68f876397341330d3efbd2b86c5d957863843400",
+    ),
+    (
+        "lib/arm64-v8a/libsgmainso.version.so",
+        "ec25ccafe8896e3b55a4ccd014790a7b98f6c2274822035aaeb4222a8c252a71",
+    ),
+    (
+        "lib/arm64-v8a/libsgmisc.so",
+        "deb277ae144520853ea779516a38657c4279c4e00976268c4417bd890c617a1c",
+    ),
+    (
+        "lib/arm64-v8a/libsgmiscso-6.5.9.so",
+        "d1f6c43da92119f6b9183edfa818f01c22610ff4a0dd15658624ddd494a3bc3e",
+    ),
+    (
+        "lib/arm64-v8a/libsgnocaptcha.so",
+        "14de624829a30d72f9145f7c8ad88c34fddbad8ec3e0dc1747073e24562e8f86",
+    ),
+    (
+        "lib/arm64-v8a/libsgnocaptchaso-6.5.8.so",
+        "1b74eba2c62c0251110ba69637dbcf492c1ee0606243e4a2976d2c1120633e47",
+    ),
+    (
+        "res/drawable/yw_1222.jpg",
+        "deda6274114c3ad35c809df7bd8dc83a5c49c74fe48f3188a13fc13fd9382063",
+    ),
+    (
+        SIGNING_BLOCK_KEY,
+        "4914e849f5ff27a9037c96dbe7b4c1fb8669fcd7b4eb0591d439b9960482f389",
+    ),
 ];
 const SIGNING_BLOCK_KEY: &str = "<APK Signing Block>";
 
@@ -670,7 +703,10 @@ mod tests {
         std::fs::hard_link(rt.join(APK_FILE_NAME), &staged).unwrap();
         stage_rootfs(&rt, b"SLIM").unwrap();
         assert_eq!(std::fs::read(&staged).unwrap(), b"SLIM");
-        assert_eq!(std::fs::read(rt.join(APK_FILE_NAME)).unwrap(), b"FULLPACKAGE");
+        assert_eq!(
+            std::fs::read(rt.join(APK_FILE_NAME)).unwrap(),
+            b"FULLPACKAGE"
+        );
         assert!(rt
             .join("rootfs")
             .join("data")
@@ -689,8 +725,8 @@ mod tests {
     #[test]
     #[ignore = "needs a real payload; fetches from the CDN unless a local package is provided"]
     fn assemble_from_real_payload() {
-        let payload = load_payload(Path::new(&std::env::var("GOOFISH_TEST_PAYLOAD").unwrap()))
-            .unwrap();
+        let payload =
+            load_payload(Path::new(&std::env::var("GOOFISH_TEST_PAYLOAD").unwrap())).unwrap();
         let rt = PathBuf::from(std::env::var("GOOFISH_TEST_RT").unwrap());
         assemble(&payload, &rt).unwrap();
         assert!(runtime_complete(&rt, &payload));

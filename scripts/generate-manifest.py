@@ -71,6 +71,7 @@ def query_server(server: Path) -> tuple[str, list[dict]]:
         input=payload,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
     )
     version = None
@@ -144,7 +145,9 @@ def main() -> int:
     manifest["tools_generated"] = True
     manifest["version"] = version
     text = json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True)
-    args.manifest.write_text(text + "\n", encoding="utf-8")
+    # LF on every platform (text mode would write CRLF on Windows).
+    with open(args.manifest, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text + "\n")
     print(
         f"manifest.json regenerated: {len(old_tools)} -> {len(tools)} tools, "
         f"version {old_version} -> {version} (server: {server})"

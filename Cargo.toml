@@ -26,7 +26,8 @@ members = [
 ]
 # The Yahoo US image helper is deliberately NOT a workspace member:
 # its BoringSSL dependency must stay out of this workspace's build
-# graph entirely, or its libssl/libcrypto collide with OpenSSL in
+# graph entirely: it would add a second TLS implementation, and its
+# libssl/libcrypto symbols must not meet another C TLS library in
 # workspace-wide links (binaries and doctests alike). It is a
 # standalone crate with its own lockfile and target directory,
 # built separately by CI and the release workflow.

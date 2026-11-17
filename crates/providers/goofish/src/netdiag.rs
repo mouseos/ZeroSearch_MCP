@@ -79,9 +79,15 @@ pub fn classify_from_parts(
         || chain_text_lower.contains("ssl")
         || chain_text_lower.contains("certificate")
         || chain_text_lower.contains("handshake")
-        // OpenSSL's verdict when the peer is not speaking TLS at all
-        // (e.g. a fake-IP direct connect): a handshake failure.
-        || chain_text_lower.contains("wrong version number");
+        // The verdict when the peer is not speaking TLS at all (e.g.
+        // a fake-IP direct connect): rustls reports a corrupt
+        // message; OpenSSL (older builds) said "wrong version number".
+        || chain_text_lower.contains("received corrupt message")
+        || chain_text_lower.contains("wrong version number")
+        // Other rustls handshake verdicts.
+        || chain_text_lower.contains("peer is incompatible")
+        || chain_text_lower.contains("peer misbehaved")
+        || chain_text_lower.contains("received fatal alert");
     if is_proxy {
         return (CATEGORY_PROXY_ERROR, true);
     }
@@ -314,6 +320,16 @@ mod tests {
         // TLS handshake failure during connect.
         assert_eq!(
             classify_from_parts(false, true, "client error (connect) tls handshake eof"),
+            (CATEGORY_TLS_ERROR, true)
+        );
+        // Fake-IP direct connect: rustls, measured against a plain
+        // HTTP port.
+        assert_eq!(
+            classify_from_parts(
+                false,
+                true,
+                "error sending request for url (https://example.com:80/) client error (connect) received corrupt message of type invalidcontenttype"
+            ),
             (CATEGORY_TLS_ERROR, true)
         );
         // Fake-IP direct connect: OpenSSL "wrong version number".

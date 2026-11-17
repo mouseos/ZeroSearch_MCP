@@ -5444,7 +5444,9 @@ mod tests {
         // is a real failure.
         if call.category == "verification" {
             assert!(
-                call.ret.iter().any(|r| r.contains("FAIL_SYS_USER_VALIDATE")),
+                call.ret
+                    .iter()
+                    .any(|r| r.contains("FAIL_SYS_USER_VALIDATE")),
                 "route3 verification without FAIL_SYS_USER_VALIDATE: ret={:?}",
                 call.ret
             );

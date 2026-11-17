@@ -112,8 +112,9 @@ unchanged at 900 s.
 Disk budget: ~7 MB for the installed payload; in the data
 directory, the extracted libraries (~3.5 MB), the slim package
 (~55 KB) and small working files. The data directory defaults to
-`$XDG_DATA_HOME/zero-search-mcp` (else
-`~/.local/share/zero-search-mcp`); a library embedder can set it
+`$XDG_DATA_HOME/zero-search-mcp`, else `%LOCALAPPDATA%\zero-search-mcp`
+on Windows, else `~/.local/share/zero-search-mcp`; a library
+embedder can set it
 with `zero_search::goofish::set_data_dir`.
 
 ## Building the payload (release time only)

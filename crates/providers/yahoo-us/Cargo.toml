@@ -22,4 +22,4 @@ scraper = "0.22"
 # fetched by the separate `zero-search-yahoo-us-image-helper` binary
 # (crates/helpers/yahoo-us-image), which this crate spawns — its
 # BoringSSL-based client must not be linked into the same binary as
-# this workspace's OpenSSL users. See src/helper.rs.
+# this workspace's rustls-only build. See src/helper.rs.

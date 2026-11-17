@@ -547,7 +547,10 @@ mod tests {
         let (kept, sig) = fetch_entries(&mut src, &want).unwrap();
         assert_eq!(sig, fake_signing_block());
         let names: Vec<_> = kept.iter().map(|k| k.entry.name.clone()).collect();
-        assert_eq!(names, ["lib/arm64-v8a/libsgmainso-1.so", "META-INF/CERT.RSA"]);
+        assert_eq!(
+            names,
+            ["lib/arm64-v8a/libsgmainso-1.so", "META-INF/CERT.RSA"]
+        );
         assert_eq!(kept[0].plain, b"SO-BYTES-SO-BYTES");
 
         // The slim package parses again and carries the same block.
@@ -561,8 +564,10 @@ mod tests {
 
     #[test]
     fn edge_lookup_answers_parse() {
-        let ips = parse_httpdns("116.211.162.139;61.170.65.76,120
-");
+        let ips = parse_httpdns(
+            "116.211.162.139;61.170.65.76,120
+",
+        );
         assert_eq!(ips.len(), 2);
         assert_eq!(ips[1].to_string(), "61.170.65.76");
         assert!(parse_httpdns("").is_empty());

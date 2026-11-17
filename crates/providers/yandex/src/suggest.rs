@@ -126,7 +126,10 @@ impl YandexSearchClient {
         }
         let limit = clamp_limit(limit, 20);
 
-        self.ensure_session(query).await?;
+        // No session first: the suggest endpoints answer without one
+        // (measured 2026-11-17), and loading a search page just to get
+        // cookies made autocomplete fail whenever that page was behind
+        // a captcha.
         let url = build_search_url(query, "suggest")?;
         let body_text = self.get_page(&url).await?;
         let body: Value = serde_json::from_str(&body_text)?;
@@ -144,7 +147,7 @@ impl YandexSearchClient {
         }
         let limit = clamp_limit(limit, 20);
 
-        self.ensure_session(query).await?;
+        // No session first (see `suggest`).
         let url = crate::urlbuild::build_suggest_endings_url(query);
         let body_text = self.get_page(&url).await?;
         let body: Value = serde_json::from_str(&body_text)?;

@@ -222,31 +222,38 @@ static DATA_DIR_OVERRIDE: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock
 /// Set the directory Goofish keeps its state in (the generated
 /// identity under `goofish/` and the assembled signing runtime under
 /// `goofish-runtime/`). The path is used as-is — nothing is appended.
-/// `None` restores the default (`$XDG_DATA_HOME/zero-search-mcp`,
-/// else `$HOME/.local/share/zero-search-mcp`). Call it before the
+/// `None` restores the default (see [`data_dir`]). Call it before the
 /// first Goofish call: a runtime already assembled or a harness
 /// already started keeps the directory it was set up with.
 pub fn set_data_dir(dir: Option<PathBuf>) {
     *DATA_DIR_OVERRIDE.write().unwrap() = dir;
 }
 
-/// The data directory in effect: the [`set_data_dir`] value when
-/// one is set, else `$XDG_DATA_HOME/zero-search-mcp`, defaulting to
-/// `$HOME/.local/share/zero-search-mcp`.
+/// The data directory in effect: the [`set_data_dir`] value when one
+/// is set, else `<base>/zero-search-mcp` where `<base>` is
+/// `$XDG_DATA_HOME`, then on Windows `%LOCALAPPDATA%` (a Windows
+/// process normally has no `HOME`: an MCP host such as Claude Desktop
+/// starts the server without one, and Goofish then had nowhere to keep
+/// its identity and runtime), then `$HOME/.local/share`.
 pub fn data_dir() -> Option<PathBuf> {
     if let Some(dir) = DATA_DIR_OVERRIDE.read().unwrap().clone() {
         return Some(dir);
     }
-    let base = std::env::var("XDG_DATA_HOME")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
+    let env_path = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+    };
+    let base = env_path("XDG_DATA_HOME")
         .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .filter(|s| !s.is_empty())
-                .map(|home| PathBuf::from(home).join(".local").join("share"))
-        })?;
+            if cfg!(windows) {
+                env_path("LOCALAPPDATA")
+            } else {
+                None
+            }
+        })
+        .or_else(|| env_path("HOME").map(|home| home.join(".local").join("share")))?;
     Some(base.join("zero-search-mcp"))
 }
 

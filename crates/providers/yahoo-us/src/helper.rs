@@ -10,8 +10,10 @@
 //! `zero-search-yahoo-us-image-helper`, a small companion binary
 //! whose browser-grade HTTP client (wreq, Firefox emulation profile)
 //! reproduces the browser request fingerprint. That client's TLS
-//! stack (BoringSSL) cannot be linked into the main server binary
-//! alongside OpenSSL, so it runs as a separate process — the same
+//! stack (BoringSSL) is kept out of the server binary and the
+//! library, which use rustls only, so it runs as a separate process
+//! (measured 2026-11-17: reqwest over rustls and curl both still get
+//! HTTP 500 from the image host, over HTTP/2 and HTTP/1.1) — the same
 //! shape the Goofish provider already uses for its signing harness.
 //! The helper ships next to the server binary in every package; the
 //! parsing of the page it returns stays here (see [`crate::image`]).
