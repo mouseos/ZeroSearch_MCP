@@ -127,13 +127,12 @@ pub fn parse_blog_results(html: &str, limit: usize) -> Result<Vec<BlogItem>> {
             continue;
         };
         let text = element_text(a);
-        if post_parts(href).is_none() {
+        let Some((blog_id, _)) = post_parts(href) else {
             if is_profile_url(href) && !text.is_empty() {
                 pending_blog_name = Some(text);
             }
             continue;
-        }
-        let (blog_id, _) = post_parts(href).unwrap();
+        };
         let group = groups.entry(href.to_string()).or_insert_with(|| {
             order.push(href.to_string());
             Group {
@@ -191,6 +190,53 @@ pub fn parse_blog_results(html: &str, limit: usize) -> Result<Vec<BlogItem>> {
     Ok(items)
 }
 
+/// Number of items [`parse_blog_results`] returns for `html` (no
+/// limit): post URLs with at least one anchor whose text is neither
+/// empty nor a bare number (comment counts).
+pub fn count_blog_results(html: &str) -> Result<usize> {
+    let doc = Html::parse_document(html);
+    let mut titled: HashMap<&str, bool> = HashMap::new();
+    for a in doc.select(&A_SEL) {
+        let Some(href) = a.value().attr("href") else {
+            continue;
+        };
+        if post_parts(href).is_none() {
+            continue;
+        }
+        let has_title = titled.entry(href).or_insert(false);
+        if !*has_title {
+            let text = element_text(a);
+            *has_title = !text.chars().all(|c| c.is_ascii_digit());
+        }
+    }
+    crate::more::nonzero("blog", titled.values().filter(|t| **t).count())
+}
+
+impl crate::more::Chained for BlogItem {
+    const VERTICAL: &'static str = "blog";
+    fn parse_first(html: &str) -> Result<Vec<Self>> {
+        parse_blog_results(html, usize::MAX)
+    }
+    fn count_first(html: &str) -> Result<usize> {
+        count_blog_results(html)
+    }
+    fn parse_more(payload: crate::more::MorePayload) -> Result<Vec<Self>> {
+        match payload {
+            crate::more::MorePayload::Html(fragment) => parse_blog_results(&fragment, usize::MAX),
+            _ => Err(layout_error("blog")),
+        }
+    }
+    fn count_more(payload: crate::more::MorePayload) -> Result<usize> {
+        match payload {
+            crate::more::MorePayload::Html(fragment) => count_blog_results(&fragment),
+            _ => Err(layout_error("blog")),
+        }
+    }
+    fn set_rank(&mut self, rank: i64) {
+        self.rank = rank;
+    }
+}
+
 impl NaverSearchClient {
     /// Search the blog tab. Page 1 is the tab page's batch (30
     /// posts); deeper pages follow the page-issued more-API chain
@@ -209,21 +255,7 @@ impl NaverSearchClient {
         let limit = clamp_limit(limit, 30);
         let url = build_page_url(query, "blog", 1)?;
         let html = self.get_html(&url, SEARCH_REFERER).await?;
-        let items = crate::more::chained_items(
-            self,
-            "blog",
-            &html,
-            page,
-            |h| parse_blog_results(h, usize::MAX),
-            |payload| match payload {
-                crate::more::MorePayload::Html(fragment) => {
-                    parse_blog_results(&fragment, usize::MAX)
-                }
-                _ => Err(layout_error("blog")),
-            },
-            |item, rank| item.rank = rank,
-        )
-        .await?;
+        let items: Vec<BlogItem> = crate::more::chained_items(self, &html, page).await?;
         let items: Vec<BlogItem> = items.into_iter().take(limit).collect();
         Ok(SearchResult::new("blog", query, page, items))
     }

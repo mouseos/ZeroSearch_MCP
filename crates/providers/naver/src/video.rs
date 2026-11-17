@@ -125,6 +125,61 @@ pub fn parse_video_results(html: &str, limit: usize) -> Result<Vec<VideoItem>> {
     Ok(items)
 }
 
+/// Number of items [`parse_video_results`] returns for `html` (no
+/// limit): distinct trigger hrefs whose card holds a title anchor. The
+/// card is located as the full parse does; the card's text, times,
+/// views and thumbnail are not extracted.
+pub fn count_video_results(html: &str) -> Result<usize> {
+    let doc = Html::parse_document(html);
+    let mut seen: Vec<&str> = Vec::new();
+    let mut count = 0;
+    for trigger in doc.select(&TRIGGER_SEL) {
+        let Some(href) = trigger.value().attr("href") else {
+            continue;
+        };
+        if href.is_empty() || href.starts_with('#') || seen.contains(&href) {
+            continue;
+        }
+        seen.push(href);
+        let card = card_for_unique(trigger, &TRIGGER_SEL, "href", 10);
+        let titled = card.select(&A_SEL).any(|a| {
+            a.value().attr("href").unwrap_or("") == href && {
+                let text = element_text(a);
+                !text.is_empty() && !is_duration(&text)
+            }
+        });
+        if titled {
+            count += 1;
+        }
+    }
+    crate::more::nonzero("video", count)
+}
+
+impl crate::more::Chained for VideoItem {
+    const VERTICAL: &'static str = "video";
+    fn parse_first(html: &str) -> Result<Vec<Self>> {
+        parse_video_results(html, usize::MAX)
+    }
+    fn count_first(html: &str) -> Result<usize> {
+        count_video_results(html)
+    }
+    fn parse_more(payload: crate::more::MorePayload) -> Result<Vec<Self>> {
+        match payload {
+            crate::more::MorePayload::Html(fragment) => parse_video_results(&fragment, usize::MAX),
+            _ => Err(layout_error("video")),
+        }
+    }
+    fn count_more(payload: crate::more::MorePayload) -> Result<usize> {
+        match payload {
+            crate::more::MorePayload::Html(fragment) => count_video_results(&fragment),
+            _ => Err(layout_error("video")),
+        }
+    }
+    fn set_rank(&mut self, rank: i64) {
+        self.rank = rank;
+    }
+}
+
 impl NaverSearchClient {
     /// Search the video tab. Page 1 is the tab page's batch; deeper
     /// pages follow the page-issued more-API chain (see `more`), up
@@ -142,21 +197,7 @@ impl NaverSearchClient {
         let limit = clamp_limit(limit, 48);
         let url = build_page_url(query, "video", 1)?;
         let html = self.get_html(&url, SEARCH_REFERER).await?;
-        let items = crate::more::chained_items(
-            self,
-            "video",
-            &html,
-            page,
-            |h| parse_video_results(h, usize::MAX),
-            |payload| match payload {
-                crate::more::MorePayload::Html(fragment) => {
-                    parse_video_results(&fragment, usize::MAX)
-                }
-                _ => Err(layout_error("video")),
-            },
-            |item, rank| item.rank = rank,
-        )
-        .await?;
+        let items: Vec<VideoItem> = crate::more::chained_items(self, &html, page).await?;
         let items: Vec<VideoItem> = items.into_iter().take(limit).collect();
         Ok(SearchResult::new("video", query, page, items))
     }

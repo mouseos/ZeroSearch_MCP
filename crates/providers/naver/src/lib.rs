@@ -115,19 +115,21 @@ pub mod web;
 // per-vertical modules stay public, but every item type, the offline
 // parsers and the URL builders are re-exported here so callers never
 // have to reach into a module path.
-pub use blog::{parse_blog_results, BlogItem};
+pub use blog::{count_blog_results, parse_blog_results, BlogItem};
 pub use cafe::{parse_cafe_results, CafeItem};
 pub use common::{clean_text, decode_entities, urlencode};
-pub use image::{extract_image_items, map_image_items, parse_image_results, ImageItem};
+pub use image::{
+    count_image_items, extract_image_items, map_image_items, parse_image_results, ImageItem,
+};
 pub use kin::{parse_kin_results, KinItem};
 pub use more::{extract_more_url, parse_more_response, MorePayload, MAX_PAGE};
-pub use news::{parse_news_results, NewsItem};
+pub use news::{count_news_results, parse_news_results, NewsItem};
 pub use search::{parse_integrated_results, IntegratedItem, IntegratedResult, IntegratedSection};
 pub use suggest::{
     parse_suggest_json, parse_suggest_response, ParsedSuggest, SuggestResult, Suggestion,
 };
 pub use urlbuild::{build_page_url, build_search_url, suggest_url};
-pub use video::{parse_video_results, VideoItem};
+pub use video::{count_video_results, parse_video_results, VideoItem};
 pub use web::{parse_web_results, WebItem};
 
 /// Provider identifier used in every result envelope (`"naver"`).

@@ -146,6 +146,52 @@ pub fn parse_news_results(html: &str, limit: usize) -> Result<Vec<NewsItem>> {
     Ok(items)
 }
 
+/// Number of items [`parse_news_results`] returns for `html` (no
+/// limit): article URLs with at least one anchor carrying text.
+pub fn count_news_results(html: &str) -> Result<usize> {
+    let doc = Html::parse_document(html);
+    let mut titled: HashMap<String, bool> = HashMap::new();
+    for a in doc.select(&A_SEL) {
+        let Some(href) = a.value().attr("href") else {
+            continue;
+        };
+        if href.contains("media.naver.com/press/") || !is_article_url(href) {
+            continue;
+        }
+        let url = resolve_url(href, "https://m.search.naver.com");
+        let has_title = titled.entry(url).or_insert(false);
+        if !*has_title && a.text().any(|t| !t.trim().is_empty()) {
+            *has_title = true;
+        }
+    }
+    crate::more::nonzero("news", titled.values().filter(|t| **t).count())
+}
+
+impl crate::more::Chained for NewsItem {
+    const VERTICAL: &'static str = "news";
+    fn parse_first(html: &str) -> Result<Vec<Self>> {
+        parse_news_results(html, usize::MAX)
+    }
+    fn count_first(html: &str) -> Result<usize> {
+        count_news_results(html)
+    }
+    fn parse_more(payload: crate::more::MorePayload) -> Result<Vec<Self>> {
+        match payload {
+            crate::more::MorePayload::Html(fragment) => parse_news_results(&fragment, usize::MAX),
+            _ => Err(layout_error("news")),
+        }
+    }
+    fn count_more(payload: crate::more::MorePayload) -> Result<usize> {
+        match payload {
+            crate::more::MorePayload::Html(fragment) => count_news_results(&fragment),
+            _ => Err(layout_error("news")),
+        }
+    }
+    fn set_rank(&mut self, rank: i64) {
+        self.rank = rank;
+    }
+}
+
 impl NaverSearchClient {
     /// Search the news tab. Page 1 is the tab page's batch; deeper
     /// pages follow the page-issued more-API chain (see `more`), up
@@ -163,21 +209,7 @@ impl NaverSearchClient {
         let limit = clamp_limit(limit, 30);
         let url = build_page_url(query, "news", 1)?;
         let html = self.get_html(&url, SEARCH_REFERER).await?;
-        let items = crate::more::chained_items(
-            self,
-            "news",
-            &html,
-            page,
-            |h| parse_news_results(h, usize::MAX),
-            |payload| match payload {
-                crate::more::MorePayload::Html(fragment) => {
-                    parse_news_results(&fragment, usize::MAX)
-                }
-                _ => Err(layout_error("news")),
-            },
-            |item, rank| item.rank = rank,
-        )
-        .await?;
+        let items: Vec<NewsItem> = crate::more::chained_items(self, &html, page).await?;
         let items: Vec<NewsItem> = items.into_iter().take(limit).collect();
         Ok(SearchResult::new("news", query, page, items))
     }

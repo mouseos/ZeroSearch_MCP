@@ -147,6 +147,24 @@ pub fn map_image_items(raw_items: &[Value], limit: usize) -> Vec<ImageItem> {
     items
 }
 
+/// Number of items [`map_image_items`] returns for `raw_items` (no
+/// limit), without building them.
+pub fn count_image_items(raw_items: &[Value]) -> usize {
+    raw_items
+        .iter()
+        .filter(|raw| {
+            raw.get("type").and_then(|t| t.as_str()) == Some("image")
+                && (json_str(raw, "originalUrl").is_some()
+                    || json_str(raw, "thumb")
+                        .or_else(|| json_str(raw, "viewerThumb"))
+                        .or_else(|| json_str(raw, "thumb280"))
+                        .as_deref()
+                        .and_then(original_from_proxy)
+                        .is_some())
+        })
+        .count()
+}
+
 /// Parse the embedded image items of a saved image tab page.
 pub fn parse_image_results(html: &str, limit: usize) -> Result<Vec<ImageItem>> {
     let raw_items = extract_image_items(html)?;
@@ -155,6 +173,31 @@ pub fn parse_image_results(html: &str, limit: usize) -> Result<Vec<ImageItem>> {
         return Err(layout_error("image"));
     }
     Ok(items)
+}
+
+impl crate::more::Chained for ImageItem {
+    const VERTICAL: &'static str = "image";
+    fn parse_first(html: &str) -> Result<Vec<Self>> {
+        parse_image_results(html, usize::MAX)
+    }
+    fn count_first(html: &str) -> Result<usize> {
+        crate::more::nonzero("image", count_image_items(&extract_image_items(html)?))
+    }
+    fn parse_more(payload: crate::more::MorePayload) -> Result<Vec<Self>> {
+        match payload {
+            crate::more::MorePayload::ImageItems(raw) => Ok(map_image_items(&raw, usize::MAX)),
+            _ => Err(layout_error("image")),
+        }
+    }
+    fn count_more(payload: crate::more::MorePayload) -> Result<usize> {
+        match payload {
+            crate::more::MorePayload::ImageItems(raw) => Ok(count_image_items(&raw)),
+            _ => Err(layout_error("image")),
+        }
+    }
+    fn set_rank(&mut self, rank: i64) {
+        self.rank = rank;
+    }
 }
 
 impl NaverSearchClient {
@@ -174,19 +217,7 @@ impl NaverSearchClient {
         let limit = clamp_limit(limit, 100);
         let url = build_page_url(query, "image", 1)?;
         let html = self.get_html(&url, SEARCH_REFERER).await?;
-        let items = crate::more::chained_items(
-            self,
-            "image",
-            &html,
-            page,
-            |h| parse_image_results(h, usize::MAX),
-            |payload| match payload {
-                crate::more::MorePayload::ImageItems(raw) => Ok(map_image_items(&raw, usize::MAX)),
-                _ => Err(layout_error("image")),
-            },
-            |item, rank| item.rank = rank,
-        )
-        .await?;
+        let items: Vec<ImageItem> = crate::more::chained_items(self, &html, page).await?;
         let items: Vec<ImageItem> = items.into_iter().take(limit).collect();
         Ok(SearchResult::new("image", query, page, items))
     }

@@ -4,9 +4,10 @@
 //! or breaks extraction, the counts and representative fields below move.
 
 use naver_search::{
-    extract_more_url, map_image_items, parse_blog_results, parse_cafe_results, parse_image_results,
-    parse_integrated_results, parse_kin_results, parse_more_response, parse_news_results,
-    parse_suggest_json, parse_video_results, parse_web_results, MorePayload,
+    count_blog_results, count_image_items, count_news_results, count_video_results,
+    extract_image_items, extract_more_url, map_image_items, parse_blog_results, parse_cafe_results,
+    parse_image_results, parse_integrated_results, parse_kin_results, parse_more_response,
+    parse_news_results, parse_suggest_json, parse_video_results, parse_web_results, MorePayload,
 };
 
 fn fixture(name: &str) -> String {
@@ -282,4 +283,63 @@ fn api_blog_page_two_parses() {
         items.len()
     );
     assert!(next.is_some());
+}
+
+/// Paging past a batch only counts it: the cheap counts must equal the
+/// full parsers' item counts on every captured tab page and more-API
+/// batch.
+#[test]
+fn skipped_batch_counts_equal_full_parse_counts() {
+    let html_fragment =
+        |name: &str, vertical: &str| match parse_more_response(vertical, &api_fixture(name))
+            .unwrap()
+            .0
+        {
+            MorePayload::Html(h) => h,
+            MorePayload::ImageItems(_) => panic!("{name}: expected HTML"),
+        };
+
+    for (html, label) in [
+        (fixture("fixture-news-mobile.html"), "news tab"),
+        (html_fragment("api-news-page2.json", "news"), "news api"),
+    ] {
+        let full = parse_news_results(&html, usize::MAX).unwrap().len();
+        assert_eq!(count_news_results(&html).unwrap(), full, "{label}");
+        assert!(full > 0, "{label}");
+    }
+    for (html, label) in [
+        (fixture("fixture-blog-mobile.html"), "blog tab"),
+        (html_fragment("api-blog-page2.json", "blog"), "blog api"),
+    ] {
+        let full = parse_blog_results(&html, usize::MAX).unwrap().len();
+        assert_eq!(count_blog_results(&html).unwrap(), full, "{label}");
+        assert!(full > 0, "{label}");
+    }
+    for (html, label) in [
+        (fixture("fixture-video-mobile.html"), "video tab"),
+        (html_fragment("api-video-page2.json", "video"), "video api"),
+    ] {
+        let full = parse_video_results(&html, usize::MAX).unwrap().len();
+        assert_eq!(count_video_results(&html).unwrap(), full, "{label}");
+        assert!(full > 0, "{label}");
+    }
+
+    let tab_raw = extract_image_items(&fixture("fixture-image-mobile.html")).unwrap();
+    let MorePayload::ImageItems(api_raw) =
+        parse_more_response("image", &api_fixture("api-image-page2.json"))
+            .unwrap()
+            .0
+    else {
+        panic!("image api: expected items");
+    };
+    for (raw, label) in [(tab_raw, "image tab"), (api_raw, "image api")] {
+        let full = map_image_items(&raw, usize::MAX).len();
+        assert_eq!(count_image_items(&raw), full, "{label}");
+        assert!(full > 0, "{label}");
+    }
+
+    // An empty batch stays the layout error the full parse reports.
+    assert!(count_news_results("<html><body></body></html>").is_err());
+    assert!(count_blog_results("<html><body></body></html>").is_err());
+    assert!(count_video_results("<html><body></body></html>").is_err());
 }

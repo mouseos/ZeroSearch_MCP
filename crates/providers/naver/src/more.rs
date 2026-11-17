@@ -128,28 +128,47 @@ impl NaverSearchClient {
     }
 }
 
+/// A vertical whose deeper pages come from the more-API chain.
+///
+/// Reaching page N means walking batches 1..N-1 only to learn how many
+/// items they hold (ranks continue across batches), so each vertical
+/// offers a cheap `count_*` that applies exactly the predicates that
+/// decide whether a full parse would emit an item, and skips the
+/// per-item field extraction (card text, times, thumbnails...). Only
+/// the requested batch is fully parsed. A count of zero is the same
+/// layout error the full parse reports for an empty batch.
+pub(crate) trait Chained: Sized {
+    const VERTICAL: &'static str;
+    /// Fully parse the tab page (batch 1).
+    fn parse_first(html: &str) -> Result<Vec<Self>>;
+    /// Number of items [`Self::parse_first`] would return.
+    fn count_first(html: &str) -> Result<usize>;
+    /// Fully parse one more-API batch.
+    fn parse_more(payload: MorePayload) -> Result<Vec<Self>>;
+    /// Number of items [`Self::parse_more`] would return.
+    fn count_more(payload: MorePayload) -> Result<usize>;
+    fn set_rank(&mut self, rank: i64);
+}
+
 /// Resolve one page of a chained vertical.
 ///
 /// `first_html` is the tab page (batch 1). For `page == 1` the parsed
 /// first batch is returned as-is. For deeper pages the more-API chain
-/// embedded in the page is followed batch by batch; the returned
-/// batch is renumbered to continue from the items of all previous
-/// batches. When the chain ends before the requested page, the page
-/// is empty (the result set simply has no such page).
-pub(crate) async fn chained_items<T>(
+/// embedded in the page is followed batch by batch; skipped batches
+/// are only counted, and the returned batch is renumbered to continue
+/// from the items of all previous batches. When the chain ends before
+/// the requested page, the page is empty (the result set simply has no
+/// such page).
+pub(crate) async fn chained_items<T: Chained>(
     client: &NaverSearchClient,
-    vertical: &str,
     first_html: &str,
     page: i64,
-    parse_first: impl Fn(&str) -> Result<Vec<T>>,
-    parse_more: impl Fn(MorePayload) -> Result<Vec<T>>,
-    set_rank: impl Fn(&mut T, i64),
 ) -> Result<Vec<T>> {
-    let first = parse_first(first_html)?;
     if page <= 1 {
-        return Ok(first);
+        return T::parse_first(first_html);
     }
-    let mut prior = first.len() as i64;
+    let vertical = T::VERTICAL;
+    let mut prior = T::count_first(first_html)? as i64;
     let mut next = extract_more_url(first_html, vertical);
     let mut batch = 1;
     while batch < page {
@@ -157,19 +176,28 @@ pub(crate) async fn chained_items<T>(
             return Ok(Vec::new());
         };
         let (payload, following) = client.more_payload(&url, vertical).await?;
-        let items = parse_more(payload)?;
         next = following;
         batch += 1;
         if batch == page {
-            let mut items = items;
+            let mut items = T::parse_more(payload)?;
             for (i, item) in items.iter_mut().enumerate() {
-                set_rank(item, prior + i as i64 + 1);
+                item.set_rank(prior + i as i64 + 1);
             }
             return Ok(items);
         }
-        prior += items.len() as i64;
+        prior += T::count_more(payload)? as i64;
     }
     Ok(Vec::new())
+}
+
+/// Turn a skipped batch's count into the full parse's outcome: an
+/// empty batch is the vertical's layout error.
+pub(crate) fn nonzero(vertical: &str, count: usize) -> Result<usize> {
+    if count == 0 {
+        Err(layout_error(vertical))
+    } else {
+        Ok(count)
+    }
 }
 
 #[cfg(test)]
