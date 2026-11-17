@@ -3277,25 +3277,6 @@ fn normalize_suggestions(data: &Value) -> Vec<String> {
     suggestions
 }
 
-/// Search problem check built on the single classification
-/// (AE-RUST-001/003): a search is a problem unless classify_mtop
-/// says success — which already encodes the Python rule that a
-/// data-side request_invalid (searchTips tipsType) takes priority
-/// over a SUCCESS ret string. Kept as a small named predicate for
-/// tests and future call sites; the public methods classify through
-/// MtopCall directly.
-#[allow(dead_code)]
-fn has_search_problem(data: &Value, ret: &Option<Value>) -> bool {
-    let envelope = json!({"data": data, "ret": ret.clone().unwrap_or(json!([]))});
-    classify_mtop(&envelope).0 != "success"
-}
-
-/// `ok` is exactly classification == success (AE-RUST-003).
-#[allow(dead_code)]
-fn mtop_success(response: &Value) -> bool {
-    classify_mtop(response).0 == "success"
-}
-
 fn search_card_title(obj: &serde_json::Map<String, Value>) -> Option<String> {
     match obj.get("title") {
         Some(Value::Object(title_obj)) => {
@@ -4356,23 +4337,6 @@ mod tests {
         assert_eq!(item["source"], "direct_mtop_search");
     }
 
-    #[test]
-    fn test_has_search_problem() {
-        let ok_data = json!({"mods": {}});
-        let success_ret = Some(json!(["SUCCESS::调用成功"]));
-        assert!(!has_search_problem(&ok_data, &success_ret));
-
-        // Data-side request_invalid wins even over ret SUCCESS
-        // (AE-RUST-003, Python mtop.py behavior).
-        let bad_data = json!({
-            "mods": {"searchTips": {"content": {"tipsType": "request_invalid"}}}
-        });
-        assert!(has_search_problem(&bad_data, &success_ret));
-        assert!(has_search_problem(&bad_data, &None));
-        // No ret at all is not success.
-        assert!(has_search_problem(&ok_data, &None));
-    }
-
     // ---- Ported offline suites (AE-RUST-001..029 resolutions) ----
 
     #[test]
@@ -4590,15 +4554,6 @@ mod tests {
         assert!(pv.contains("1005000000000001"));
         assert!(pv.contains("1005000000000003"));
         assert_eq!(client.pre_page_exposure().unwrap(), "1005000000000003");
-    }
-
-    #[test]
-    fn test_mtop_success() {
-        assert!(mtop_success(&json!({"ret": ["SUCCESS::调用成功"]})));
-        assert!(!mtop_success(
-            &json!({"ret": ["FAIL_SYS_ILLEGAL_ACCESS::非法请求"]})
-        ));
-        assert!(!mtop_success(&json!({})));
     }
 
     // ---- S1-1: search price range / switches reach the wire ----
