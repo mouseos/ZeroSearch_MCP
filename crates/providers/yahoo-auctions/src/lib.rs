@@ -995,15 +995,22 @@ impl YahooAuctionsClient {
         let page = if page > 0 { page } else { 1 };
         let limit = if limit > 0 { limit } else { 25 };
 
+        // The rating page and the profile API (for `ratings_summary`) are
+        // independent, so both requests run together.
         let url = format!("{WEB_BASE}/jp/show/rating");
-        let resp = self
-            .web_client
-            .get(&url)
-            .query(&[("auc_user_id", seller_id), ("apg", &page.to_string())])
-            .send()
-            .await?
-            .error_for_status()?;
-        let html = resp.text().await?;
+        let page_param = page.to_string();
+        let rating_page = async {
+            let resp = self
+                .web_client
+                .get(&url)
+                .query(&[("auc_user_id", seller_id), ("apg", page_param.as_str())])
+                .send()
+                .await?
+                .error_for_status()?;
+            Ok::<_, anyhow::Error>(resp.text().await?)
+        };
+        let (html, profile) = tokio::join!(rating_page, self.get_seller_profile(seller_id));
+        let html = html?;
 
         let mut reviews: Vec<Review> = Vec::new();
         for caps in REVIEW_BLOCK_RE.captures_iter(&html) {
@@ -1043,11 +1050,7 @@ impl YahooAuctionsClient {
         // [S1-28] Attach the rating aggregate from the profile API (the
         // other providers' review results carry `ratings_summary` too).
         // Best-effort: a profile failure must not fail the reviews.
-        let ratings_summary = self
-            .get_seller_profile(seller_id)
-            .await
-            .ok()
-            .and_then(|p| p.ratings_summary);
+        let ratings_summary = profile.ok().and_then(|p| p.ratings_summary);
         Ok(ReviewsResult {
             provider: "yahoo_auctions".into(),
             ok: true,
