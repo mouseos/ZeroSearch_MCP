@@ -229,8 +229,38 @@ pub struct AliExpressClient {
     // client's own searches have returned, in exposure order, plus
     // the most recent page's ids. Used to build pv_feature /
     // prePageExposureProducts for subsequent searches.
-    exposed_ids: std::sync::Mutex<Vec<String>>,
+    exposed_ids: std::sync::Mutex<ExposedIds>,
     last_page_ids: std::sync::Mutex<Vec<String>>,
+}
+
+/// The session's cumulative exposed product ids (the `pv_feature` list),
+/// oldest first, without duplicates. Bounded: the list was unbounded,
+/// deduplicated with a linear `Vec::contains` per id, and sent with
+/// every later search, so a long-lived client's requests grew without
+/// limit (and the dedup cost grew quadratically). Only the most recent
+/// [`ExposedIds::CAP`] ids are kept.
+#[derive(Default)]
+struct ExposedIds {
+    order: std::collections::VecDeque<String>,
+    seen: std::collections::HashSet<String>,
+}
+
+impl ExposedIds {
+    /// Ten 20-item result pages.
+    const CAP: usize = 200;
+
+    fn record(&mut self, ids: Vec<String>) {
+        for id in ids {
+            if self.seen.insert(id.clone()) {
+                self.order.push_back(id);
+            }
+        }
+        while self.order.len() > Self::CAP {
+            if let Some(old) = self.order.pop_front() {
+                self.seen.remove(&old);
+            }
+        }
+    }
 }
 
 impl AliExpressClient {
@@ -255,7 +285,7 @@ impl AliExpressClient {
             jar,
             device_id,
             token: std::sync::Mutex::new(String::new()),
-            exposed_ids: std::sync::Mutex::new(Vec::new()),
+            exposed_ids: std::sync::Mutex::new(ExposedIds::default()),
             last_page_ids: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -265,10 +295,17 @@ impl AliExpressClient {
     /// omitted entirely, AE-RUST-007).
     fn pv_feature_for_next(&self) -> Option<String> {
         let exposed = self.exposed_ids.lock().unwrap();
-        if exposed.is_empty() {
+        if exposed.order.is_empty() {
             None
         } else {
-            Some(exposed.join(","))
+            Some(
+                exposed
+                    .order
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            )
         }
     }
 
@@ -288,12 +325,7 @@ impl AliExpressClient {
         let mut last = self.last_page_ids.lock().unwrap();
         *last = page_ids.clone();
         drop(last);
-        let mut exposed = self.exposed_ids.lock().unwrap();
-        for id in page_ids {
-            if !exposed.contains(&id) {
-                exposed.push(id);
-            }
-        }
+        self.exposed_ids.lock().unwrap().record(page_ids);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3990,6 +4022,18 @@ fn urlencoding_encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exposed_ids_are_deduplicated_ordered_and_bounded() {
+        let mut e = ExposedIds::default();
+        e.record(vec!["a".into(), "b".into(), "a".into()]);
+        e.record(vec!["b".into(), "c".into()]);
+        assert_eq!(e.order, ["a", "b", "c"]);
+        e.record((0..ExposedIds::CAP + 5).map(|i| format!("x{i}")).collect());
+        assert_eq!(e.order.len(), ExposedIds::CAP);
+        assert_eq!(e.seen.len(), ExposedIds::CAP);
+        assert_eq!(e.order.front().map(String::as_str), Some("x5"));
+    }
 
     #[test]
     fn test_extract_product_id_url() {
