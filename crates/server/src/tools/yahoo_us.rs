@@ -39,22 +39,8 @@ static DEFS: std::sync::LazyLock<Vec<Value>> =
 
 /// Classify a provider error into a stable `kind` string.
 fn error_kind(e: &anyhow::Error) -> &'static str {
-    for cause in e.chain() {
-        if let Some(re) = cause.downcast_ref::<reqwest::Error>() {
-            if re.is_timeout() {
-                return "timeout";
-            }
-            if re.is_connect() {
-                return "connection_error";
-            }
-            if re.is_status() {
-                return "http_error";
-            }
-            if re.is_decode() || re.is_body() {
-                return "parse_error";
-            }
-            return "http_error";
-        }
+    if let Some(kind) = super::args::reqwest_error_kind(e, false) {
+        return kind;
     }
     if e.to_string()
         .contains("not found (Yahoo page layout may have changed)")
@@ -71,15 +57,7 @@ fn error_kind(e: &anyhow::Error) -> &'static str {
 
 /// The unified structured error result for a failed search.
 fn error_result(vertical: &str, e: anyhow::Error) -> Value {
-    json!({
-        "provider": PROVIDER,
-        "ok": false,
-        "vertical": vertical,
-        "error": {
-            "kind": error_kind(&e),
-            "message": e.to_string(),
-        }
-    })
+    super::args::engine_error_result(PROVIDER, vertical, error_kind(&e), &e)
 }
 
 pub async fn dispatch(name: &str, args: &Value, client: &YahooUsSearchClient) -> Result<Value> {

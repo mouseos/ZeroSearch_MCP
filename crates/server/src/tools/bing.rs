@@ -45,41 +45,15 @@ fn error_kind(e: &anyhow::Error) -> &'static str {
     if message.contains("http_error") {
         return "http_error";
     }
-    for cause in e.chain() {
-        if let Some(re) = cause.downcast_ref::<reqwest::Error>() {
-            if re.is_timeout() {
-                return "timeout";
-            }
-            if re.is_connect() {
-                return "connection_error";
-            }
-            if re.is_status() {
-                let status = re.status().map(|s| s.as_u16());
-                if matches!(status, Some(403) | Some(429)) {
-                    return "access_restricted";
-                }
-                return "http_error";
-            }
-            if re.is_decode() || re.is_body() {
-                return "parse_error";
-            }
-            return "http_error";
-        }
+    if let Some(kind) = super::args::reqwest_error_kind(e, true) {
+        return kind;
     }
     "search_error"
 }
 
 /// The unified structured error result for a failed search.
 fn error_result(vertical: &str, e: anyhow::Error) -> Value {
-    json!({
-        "provider": PROVIDER,
-        "ok": false,
-        "vertical": vertical,
-        "error": {
-            "kind": error_kind(&e),
-            "message": e.to_string(),
-        }
-    })
+    super::args::engine_error_result(PROVIDER, vertical, error_kind(&e), &e)
 }
 
 /// Serialise a provider result and mark it `ok: true`.

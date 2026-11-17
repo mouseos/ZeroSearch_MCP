@@ -56,3 +56,48 @@ pub(crate) fn int_param(args: &Value, key: &str, default: i64) -> i64 {
 pub(crate) fn opt_i64(args: &Value, key: &str) -> Option<i64> {
     args.get(key).and_then(|v| v.as_i64())
 }
+
+/// Error kind from the first `reqwest::Error` in the chain, if any —
+/// the classification every web-engine tool module shares. With
+/// `restricted_statuses`, HTTP 403/429 count as `access_restricted`
+/// (Bing) instead of `http_error`.
+pub(crate) fn reqwest_error_kind(
+    e: &anyhow::Error,
+    restricted_statuses: bool,
+) -> Option<&'static str> {
+    let re = e.chain().find_map(|c| c.downcast_ref::<reqwest::Error>())?;
+    Some(if re.is_timeout() {
+        "timeout"
+    } else if re.is_connect() {
+        "connection_error"
+    } else if re.is_status() {
+        let status = re.status().map(|s| s.as_u16());
+        if restricted_statuses && matches!(status, Some(403) | Some(429)) {
+            "access_restricted"
+        } else {
+            "http_error"
+        }
+    } else if re.is_decode() || re.is_body() {
+        "parse_error"
+    } else {
+        "http_error"
+    })
+}
+
+/// The unified error result of the web-engine tools.
+pub(crate) fn engine_error_result(
+    provider: &str,
+    vertical: &str,
+    kind: &str,
+    e: &anyhow::Error,
+) -> serde_json::Value {
+    serde_json::json!({
+        "provider": provider,
+        "ok": false,
+        "vertical": vertical,
+        "error": {
+            "kind": kind,
+            "message": e.to_string(),
+        }
+    })
+}
