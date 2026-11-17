@@ -1,26 +1,20 @@
 use anyhow::Result;
 use serde_json::{json, Value};
 
+use super::args::{opt_i64, raw_str_param};
 use crate::Providers;
 
-fn str_param(args: &Value, key: &str) -> String {
-    args.get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string()
-}
-
 fn product_param(args: &Value) -> String {
-    let p = str_param(args, "product");
+    let p = raw_str_param(args, "product");
     if p.is_empty() {
-        str_param(args, "product_id")
+        raw_str_param(args, "product_id")
     } else {
         p
     }
 }
 
 fn str_or(args: &Value, key: &str, default: &str) -> String {
-    let s = str_param(args, key);
+    let s = raw_str_param(args, key);
     if s.is_empty() {
         default.to_string()
     } else {
@@ -33,10 +27,6 @@ fn int_param(args: &Value, key: &str, default: i32) -> i32 {
         .and_then(|v| v.as_i64())
         .map(|v| v as i32)
         .unwrap_or(default)
-}
-
-fn opt_i64(args: &Value, key: &str) -> Option<i64> {
-    args.get(key).and_then(|v| v.as_i64())
 }
 
 fn opt_int(args: &Value, key: &str) -> Option<i32> {
@@ -56,7 +46,7 @@ fn opt_f64(args: &Value, key: &str) -> Option<f64> {
 }
 
 fn opt_str(args: &Value, key: &str) -> Option<String> {
-    let s = str_param(args, key);
+    let s = raw_str_param(args, key);
     if s.is_empty() {
         None
     } else {
@@ -205,13 +195,13 @@ async fn dispatch_aliexpress(tool: &str, args: &Value, p: &Providers) -> Result<
             let result = p
                 .aliexpress
                 .search_products_with_options(
-                    &str_param(args, "query"),
+                    &raw_str_param(args, "query"),
                     int_param(args, "page", 1),
                     int_param(args, "limit", 10),
                     &str_or(args, "locale", "ja_JP"),
                     &str_or(args, "currency", "JPY"),
                     &str_or(args, "ship_to", "JP"),
-                    &str_param(args, "sort"),
+                    &raw_str_param(args, "sort"),
                     &options,
                 )
                 .await;
@@ -233,7 +223,7 @@ async fn dispatch_aliexpress(tool: &str, args: &Value, p: &Providers) -> Result<
             let result = p
                 .aliexpress
                 .suggest_keywords(
-                    &str_param(args, "keyword"),
+                    &raw_str_param(args, "keyword"),
                     &str_or(args, "locale", "ja_JP"),
                     int_param(args, "limit", 10),
                 )
@@ -260,11 +250,11 @@ async fn dispatch_aliexpress(tool: &str, args: &Value, p: &Providers) -> Result<
         "aliexpress_query_sku" | "aliexpress_adjust_sku" | "aliexpress_adjust_pdp" => {
             let options = shopping_mcp_aliexpress::SkuSelectionOptions {
                 quantity: int_param(args, "quantity", 1),
-                pdp_npi: str_param(args, "pdp_npi"),
-                pdp_ext_f: str_param(args, "pdp_ext_f"),
+                pdp_npi: raw_str_param(args, "pdp_npi"),
+                pdp_ext_f: raw_str_param(args, "pdp_ext_f"),
             };
             let product = product_param(args);
-            let sku_id = str_param(args, "sku_id");
+            let sku_id = raw_str_param(args, "sku_id");
             let locale = str_or(args, "locale", "ja_JP");
             let currency = str_or(args, "currency", "JPY");
             let ship_to = str_or(args, "ship_to", "JP");
@@ -291,9 +281,9 @@ async fn dispatch_aliexpress(tool: &str, args: &Value, p: &Providers) -> Result<
             let result = p
                 .aliexpress
                 .get_store_groups(
-                    &str_param(args, "store_id"),
-                    &str_param(args, "group_type"),
-                    &str_param(args, "seller_id"),
+                    &raw_str_param(args, "store_id"),
+                    &raw_str_param(args, "group_type"),
+                    &raw_str_param(args, "seller_id"),
                     &str_or(args, "locale", "ja_JP"),
                     &str_or(args, "currency", "JPY"),
                     &str_or(args, "ship_to", "JP"),
@@ -305,9 +295,9 @@ async fn dispatch_aliexpress(tool: &str, args: &Value, p: &Providers) -> Result<
             let result = p
                 .aliexpress
                 .get_store_module(
-                    &str_param(args, "store_id"),
-                    &str_param(args, "component_key"),
-                    &str_param(args, "seller_id"),
+                    &raw_str_param(args, "store_id"),
+                    &raw_str_param(args, "component_key"),
+                    &raw_str_param(args, "seller_id"),
                     &str_or(args, "locale", "ja_JP"),
                     &str_or(args, "currency", "JPY"),
                     &str_or(args, "ship_to", "JP"),
@@ -319,8 +309,8 @@ async fn dispatch_aliexpress(tool: &str, args: &Value, p: &Providers) -> Result<
             let result = p
                 .aliexpress
                 .search_store_products(
-                    &str_param(args, "store_id"),
-                    &str_param(args, "seller_id"),
+                    &raw_str_param(args, "store_id"),
+                    &raw_str_param(args, "seller_id"),
                     int_param(args, "page", 1),
                     int_param(args, "limit", 20),
                     &str_or(args, "sort", "orders_desc"),
@@ -340,7 +330,7 @@ async fn dispatch_goofish(tool: &str, args: &Value, p: &Providers) -> Result<Val
     match tool {
         // ── Goofish (闲鱼 / Xianyu) ──
         "goofish_search_products" => {
-            let query = str_param(args, "query");
+            let query = raw_str_param(args, "query");
             let page = int_param(args, "page", 1) as i64;
             let limit = int_param(args, "limit", 10) as i64;
             let sort = opt_str(args, "sort");
@@ -435,7 +425,7 @@ async fn dispatch_goofish(tool: &str, args: &Value, p: &Providers) -> Result<Val
             let result = p
                 .goofish
                 .suggest_keywords(
-                    &str_param(args, "keyword"),
+                    &raw_str_param(args, "keyword"),
                     int_param(args, "limit", 10) as usize,
                 )
                 .await;
@@ -560,7 +550,7 @@ async fn dispatch_goofish(tool: &str, args: &Value, p: &Providers) -> Result<Val
             .goofish
             .get_rate_list(
                 &product_param(args),
-                &str_param(args, "rated_uid"),
+                &raw_str_param(args, "rated_uid"),
                 int_param(args, "page", 1) as i64,
             )
             .await),
@@ -584,8 +574,8 @@ async fn dispatch_goofish(tool: &str, args: &Value, p: &Providers) -> Result<Val
             .await),
         "goofish_get_city_feed" => {
             let opts = shopping_mcp_goofish::CityFeedOptions {
-                version: str_param(args, "version"),
-                data_source_id: str_param(args, "data_source_id"),
+                version: raw_str_param(args, "version"),
+                data_source_id: raw_str_param(args, "data_source_id"),
                 tab_name: opt_str(args, "tab_name"),
                 page_number: str_or(args, "page_number", "1"),
                 last_response_count: str_or(args, "last_response_count", "0"),
@@ -647,10 +637,10 @@ async fn dispatch_goofish(tool: &str, args: &Value, p: &Providers) -> Result<Val
         "goofish_get_fun_comments" => Ok(p
             .goofish
             .get_fun_comments(
-                &str_param(args, "target_id"),
-                &str_param(args, "target_type"),
-                &str_param(args, "namespace"),
-                &str_param(args, "source_id"),
+                &raw_str_param(args, "target_id"),
+                &raw_str_param(args, "target_type"),
+                &raw_str_param(args, "namespace"),
+                &raw_str_param(args, "source_id"),
                 opt_str(args, "begin_cursor").as_deref(),
                 int_param(args, "page_size", 10) as i64,
                 int_param(args, "rows_per_page", 10) as i64,
@@ -667,22 +657,22 @@ async fn dispatch_mercari(tool: &str, args: &Value, p: &Providers) -> Result<Val
         // ── Mercari ──
         "mercari_search_products" => {
             let params = shopping_mcp_mercari::SearchParams {
-                query: str_param(args, "query"),
+                query: raw_str_param(args, "query"),
                 limit: int_param(args, "limit", 20),
-                page_token: str_param(args, "page_token"),
+                page_token: raw_str_param(args, "page_token"),
                 sort: str_or(args, "sort", "default"),
-                status: str_param(args, "status"),
-                exclude_keyword: str_param(args, "exclude_keyword"),
-                category_ids: str_param(args, "category_ids"),
-                brand_ids: str_param(args, "brand_ids"),
-                size_ids: str_param(args, "size_ids"),
-                seller_ids: str_param(args, "seller_ids"),
+                status: raw_str_param(args, "status"),
+                exclude_keyword: raw_str_param(args, "exclude_keyword"),
+                category_ids: raw_str_param(args, "category_ids"),
+                brand_ids: raw_str_param(args, "brand_ids"),
+                size_ids: raw_str_param(args, "size_ids"),
+                seller_ids: raw_str_param(args, "seller_ids"),
                 price_min: opt_i64(args, "price_min"),
                 price_max: opt_i64(args, "price_max"),
-                item_condition_ids: str_param(args, "item_condition_ids"),
-                shipping_payer_ids: str_param(args, "shipping_payer_ids"),
-                color_ids: str_param(args, "color_ids"),
-                item_types: str_param(args, "item_types"),
+                item_condition_ids: raw_str_param(args, "item_condition_ids"),
+                shipping_payer_ids: raw_str_param(args, "shipping_payer_ids"),
+                color_ids: raw_str_param(args, "color_ids"),
+                item_types: raw_str_param(args, "item_types"),
                 exclude_auction: bool_param(args, "exclude_auction", false),
                 has_coupon: bool_param(args, "has_coupon", false),
                 attributes: args
@@ -702,25 +692,25 @@ async fn dispatch_mercari(tool: &str, args: &Value, p: &Providers) -> Result<Val
         "mercari_search_seller_products" => Ok(p
             .mercari
             .search_seller_products(
-                &str_param(args, "seller_id"),
+                &raw_str_param(args, "seller_id"),
                 &str_or(args, "status", "on_sale"),
                 int_param(args, "limit", 30),
             )
             .await?),
         "mercari_suggest_keywords" => Ok(p
             .mercari
-            .suggest_keywords(&str_param(args, "keyword"))
+            .suggest_keywords(&raw_str_param(args, "keyword"))
             .await?),
         "mercari_search_brands" => Ok(p
             .mercari
-            .search_brands(&str_param(args, "query"), int_param(args, "limit", 20))
+            .search_brands(&raw_str_param(args, "query"), int_param(args, "limit", 20))
             .await?),
         "mercari_search_categories" => Ok(p
             .mercari
-            .search_categories(&str_param(args, "query"), int_param(args, "limit", 20))
+            .search_categories(&raw_str_param(args, "query"), int_param(args, "limit", 20))
             .await?),
         "mercari_get_reviews" => {
-            let seller_id = str_param(args, "seller_id");
+            let seller_id = raw_str_param(args, "seller_id");
             let seller_id = if seller_id.is_empty() {
                 // Also accept as integer
                 args.get("seller_id")
@@ -748,13 +738,13 @@ async fn dispatch_yflea(tool: &str, args: &Value, p: &Providers) -> Result<Value
         // ── Yahoo Flea Market ──
         "yflea_search_products" => {
             let params = shopping_mcp_yahoo_flea::SearchParams {
-                query: str_param(args, "query"),
+                query: raw_str_param(args, "query"),
                 limit: int_param(args, "limit", 40),
                 page: int_param(args, "page", 1),
-                sort: str_param(args, "sort"),
+                sort: raw_str_param(args, "sort"),
                 min_price: opt_i64(args, "min_price"),
                 max_price: opt_i64(args, "max_price"),
-                category_id: str_param(args, "category_id"),
+                category_id: raw_str_param(args, "category_id"),
             };
             let result = p.yflea.search(params).await?;
             Ok(serde_json::to_value(result)?)
@@ -768,7 +758,7 @@ async fn dispatch_yflea(tool: &str, args: &Value, p: &Providers) -> Result<Value
             let result = p
                 .yflea
                 .get_reviews(
-                    &str_param(args, "seller_id"),
+                    &raw_str_param(args, "seller_id"),
                     int_param(args, "page", 1),
                     int_param(args, "limit", 20),
                 )
@@ -785,14 +775,14 @@ async fn dispatch_rakuma(tool: &str, args: &Value, p: &Providers) -> Result<Valu
         // ── Rakuma ──
         "rakuma_search_products" => {
             let params = shopping_mcp_rakuma::SearchParams {
-                query: str_param(args, "query"),
+                query: raw_str_param(args, "query"),
                 limit: int_param(args, "limit", 40),
                 page: int_param(args, "page", 1),
-                sort: str_param(args, "sort"),
+                sort: raw_str_param(args, "sort"),
                 min_price: opt_i64(args, "min_price"),
                 max_price: opt_i64(args, "max_price"),
-                category_id: str_param(args, "category_id"),
-                brand_id: str_param(args, "brand_id"),
+                category_id: raw_str_param(args, "category_id"),
+                brand_id: raw_str_param(args, "brand_id"),
             };
             let result = p.rakuma.search(params).await?;
             Ok(serde_json::to_value(result)?)
@@ -806,7 +796,7 @@ async fn dispatch_rakuma(tool: &str, args: &Value, p: &Providers) -> Result<Valu
             let result = p
                 .rakuma
                 .get_reviews(
-                    &str_param(args, "seller_hash"),
+                    &raw_str_param(args, "seller_hash"),
                     int_param(args, "page", 1),
                     int_param(args, "limit", 20),
                 )
@@ -823,27 +813,27 @@ async fn dispatch_yauction(tool: &str, args: &Value, p: &Providers) -> Result<Va
         // ── Yahoo Auctions ──
         "yauction_search_products" => {
             let params = shopping_mcp_yahoo_auctions::SearchParams {
-                query: str_param(args, "query"),
+                query: raw_str_param(args, "query"),
                 limit: int_param(args, "limit", 20),
                 page: int_param(args, "page", 1),
-                sort: str_param(args, "sort"),
+                sort: raw_str_param(args, "sort"),
                 min_price: opt_i64(args, "min_price"),
                 max_price: opt_i64(args, "max_price"),
-                category_id: str_param(args, "category_id"),
+                category_id: raw_str_param(args, "category_id"),
                 status: str_or(args, "status", "open"),
-                keywords_and: str_param(args, "keywords_and"),
-                keywords_not: str_param(args, "keywords_not"),
-                seller_id: str_param(args, "seller_id"),
+                keywords_and: raw_str_param(args, "keywords_and"),
+                keywords_not: raw_str_param(args, "keywords_not"),
+                seller_id: raw_str_param(args, "seller_id"),
                 buynow_only: bool_param(args, "buynow_only", false),
                 free_shipping: bool_param(args, "free_shipping", false),
-                condition: str_param(args, "condition"),
-                brand_ids: str_param(args, "brand_ids"),
-                catalog_ids: str_param(args, "catalog_ids"),
+                condition: raw_str_param(args, "condition"),
+                brand_ids: raw_str_param(args, "brand_ids"),
+                catalog_ids: raw_str_param(args, "catalog_ids"),
                 min_buy_now_price: opt_i64(args, "min_buy_now_price"),
                 max_buy_now_price: opt_i64(args, "max_buy_now_price"),
-                seller_type: str_param(args, "seller_type"),
-                prefecture_code: str_param(args, "prefecture_code"),
-                destination_prefecture_code: str_param(args, "destination_prefecture_code"),
+                seller_type: raw_str_param(args, "seller_type"),
+                prefecture_code: raw_str_param(args, "prefecture_code"),
+                destination_prefecture_code: raw_str_param(args, "destination_prefecture_code"),
                 is_featured: opt_bool(args, "is_featured"),
                 is_appraisal: opt_bool(args, "is_appraisal"),
                 is_finish_soon: opt_bool(args, "is_finish_soon"),
@@ -852,25 +842,25 @@ async fn dispatch_yauction(tool: &str, args: &Value, p: &Providers) -> Result<Va
                 except_suspected_fake: opt_bool(args, "except_suspected_fake"),
                 can_privacy_delivery: opt_bool(args, "can_privacy_delivery"),
                 is_adult_ok: opt_bool(args, "is_adult_ok"),
-                auction_ids: str_param(args, "auction_ids"),
-                except_auction_ids: str_param(args, "except_auction_ids"),
-                except_auc_user_ids: str_param(args, "except_auc_user_ids"),
-                except_catalog_ids: str_param(args, "except_catalog_ids"),
-                shp_spec: str_param(args, "shp_spec"),
-                spec_size_type: str_param(args, "spec_size_type"),
-                spec_size_ids: str_param(args, "spec_size_ids"),
-                conditions: str_param(args, "conditions"),
-                submit_type: str_param(args, "submit_type"),
-                priority: str_param(args, "priority"),
-                image_url: str_param(args, "image_url"),
-                search_type: str_param(args, "search_type"),
+                auction_ids: raw_str_param(args, "auction_ids"),
+                except_auction_ids: raw_str_param(args, "except_auction_ids"),
+                except_auc_user_ids: raw_str_param(args, "except_auc_user_ids"),
+                except_catalog_ids: raw_str_param(args, "except_catalog_ids"),
+                shp_spec: raw_str_param(args, "shp_spec"),
+                spec_size_type: raw_str_param(args, "spec_size_type"),
+                spec_size_ids: raw_str_param(args, "spec_size_ids"),
+                conditions: raw_str_param(args, "conditions"),
+                submit_type: raw_str_param(args, "submit_type"),
+                priority: raw_str_param(args, "priority"),
+                image_url: raw_str_param(args, "image_url"),
+                search_type: raw_str_param(args, "search_type"),
                 time_from_first_start: opt_i64(args, "time_from_first_start"),
-                rewrite_query_type: str_param(args, "rewrite_query_type"),
-                campaign_type: str_param(args, "campaign_type"),
+                rewrite_query_type: raw_str_param(args, "rewrite_query_type"),
+                campaign_type: raw_str_param(args, "campaign_type"),
                 campaign_start_time: opt_i64(args, "campaign_start_time"),
                 campaign_end_time: opt_i64(args, "campaign_end_time"),
-                module: str_param(args, "module"),
-                src: str_param(args, "src"),
+                module: raw_str_param(args, "module"),
+                src: raw_str_param(args, "src"),
             };
             let result = p.yauction.search(params).await?;
             Ok(serde_json::to_value(result)?)
@@ -881,16 +871,16 @@ async fn dispatch_yauction(tool: &str, args: &Value, p: &Providers) -> Result<Va
             Ok(serde_json::to_value(result)?)
         }
         "yauction_get_reviews" => {
-            let seller_id = str_param(args, "seller_id");
+            let seller_id = raw_str_param(args, "seller_id");
             let page = int_param(args, "page", 1);
             let limit = int_param(args, "limit", 25);
             let result = p.yauction.get_reviews(&seller_id, page, limit).await?;
             Ok(serde_json::to_value(result)?)
         }
         "yauction_suggest_keywords" => {
-            let keyword = str_param(args, "keyword");
+            let keyword = raw_str_param(args, "keyword");
             let keyword = if keyword.is_empty() {
-                str_param(args, "query")
+                raw_str_param(args, "query")
             } else {
                 keyword
             };
@@ -907,8 +897,8 @@ async fn dispatch_yauction(tool: &str, args: &Value, p: &Providers) -> Result<Va
         }
         "yauction_get_statistics" => {
             let params = shopping_mcp_yahoo_auctions::StatisticsParams {
-                catalog_id: str_param(args, "catalog_id"),
-                conditions: str_param(args, "conditions")
+                catalog_id: raw_str_param(args, "catalog_id"),
+                conditions: raw_str_param(args, "conditions")
                     .split(',')
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
@@ -920,14 +910,14 @@ async fn dispatch_yauction(tool: &str, args: &Value, p: &Providers) -> Result<Va
         }
         "yauction_get_statistics_closed" => {
             let params = shopping_mcp_yahoo_auctions::StatisticsParams {
-                catalog_id: str_param(args, "catalog_id"),
-                conditions: str_param(args, "conditions")
+                catalog_id: raw_str_param(args, "catalog_id"),
+                conditions: raw_str_param(args, "conditions")
                     .split(',')
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .collect(),
-                shp_spec: str_param(args, "shp_spec"),
-                seller_type: str_param(args, "seller_type"),
+                shp_spec: raw_str_param(args, "shp_spec"),
+                seller_type: raw_str_param(args, "seller_type"),
             };
             let result = p.yauction.get_statistics_closed(params).await?;
             Ok(serde_json::to_value(result)?)
@@ -935,14 +925,14 @@ async fn dispatch_yauction(tool: &str, args: &Value, p: &Providers) -> Result<Va
         "yauction_get_seller_profile" => {
             let result = p
                 .yauction
-                .get_seller_profile(&str_param(args, "seller_id"))
+                .get_seller_profile(&raw_str_param(args, "seller_id"))
                 .await?;
             Ok(serde_json::to_value(result)?)
         }
         "yauction_get_store_profile" => {
             let result = p
                 .yauction
-                .get_store_profile(&str_param(args, "seller_id"))
+                .get_store_profile(&raw_str_param(args, "seller_id"))
                 .await?;
             Ok(serde_json::to_value(result)?)
         }
@@ -956,32 +946,32 @@ async fn dispatch_rakuten(tool: &str, args: &Value, p: &Providers) -> Result<Val
         // ── Rakuten Ichiba ──
         "rakuten_search_products" => {
             let params = shopping_mcp_rakuten::SearchParams {
-                query: str_param(args, "query"),
-                sort: str_param(args, "sort"),
+                query: raw_str_param(args, "query"),
+                sort: raw_str_param(args, "sort"),
                 price_min: opt_i64(args, "price_min"),
                 price_max: opt_i64(args, "price_max"),
-                category: str_param(args, "category"),
+                category: raw_str_param(args, "category"),
                 offset: int_param(args, "offset", 0),
-                filters: str_param(args, "filters"),
-                gift: str_param(args, "gift"),
-                condition: str_param(args, "condition"),
+                filters: raw_str_param(args, "filters"),
+                gift: raw_str_param(args, "gift"),
+                condition: raw_str_param(args, "condition"),
                 review_min: opt_f64(args, "review_min"),
-                excluded_keyword: str_param(args, "excluded_keyword"),
-                brand_tags: str_param(args, "brand_tags"),
-                shop_id: str_param(args, "shop_id"),
-                shop_code: str_param(args, "shop_code"),
+                excluded_keyword: raw_str_param(args, "excluded_keyword"),
+                brand_tags: raw_str_param(args, "brand_tags"),
+                shop_id: raw_str_param(args, "shop_id"),
+                shop_code: raw_str_param(args, "shop_code"),
                 region: opt_i64(args, "region"),
-                country: str_param(args, "country"),
-                postal_code: str_param(args, "postal_code"),
-                tags: str_param(args, "tags"),
-                tag_groups: str_param(args, "tag_groups"),
+                country: raw_str_param(args, "country"),
+                postal_code: raw_str_param(args, "postal_code"),
+                tags: raw_str_param(args, "tags"),
+                tag_groups: raw_str_param(args, "tag_groups"),
                 event: opt_i64(args, "event"),
-                ran: str_param(args, "ran"),
+                ran: raw_str_param(args, "ran"),
                 inshop_pure_lexical_search: opt_bool(args, "inshop_pure_lexical_search"),
-                image_search_items: str_param(args, "image_search_items"),
-                similar_image_search_item: str_param(args, "similar_image_search_item"),
-                modules: str_param(args, "modules"),
-                ab: str_param(args, "ab"),
+                image_search_items: raw_str_param(args, "image_search_items"),
+                similar_image_search_item: raw_str_param(args, "similar_image_search_item"),
+                modules: raw_str_param(args, "modules"),
+                ab: raw_str_param(args, "ab"),
                 limit: int_param(args, "limit", 20),
             };
             let result = p.rakuten.search_products(params).await?;
@@ -1021,7 +1011,7 @@ async fn dispatch_rakuten(tool: &str, args: &Value, p: &Providers) -> Result<Val
                 item_id: opt_i64(args, "item_id").unwrap_or(0),
                 page: int_param(args, "page", 1),
                 hits: int_param(args, "hits", 10),
-                sort: str_param(args, "sort"),
+                sort: raw_str_param(args, "sort"),
                 check_display_condition: bool_param(args, "check_display_condition", true),
                 sex: opt_i64(args, "sex"),
                 min_evaluation: opt_i64(args, "min_evaluation"),
@@ -1035,7 +1025,7 @@ async fn dispatch_rakuten(tool: &str, args: &Value, p: &Providers) -> Result<Val
         "rakuten_suggest_keywords" => {
             let mut result = p
                 .rakuten
-                .suggest_keywords(&str_param(args, "keyword"))
+                .suggest_keywords(&raw_str_param(args, "keyword"))
                 .await?;
             let limit = int_param(args, "limit", 10);
             if limit > 0 {
@@ -1051,7 +1041,7 @@ async fn dispatch_rakuten(tool: &str, args: &Value, p: &Providers) -> Result<Val
         }
         "rakuten_search_products_aggregated" => {
             let params = shopping_mcp_rakuten::ProductSearchParams {
-                keyword: str_param(args, "keyword"),
+                keyword: raw_str_param(args, "keyword"),
                 page: int_param(args, "page", 1),
                 hits: int_param(args, "hits", 30),
                 genre_id: opt_i64(args, "genre_id"),
@@ -1103,36 +1093,36 @@ async fn dispatch_qoo10(tool: &str, args: &Value, p: &Providers) -> Result<Value
         // ── Qoo10 ──
         "qoo10_search_products" => {
             let params = shopping_mcp_qoo10::SearchParams {
-                query: str_param(args, "query"),
+                query: raw_str_param(args, "query"),
                 page: int_param(args, "page", 1),
                 limit: int_param(args, "limit", 30),
                 sort: int_param(args, "sort", 0),
-                search_sub_keyword: str_param(args, "search_sub_keyword"),
+                search_sub_keyword: raw_str_param(args, "search_sub_keyword"),
                 brand: str_array(args, "brand"),
-                category: str_param(args, "category"),
-                free_shipping: str_param(args, "free_shipping"),
+                category: raw_str_param(args, "category"),
+                free_shipping: raw_str_param(args, "free_shipping"),
                 min_price: opt_i64(args, "min_price")
                     .map(|v| v.to_string())
                     .unwrap_or_default(),
                 max_price: opt_i64(args, "max_price")
                     .map(|v| v.to_string())
                     .unwrap_or_default(),
-                official_shop: str_param(args, "official_shop"),
-                promotion_yn: str_param(args, "promotion_yn"),
+                official_shop: raw_str_param(args, "official_shop"),
+                promotion_yn: raw_str_param(args, "promotion_yn"),
                 shipping_from: str_array(args, "shipping_from"),
-                review_score: str_param(args, "review_score"),
+                review_score: raw_str_param(args, "review_score"),
                 color: str_array(args, "color"),
                 attribute: str_array(args, "attribute"),
-                coupon_label: str_param(args, "coupon_label"),
-                keyword_type: str_param(args, "keyword_type"),
-                sell_cust_no: str_param(args, "sell_cust_no"),
+                coupon_label: raw_str_param(args, "coupon_label"),
+                keyword_type: raw_str_param(args, "keyword_type"),
+                sell_cust_no: raw_str_param(args, "sell_cust_no"),
                 nosearch_yn: str_or(args, "nosearch_yn", "N"),
-                page_type: str_param(args, "page_type"),
-                filter_type: str_param(args, "filter_type"),
-                seller_promotion_no: str_param(args, "seller_promotion_no"),
-                only_total_count: str_param(args, "only_total_count"),
-                last_section: str_param(args, "last_section"),
-                related_bg_color: str_param(args, "related_bg_color"),
+                page_type: raw_str_param(args, "page_type"),
+                filter_type: raw_str_param(args, "filter_type"),
+                seller_promotion_no: raw_str_param(args, "seller_promotion_no"),
+                only_total_count: raw_str_param(args, "only_total_count"),
+                last_section: raw_str_param(args, "last_section"),
+                related_bg_color: raw_str_param(args, "related_bg_color"),
             };
             let result = p.qoo10.search_products(params).await?;
             Ok(serde_json::to_value(result)?)
@@ -1143,13 +1133,16 @@ async fn dispatch_qoo10(tool: &str, args: &Value, p: &Providers) -> Result<Value
         }
         "qoo10_suggest_keywords" => Ok(p
             .qoo10
-            .suggest_keywords(&str_param(args, "keyword"), int_param(args, "limit", 10))
+            .suggest_keywords(
+                &raw_str_param(args, "keyword"),
+                int_param(args, "limit", 10),
+            )
             .await?),
         "qoo10_get_search_filters" => Ok(p
             .qoo10
             .get_search_filters(
-                &str_param(args, "keyword"),
-                &str_param(args, "category"),
+                &raw_str_param(args, "keyword"),
+                &raw_str_param(args, "category"),
                 &str_array(args, "brand"),
             )
             .await?),
@@ -1163,7 +1156,7 @@ async fn dispatch_yshopping(tool: &str, args: &Value, p: &Providers) -> Result<V
         // ── Yahoo! Shopping ──
         "yshopping_search_products" => {
             let params = shopping_mcp_yahoo_shopping::SearchParams {
-                query: str_param(args, "query"),
+                query: raw_str_param(args, "query"),
                 limit: int_param(args, "limit", 48),
                 start_index: int_param(args, "start_index", 1),
                 order: str_or(args, "order", "Recommend"),
@@ -1175,10 +1168,10 @@ async fn dispatch_yshopping(tool: &str, args: &Value, p: &Providers) -> Result<V
                 discount_rate_from: opt_i64(args, "discount_rate_from"),
                 category_ids: str_array(args, "category_ids"),
                 brand_id_list: str_array(args, "brand_id_list"),
-                seller_id: str_param(args, "seller_id"),
+                seller_id: raw_str_param(args, "seller_id"),
                 seller_rating_from: opt_f64(args, "seller_rating_from"),
-                used_status: str_param(args, "used_status"),
-                jan_code: str_param(args, "jan_code"),
+                used_status: raw_str_param(args, "used_status"),
+                jan_code: raw_str_param(args, "jan_code"),
                 include_sold_out: opt_bool(args, "include_sold_out"),
                 good_delivery: opt_bool(args, "good_delivery"),
                 asutsuku: opt_bool(args, "asutsuku"),
@@ -1195,9 +1188,9 @@ async fn dispatch_yshopping(tool: &str, args: &Value, p: &Providers) -> Result<V
                 payment_list: str_array(args, "payment_list"),
                 kspec_id_list: str_array(args, "kspec_id_list"),
                 sp_codes: str_array(args, "sp_codes"),
-                municipality_code: str_param(args, "municipality_code"),
-                seller_event_group_id: str_param(args, "seller_event_group_id"),
-                campaign_tab_id: str_param(args, "campaign_tab_id"),
+                municipality_code: raw_str_param(args, "municipality_code"),
+                seller_event_group_id: raw_str_param(args, "seller_event_group_id"),
+                campaign_tab_id: raw_str_param(args, "campaign_tab_id"),
             };
             let result = p.yshopping.search_products(params).await?;
             Ok(serde_json::to_value(result)?)
@@ -1205,9 +1198,9 @@ async fn dispatch_yshopping(tool: &str, args: &Value, p: &Providers) -> Result<V
         "yshopping_get_product" => {
             let params = shopping_mcp_yahoo_shopping::DetailParams {
                 item_id: shopping_mcp_yahoo_shopping::extract_item_id(&product_param(args)),
-                prefectures: str_param(args, "prefectures"),
-                sku_id: str_param(args, "sku_id"),
-                donation_id: str_param(args, "donation_id"),
+                prefectures: raw_str_param(args, "prefectures"),
+                sku_id: raw_str_param(args, "sku_id"),
+                donation_id: raw_str_param(args, "donation_id"),
             };
             let result = p.yshopping.get_product(params).await?;
             Ok(serde_json::to_value(result)?)
@@ -1217,7 +1210,7 @@ async fn dispatch_yshopping(tool: &str, args: &Value, p: &Providers) -> Result<V
                 item_id: product_param(args),
                 limit: int_param(args, "limit", 20),
                 offset: int_param(args, "offset", 0),
-                sort: str_param(args, "sort"),
+                sort: raw_str_param(args, "sort"),
                 rating: opt_i64(args, "rating").map(|v| v as i32),
                 sub_review_id: opt_i64(args, "sub_review_id"),
             };
@@ -1227,7 +1220,7 @@ async fn dispatch_yshopping(tool: &str, args: &Value, p: &Providers) -> Result<V
         "yshopping_suggest_keywords" => Ok(p
             .yshopping
             .suggest_keywords(
-                &str_param(args, "keyword"),
+                &raw_str_param(args, "keyword"),
                 int_param(args, "limit", 20),
                 bool_param(args, "detailed", true),
             )
@@ -1242,22 +1235,22 @@ async fn dispatch_amazon(tool: &str, args: &Value, p: &Providers) -> Result<Valu
         // ── Amazon ──
         "amazon_search_products" => {
             let params = shopping_mcp_amazon::SearchParams {
-                query: str_param(args, "query"),
-                asin: str_param(args, "asin"),
+                query: raw_str_param(args, "query"),
+                asin: raw_str_param(args, "asin"),
                 page: int_param(args, "page", 1),
                 limit: int_param(args, "limit", 20),
-                sort: str_param(args, "sort"),
-                rank: str_param(args, "rank"),
-                department: str_param(args, "department"),
-                category_node: str_param(args, "category_node"),
+                sort: raw_str_param(args, "sort"),
+                rank: raw_str_param(args, "rank"),
+                department: raw_str_param(args, "department"),
+                category_node: raw_str_param(args, "category_node"),
                 price_min: opt_i64(args, "price_min"),
                 price_max: opt_i64(args, "price_max"),
                 prime_only: bool_param(args, "prime_only", false),
                 in_stock_only: bool_param(args, "in_stock_only", false),
                 min_rating: opt_i64(args, "min_rating").map(|v| v as i32),
-                brand: str_param(args, "brand"),
-                seller_id: str_param(args, "seller_id"),
-                rh: str_param(args, "rh"),
+                brand: raw_str_param(args, "brand"),
+                seller_id: raw_str_param(args, "seller_id"),
+                rh: raw_str_param(args, "rh"),
             };
             let result = p.amazon.search_products(params).await?;
             Ok(serde_json::to_value(result)?)
@@ -1269,7 +1262,10 @@ async fn dispatch_amazon(tool: &str, args: &Value, p: &Providers) -> Result<Valu
         "amazon_suggest_keywords" => {
             let result = p
                 .amazon
-                .suggest_keywords(&str_param(args, "keyword"), int_param(args, "limit", 10))
+                .suggest_keywords(
+                    &raw_str_param(args, "keyword"),
+                    int_param(args, "limit", 10),
+                )
                 .await?;
             Ok(result)
         }

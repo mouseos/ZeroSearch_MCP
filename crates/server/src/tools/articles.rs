@@ -5,36 +5,8 @@
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 
+use super::args::{int_param, query_param, str_param};
 use crate::Providers;
-
-// ── Argument helpers ──
-
-fn str_param(args: &Value, key: &str) -> String {
-    args.get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string()
-}
-
-/// The query, accepting the aliases agents most often reach for.
-fn query_param(args: &Value) -> Result<String> {
-    for key in ["query", "q", "keyword"] {
-        let v = str_param(args, key);
-        if !v.is_empty() {
-            return Ok(v);
-        }
-    }
-    Err(anyhow!(
-        "`query` is required and must be a non-empty string"
-    ))
-}
-
-fn int_param(args: &Value, key: &str, default: i64) -> i64 {
-    args.get(key)
-        .and_then(|v| v.as_i64().or_else(|| v.as_str()?.parse().ok()))
-        .unwrap_or(default)
-}
 
 // ── Tool definitions ──
 

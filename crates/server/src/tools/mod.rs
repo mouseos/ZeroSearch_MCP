@@ -7,6 +7,7 @@
 //! prefix, and adds the one ZeroSearch-native tool,
 //! `zero_list_categories`.
 
+mod args;
 pub mod articles;
 pub mod baidu;
 pub mod bing;

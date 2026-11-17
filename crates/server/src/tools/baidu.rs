@@ -1,14 +1,8 @@
 use anyhow::Result;
 use serde_json::{json, Map, Value};
 
+use super::args::{opt_i64, raw_str_param};
 use crate::Providers;
-
-fn str_param(args: &Value, key: &str) -> String {
-    args.get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string()
-}
 
 fn opt_str_param(args: &Value, key: &str) -> Option<String> {
     args.get(key)
@@ -20,7 +14,7 @@ fn opt_str_param(args: &Value, key: &str) -> Option<String> {
 /// `q` / `keyword` are also accepted (Yahoo convention, spec §2).
 fn query_param(args: &Value) -> String {
     for key in ["query", "q", "keyword"] {
-        let v = str_param(args, key);
+        let v = raw_str_param(args, key);
         if !v.is_empty() {
             return v;
         }
@@ -39,10 +33,6 @@ fn opt_query_param(args: &Value) -> Option<String> {
 
 fn int_param(args: &Value, key: &str, default: i64) -> i64 {
     args.get(key).and_then(|v| v.as_i64()).unwrap_or(default)
-}
-
-fn opt_i64(args: &Value, key: &str) -> Option<i64> {
-    args.get(key).and_then(|v| v.as_i64())
 }
 
 /// Prepend `provider` / `ok` to a provider payload object.
@@ -252,7 +242,7 @@ pub async fn dispatch(tool: &str, args: &Value, p: &Providers) -> Result<Value> 
             }))
         }
         "baidu_parse_search_results" => {
-            let html = str_param(args, "html");
+            let html = raw_str_param(args, "html");
             if html.is_empty() {
                 anyhow::bail!("html is required");
             }
