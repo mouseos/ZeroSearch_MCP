@@ -49,6 +49,17 @@ use signing::{ServeSigner, SignRequest, Signer};
 use transport::Transport;
 
 pub use classify::*;
+
+/// Remove the parsers' `raw_data` copy (the whole response `data`) from a
+/// result before it leaves the library. The parsed fields are derived
+/// from it, and the pagination state that needs it (`SearchState::advance`,
+/// `SearchSession`) reads it before this is applied — but returned as is
+/// it roughly doubled every result handed to a caller or an LLM.
+pub fn strip_raw_data(result: &mut Value) {
+    if let Some(data) = result.get_mut("data").and_then(Value::as_object_mut) {
+        data.remove("raw_data");
+    }
+}
 pub use identity::{data_dir, set_data_dir};
 pub use protocol::{GATEWAY_FALLBACK, GATEWAY_PRIMARY, PUBLIC_APP_KEY};
 pub use requests::*;
@@ -300,11 +311,28 @@ fn build_signer(serve_command: &[String]) -> Result<ServeSigner, String> {
 
 pub struct GoofishClient {
     halt: Mutex<Option<String>>,
-    signer: Mutex<Option<ServeSigner>>,
+    /// Shared with the blocking threads that drive the harness: signing
+    /// (and a cold harness start) is synchronous and can take a while,
+    /// so it runs on tokio's blocking pool, never on an async worker.
+    signer: std::sync::Arc<Mutex<Option<ServeSigner>>>,
     /// The MTOP HTTP client, built on first use and reused: a client
     /// per call paid a new TCP connect, proxy CONNECT and TLS
     /// handshake on every request.
     http: std::sync::OnceLock<reqwest::Client>,
+    /// The resolved runtime (serve command) and identity (utdid,
+    /// device id, ttid), kept once complete. Every call used to stat the
+    /// config and bundle locations and read and parse `identity.json`
+    /// twice. An incomplete resolution is not kept, so a runtime that
+    /// appears later (provisioning, a new bundle) is still picked up.
+    resolved: std::sync::OnceLock<ResolvedRuntime>,
+}
+
+#[derive(Clone)]
+struct ResolvedRuntime {
+    serve_path: String,
+    utdid: String,
+    device_id: Option<String>,
+    ttid: String,
 }
 
 impl Default for GoofishClient {
@@ -372,8 +400,9 @@ impl GoofishClient {
     pub fn new() -> Self {
         Self {
             halt: Mutex::new(None),
-            signer: Mutex::new(None),
+            signer: std::sync::Arc::new(Mutex::new(None)),
             http: std::sync::OnceLock::new(),
+            resolved: std::sync::OnceLock::new(),
         }
     }
 
@@ -441,83 +470,103 @@ impl GoofishClient {
             return halted_value(&category);
         }
         let mut meta = CallMeta::new(Instant::now());
-        // -- Resolve the local runtime BEFORE any network access.
-        //    Provisioning (first use on a distribution install)
-        //    downloads the app package, so it runs on a blocking
-        //    thread rather than this async one.
-        let mut missing: Vec<String> = Vec::new();
-        let runtime = match tokio::task::spawn_blocking(resolve_runtime_with_provision).await {
-            Ok(runtime) => runtime,
-            Err(_) => resolve_runtime(),
-        };
-        let identity_path = runtime.identity_path;
-        let serve_path = runtime.serve_command;
-        let mut utdid = String::new();
-        let mut device_id: Option<String> = None;
-        let mut ttid = String::new();
-        match &identity_path {
-            None => missing.push(
-                "identity file (normally generated automatically by the server into its \
-                 data directory; GOOFISH_IDENTITY / SHOPPING_MCP_GOOFISH_IDENTITY or an \
-                 \"identity\" entry in the Goofish config file can override it)"
-                    .to_string(),
-            ),
-            Some(path) => {
-                let parsed = std::fs::read_to_string(path)
-                    .ok()
-                    .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-                    .filter(|v| v.is_object());
-                match parsed {
-                    Some(doc) => {
-                        utdid = doc
-                            .get("utdid")
-                            .and_then(crate::util::as_str)
-                            .unwrap_or_default();
-                        if utdid.is_empty() {
-                            missing.push("utdid".to_string());
-                        }
-                        device_id = doc.get("device_id").and_then(crate::util::as_str);
-                        if device_id.is_none() {
-                            missing.push("device_id".to_string());
-                        }
-                        ttid = doc
-                            .get("ttid")
-                            .and_then(crate::util::as_str)
-                            .unwrap_or_default();
-                    }
-                    None => missing.push(format!(
-                        "identity file at {} (unreadable or not a JSON object)",
-                        path
-                    )),
-                }
-            }
-        }
-        if serve_path.is_none() {
-            missing.push(
-                "signer serve command (no goofish-runtime bundle found next to the server \
-                 executable or in its data directory; GOOFISH_SG_SERVE / \
-                 SHOPPING_MCP_GOOFISH_SG_SERVE or \"sg_serve\" in the Goofish config file \
-                 can point at one explicitly)"
-                    .to_string(),
-            );
-        }
-        if serve_path.is_none() {
-            if let Some(err) = PROVISION_ERROR.lock().unwrap().take() {
-                return meta.attach(error_value(
-                    "provisioning_failed",
-                    format!(
-                        "the Goofish signing runtime could not be assembled on first use: {err}"
+        let resolved = match self.resolved.get() {
+            Some(r) => r.clone(),
+            None => {
+                // -- Resolve the local runtime BEFORE any network access.
+                //    Provisioning (first use on a distribution install)
+                //    downloads the app package, so it runs on a blocking
+                //    thread rather than this async one.
+                let mut missing: Vec<String> = Vec::new();
+                let runtime =
+                    match tokio::task::spawn_blocking(resolve_runtime_with_provision).await {
+                        Ok(runtime) => runtime,
+                        Err(_) => resolve_runtime(),
+                    };
+                let identity_path = runtime.identity_path;
+                let serve_path = runtime.serve_command;
+                let mut utdid = String::new();
+                let mut device_id: Option<String> = None;
+                let mut ttid = String::new();
+                match &identity_path {
+                    None => missing.push(
+                        "identity file (normally generated automatically by the server into its \
+                         data directory; GOOFISH_IDENTITY / SHOPPING_MCP_GOOFISH_IDENTITY or an \
+                         \"identity\" entry in the Goofish config file can override it)"
+                            .to_string(),
                     ),
-                ));
+                    Some(path) => {
+                        let parsed = std::fs::read_to_string(path)
+                            .ok()
+                            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                            .filter(|v| v.is_object());
+                        match parsed {
+                            Some(doc) => {
+                                utdid = doc
+                                    .get("utdid")
+                                    .and_then(crate::util::as_str)
+                                    .unwrap_or_default();
+                                if utdid.is_empty() {
+                                    missing.push("utdid".to_string());
+                                }
+                                device_id = doc.get("device_id").and_then(crate::util::as_str);
+                                if device_id.is_none() {
+                                    missing.push("device_id".to_string());
+                                }
+                                ttid = doc
+                                    .get("ttid")
+                                    .and_then(crate::util::as_str)
+                                    .unwrap_or_default();
+                            }
+                            None => missing.push(format!(
+                                "identity file at {} (unreadable or not a JSON object)",
+                                path
+                            )),
+                        }
+                    }
+                }
+                if serve_path.is_none() {
+                    missing.push(
+                        "signer serve command (no goofish-runtime bundle found next to the server \
+                         executable or in its data directory; GOOFISH_SG_SERVE / \
+                         SHOPPING_MCP_GOOFISH_SG_SERVE or \"sg_serve\" in the Goofish config file \
+                         can point at one explicitly)"
+                            .to_string(),
+                    );
+                }
+                if serve_path.is_none() {
+                    if let Some(err) = PROVISION_ERROR.lock().unwrap().take() {
+                        return meta.attach(error_value(
+                            "provisioning_failed",
+                            format!(
+                                "the Goofish signing runtime could not be assembled on first use: {err}"
+                            ),
+                        ));
+                    }
+                }
+                if !missing.is_empty() {
+                    return meta.attach(error_value(
+                        "missing_runtime",
+                        format!("missing runtime pieces: {}", missing.join(", ")),
+                    ));
+                }
+                let serve_path = serve_path.unwrap();
+                let r = ResolvedRuntime {
+                    serve_path,
+                    utdid,
+                    device_id,
+                    ttid,
+                };
+                let _ = self.resolved.set(r.clone());
+                r
             }
-        }
-        if !missing.is_empty() {
-            return meta.attach(error_value(
-                "missing_runtime",
-                format!("missing runtime pieces: {}", missing.join(", ")),
-            ));
-        }
-        let serve_path = serve_path.unwrap();
+        };
+        let ResolvedRuntime {
+            serve_path,
+            utdid,
+            device_id,
+            ttid,
+        } = resolved;
         // The setting is a *command*: it may carry arguments and
         // quoting, not just a bare executable path (issue #1).
         let serve_command = split_serve_command(&serve_path);
@@ -527,20 +576,27 @@ impl GoofishClient {
                 "signer serve command is empty after parsing".to_string(),
             ));
         }
-        // -- Sign (synchronous; the signer process is Mutex-guarded).
+        // -- Sign. Synchronous and Mutex-guarded (one harness process);
+        //    a cold start takes seconds, a sign milliseconds. It runs on
+        //    the blocking pool so it never parks an async worker — with
+        //    the server handling calls concurrently, a signer start
+        //    used to hold up every other tool on that worker.
         let sign_started = Instant::now();
-        let (sign_result, timestamp) = {
-            let mut guard = self.signer.lock().unwrap();
+        let signer_slot = self.signer.clone();
+        let api_name = plan.api_name.clone();
+        let api_version = plan.version.clone();
+        let data_json = plan.data_json();
+        let (sign_utdid, sign_device_id, sign_ttid) =
+            (utdid.clone(), device_id.clone(), ttid.clone());
+        let signed = tokio::task::spawn_blocking(move || {
+            let mut guard = signer_slot.lock().unwrap();
             if guard.is_none() {
-                match build_signer(&serve_command) {
-                    Ok(signer) => *guard = Some(signer),
-                    Err(e) => return meta.attach(error_value("signing_error", e)),
-                }
+                *guard = Some(build_signer(&serve_command)?);
             }
             let signer = guard.as_ref().unwrap();
             let was_started = signer.is_started();
             // Start the harness BEFORE taking the request
-            // timestamp (K1-4): a cold start takes minutes, and a
+            // timestamp (K1-4): a cold start takes time, and a
             // `t` captured before it is stale by the time the
             // request is posted — MTOP validates `t` as part of
             // the sign. The first ZeroSearch live call carried a
@@ -550,32 +606,44 @@ impl GoofishClient {
             // cold first call behave like the real client, which
             // stamps at send time; warm calls are unaffected (the
             // ensure is a no-op and the stamp was already fresh).
-            if let Err(e) = signer.ensure_started() {
-                return meta.attach(error_value("signing_error", e.to_string()));
-            }
+            signer.ensure_started().map_err(|e| e.to_string())?;
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs().to_string())
                 .unwrap_or_default();
-            let mut request = SignRequest::new(
-                &plan.api_name,
-                &plan.version,
-                plan.data_json(),
-                timestamp.clone(),
-            );
-            request.utdid = Some(utdid.clone());
-            request.device_id = device_id.clone();
-            request.ttid = if ttid.is_empty() {
+            let mut request =
+                SignRequest::new(&api_name, &api_version, data_json, timestamp.clone());
+            request.utdid = Some(sign_utdid);
+            request.device_id = sign_device_id;
+            request.ttid = if sign_ttid.is_empty() {
                 None
             } else {
-                Some(ttid.clone())
+                Some(sign_ttid)
             };
             request.x_features = Some(DEFAULT_FEATURES.to_string());
             let result = signer.sign(&request);
-            if !was_started {
-                meta.signer_startup_ms = signer.last_startup_duration().map(|d| d.as_millis());
+            let startup_ms = if was_started {
+                None
+            } else {
+                signer.last_startup_duration().map(|d| d.as_millis())
+            };
+            Ok::<_, String>((result, timestamp, startup_ms))
+        })
+        .await;
+        let (sign_result, timestamp) = match signed {
+            Ok(Ok((result, timestamp, startup_ms))) => {
+                if startup_ms.is_some() {
+                    meta.signer_startup_ms = startup_ms;
+                }
+                (result, timestamp)
             }
-            (result, timestamp)
+            Ok(Err(e)) => return meta.attach(error_value("signing_error", e)),
+            Err(e) => {
+                return meta.attach(error_value(
+                    "signing_error",
+                    format!("signing task failed: {e}"),
+                ))
+            }
         };
         meta.sign_ms = Some(sign_started.elapsed().as_millis());
         let sign_result = match sign_result {

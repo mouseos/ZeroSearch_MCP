@@ -101,7 +101,10 @@ pub async fn dispatch(tool: &str, args: &Value, p: &Providers) -> Result<Value> 
     let prefix = tool.split('_').next().unwrap_or_default();
     match prefix {
         "aliexpress" => dispatch_aliexpress(tool, args, p).await,
-        "goofish" => dispatch_goofish(tool, args, p).await,
+        "goofish" => dispatch_goofish(tool, args, p).await.map(|mut v| {
+            shopping_mcp_goofish::strip_raw_data(&mut v);
+            v
+        }),
         "mercari" => dispatch_mercari(tool, args, p).await,
         "yflea" => dispatch_yflea(tool, args, p).await,
         "rakuma" => dispatch_rakuma(tool, args, p).await,

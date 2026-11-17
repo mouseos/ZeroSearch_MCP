@@ -34,12 +34,23 @@ fn registry_doc() -> &'static Value {
     })
 }
 
+/// All registry rows, built once. Every lookup used to clone the 45-row
+/// JSON array and rebuild all 45 specs (~360 allocations), twice per call.
+fn rows() -> &'static [ApiSpec] {
+    static ROWS: OnceLock<Vec<ApiSpec>> = OnceLock::new();
+    ROWS.get_or_init(build_rows)
+}
+
 pub fn registry_rows() -> Vec<ApiSpec> {
+    rows().to_vec()
+}
+
+fn build_rows() -> Vec<ApiSpec> {
+    let empty = Vec::new();
     let apis = registry_doc()
         .get("apis")
         .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+        .unwrap_or(&empty);
     apis.iter()
         .map(|row| ApiSpec {
             api_name: row
@@ -83,9 +94,10 @@ pub fn registry_rows() -> Vec<ApiSpec> {
 }
 
 pub fn get_api(api_name: &str) -> Result<ApiSpec> {
-    registry_rows()
-        .into_iter()
+    rows()
+        .iter()
         .find(|s| s.api_name == api_name)
+        .cloned()
         .ok_or_else(|| anyhow!("API not in registry: {api_name}"))
 }
 

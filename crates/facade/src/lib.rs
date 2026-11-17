@@ -734,10 +734,14 @@ impl Client {
                 .aliexpress
                 .search_products(query, 1, limit_i32, "ja_JP", "JPY", "JP", "")
                 .await),
-            ShopProvider::Goofish => Ok(self
-                .goofish
-                .search_products(query, 1, limit, None, None, None)
-                .await),
+            ShopProvider::Goofish => {
+                let mut result = self
+                    .goofish
+                    .search_products(query, 1, limit, None, None, None)
+                    .await;
+                shopping_mcp_goofish::strip_raw_data(&mut result);
+                Ok(result)
+            }
             ShopProvider::Mercari => {
                 let params = shopping_mcp_mercari::SearchParams {
                     query: query.to_string(),
