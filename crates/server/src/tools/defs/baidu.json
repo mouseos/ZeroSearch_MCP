@@ -47,7 +47,7 @@
   },
   {
     "name": "baidu_suggest",
-    "description": "Fetch Baidu search suggestions from the app's three suggestion systems: classic (the classic sug endpoint — on current server behaviour this returns an HTTP error, recorded per-system), recommendations (SugRec related/guess words) and inputbox (the AI input box: chat suggestions and content groups). With system omitted all three are queried and per-system failures are recorded in the systems field instead of failing the call.",
+    "description": "Fetch Baidu search suggestions from the app's suggestion systems: inputbox (the AI input box: chat suggestions and content groups), classic (the classic sug endpoint) and recommendations (SugRec related/guess words). With system omitted only inputbox is queried: on current server behaviour classic and recommendations both answer HTTP 404 (measured 2026-11-17); name one in system to query it anyway. Per-system failures are recorded in the systems field instead of failing the call.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -62,7 +62,7 @@
             "recommendations",
             "inputbox"
           ],
-          "description": "Optional: query only this suggestion system instead of all three"
+          "description": "Optional: query only this suggestion system (default: inputbox)"
         }
       },
       "required": [

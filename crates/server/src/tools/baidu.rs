@@ -134,7 +134,17 @@ pub async fn dispatch(tool: &str, args: &Value, p: &Providers) -> Result<Value> 
                 anyhow::bail!("query is required");
             }
             let system = opt_str_param(args, "system").filter(|s| !s.is_empty());
-            let want = |name: &str| system.as_deref().map(|s| s == name).unwrap_or(true);
+            // Default: the inputbox system only. Measured 2026-11-17: the
+            // classic and recommendations endpoints both answer HTTP 404,
+            // so querying all three by default cost ~2.4 s (with the
+            // client's 1 s pacing) for two guaranteed failures. Both stay
+            // available through an explicit `system`.
+            let want = |name: &str| {
+                system
+                    .as_deref()
+                    .map(|s| s == name)
+                    .unwrap_or(name == "inputbox")
+            };
             let mut suggestions: Vec<Value> = Vec::new();
             let mut systems = Map::new();
             let mut any_ok = false;

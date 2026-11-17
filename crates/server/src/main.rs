@@ -737,22 +737,24 @@ mod tests {
         assert!(resp["result"]["isError"].is_null(), "{resp}");
         let parsed = result_json(&resp);
         assert_eq!(parsed["ok"], json!(true), "{parsed}");
-        // All three of the app's suggestion systems are retired
-        // server-side (Z12, measured 2026-11-10: classic sug and
-        // SugRec answer HTTP 404 — as they already did in the
-        // 2026-10 analysis — and the AI input box answers errno 0
-        // with data:null for every query). The tool's contract in
-        // that state is an honest degradation: ok with per-system
-        // failures recorded in `systems`. If Baidu revives a
-        // system, suggestions flow again and this passes the other
-        // way; what must never happen is a silent empty success or
-        // a hard failure of the whole call.
-        let suggestions = parsed["suggestions"].as_array().unwrap();
-        if suggestions.is_empty() {
-            let systems = &parsed["systems"];
-            assert_eq!(systems["classic"]["ok"], json!(false), "{parsed}");
-            assert_eq!(systems["recommendations"]["ok"], json!(false), "{parsed}");
-        }
+        // Classic sug and SugRec answer HTTP 404 (measured again
+        // 2026-11-17), so the default queries only the AI input box,
+        // which currently answers errno 0 with data:null. The contract
+        // is an honest degradation: ok, with the queried system
+        // recorded in `systems`; never a silent empty success or a
+        // hard failure of the whole call.
+        let systems = &parsed["systems"];
+        assert_eq!(systems["inputbox"]["ok"], json!(true), "{parsed}");
+        assert!(systems.get("classic").is_none(), "{parsed}");
+        assert!(systems.get("recommendations").is_none(), "{parsed}");
+        let resp = call_tool(
+            &p,
+            "baidu_suggest",
+            json!({ "query": "天气", "system": "classic" }),
+        )
+        .await;
+        let parsed = result_json(&resp);
+        assert!(parsed["systems"].get("classic").is_some(), "{parsed}");
     }
 
     #[tokio::test]
