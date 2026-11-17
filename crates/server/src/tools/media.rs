@@ -110,7 +110,15 @@ pub async fn dispatch(name: &str, args: &Value, p: &Providers) -> Result<Value> 
         "youtube_search_videos" => youtube_search(args, p).await,
         "youtube_get_video" => {
             let id = video_id_param(args)?;
-            match p.youtube.get_video(&id).await {
+            // The detail and the two enrichment surfaces are independent
+            // requests for the same id: fetched together, the call takes
+            // as long as the slowest of the three instead of their sum.
+            let (details, next, meta) = tokio::join!(
+                p.youtube.get_video(&id),
+                p.youtube.get_watch_next(&id),
+                p.youtube.get_updated_metadata(&id),
+            );
+            match details {
                 Ok(details) => {
                     let mut value = details.to_value();
                     // Best-effort enrichment from the two other
@@ -120,7 +128,7 @@ pub async fn dispatch(name: &str, args: &Value, p: &Providers) -> Result<Value> 
                     // upload time). Their failure never fails the
                     // detail call.
                     if value["like_count"].is_null() {
-                        if let Ok(next) = p.youtube.get_watch_next(&id).await {
+                        if let Ok(next) = &next {
                             if let Some(likes) = next.like_count {
                                 value["like_count"] = json!(likes);
                             }
@@ -129,7 +137,7 @@ pub async fn dispatch(name: &str, args: &Value, p: &Providers) -> Result<Value> 
                             }
                         }
                     }
-                    if let Ok(meta) = p.youtube.get_updated_metadata(&id).await {
+                    if let Ok(meta) = &meta {
                         if let Some(views) = meta.view_count {
                             value["view_count"] = json!(views);
                         }
