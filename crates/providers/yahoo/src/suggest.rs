@@ -75,10 +75,28 @@ impl YahooSearchClient {
             return Err(anyhow!("query must not be empty"));
         }
         let limit = clamp_limit(limit, 20);
-        let (appid, appid_source) = self.suggest_appid().await;
+        let (mut appid, mut appid_source) = self.suggest_appid().await;
 
         let url = build_suggest_url(&appid, query);
-        let body = self.get_json(&url, REFERER).await?;
+        let mut body = self.get_json(&url, REFERER).await;
+        // The built-in appid is tried first; only if Yahoo rejects it (an
+        // error, or a body without a `Result` list) is the public search
+        // page downloaded to scrape the current one, once per process.
+        // Before, every process's first call downloaded that page.
+        let rejected = match &body {
+            Ok(b) => b.get("Result").and_then(|v| v.as_array()).is_none(),
+            Err(_) => true,
+        };
+        if rejected && appid_source == "fallback" {
+            if let Some((id, source)) = self.scrape_appid().await {
+                appid = id;
+                appid_source = source;
+                body = self
+                    .get_json(&build_suggest_url(&appid, query), REFERER)
+                    .await;
+            }
+        }
+        let body = body?;
 
         let suggestions: Vec<Suggestion> = body
             .get("Result")
@@ -114,25 +132,28 @@ impl YahooSearchClient {
         })
     }
 
-    /// Resolve the public suggest appid, scraping once and caching
-    /// thereafter. Returns the value and its source (`"page"` or
-    /// `"fallback"`, audit W-11).
+    /// The suggest appid in use and its source (`"page"` or
+    /// `"fallback"`, audit W-11): a scraped one once
+    /// [`Self::scrape_appid`] has run, else the built-in constant.
     async fn suggest_appid(&self) -> (String, String) {
-        let mut cached = self.suggest_appid.lock().await;
-        if let Some(pair) = cached.as_ref() {
-            return pair.clone();
+        let cached = self.suggest_appid.lock().await;
+        match cached.as_ref() {
+            Some(pair) => pair.clone(),
+            None => (FALLBACK_APPID.to_string(), "fallback".to_string()),
         }
-        let pair = match self
+    }
+
+    /// Scrape the current appid from Yahoo's public search page and
+    /// remember it. `None` when the page or the value is unavailable.
+    async fn scrape_appid(&self) -> Option<(String, String)> {
+        let id = self
             .get_html(APPID_SOURCE, REFERER)
             .await
             .ok()
-            .and_then(|html| extract_appid(&html))
-        {
-            Some(id) => (id, "page".to_string()),
-            None => (FALLBACK_APPID.to_string(), "fallback".to_string()),
-        };
-        *cached = Some(pair.clone());
-        pair
+            .and_then(|html| extract_appid(&html))?;
+        let pair = (id, "page".to_string());
+        *self.suggest_appid.lock().await = Some(pair.clone());
+        Some(pair)
     }
 }
 
