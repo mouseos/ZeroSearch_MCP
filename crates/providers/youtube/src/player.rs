@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 use crate::client::YoutubeClient;
 use crate::errors::{YoutubeError, KIND_NOT_FOUND};
-use crate::parse::{parse_count_text, text_of};
+use crate::parse::text_of;
 
 /// One caption track offered for a video, from the player response's
 /// `playerCaptionsTracklistRenderer`. The `base_url` is issued by
@@ -179,8 +179,6 @@ pub fn parse_player_response(resp: &Value) -> Result<VideoDetails, YoutubeError>
         .and_then(|t| t.get("url"))
         .and_then(|u| u.as_str())
         .map(|s| s.to_string());
-    let _ = parse_count_text; // (kept for text-count fallbacks)
-    let _ = text_of;
     Ok(VideoDetails {
         url: format!("https://www.youtube.com/watch?v={video_id}"),
         video_id,
