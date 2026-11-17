@@ -1401,7 +1401,7 @@ impl AliExpressClient {
             .to_string();
 
         let sign_source = format!("{}&{}&{}&{}", token, timestamp, APP_KEY, data);
-        let sign = format!("{:x}", md5_hash(sign_source.as_bytes()));
+        let sign = md5_hex(sign_source.as_bytes());
 
         // AE-RUST-028: query values are percent-encoded.
         let params = [
@@ -3959,10 +3959,17 @@ fn canonical_product_url(product_id: &str) -> String {
     format!("https://www.aliexpress.com/item/{}.html", product_id)
 }
 
-/// MD5 digest as a big-endian `u128`. The sign is formatted from it with
-/// `{:x}`, i.e. without leading zeros; that format is kept as it was.
-fn md5_hash(data: &[u8]) -> u128 {
-    u128::from_be_bytes(md5::compute(data).0)
+/// MD5 digest as 32 lowercase hex digits — the MTop H5 sign format.
+///
+/// The sign used to be formatted from the digest as a `u128` with
+/// `{:x}`, which drops leading zero nibbles: about one sign in sixteen
+/// came out 31 characters long, and the gateway refused every such
+/// request with FAIL_SYS_ILLEGAL_ACCESS. Measured 2026-11-17: 40
+/// searches with the old format, both 31-character signs refused and
+/// all 38 others accepted; 48 searches with the fixed width, all
+/// accepted, including the two whose sign starts with `0`.
+fn md5_hex(data: &[u8]) -> String {
+    format!("{:x}", md5::compute(data))
 }
 
 fn urlencoding_encode(s: &str) -> String {
@@ -4024,7 +4031,7 @@ mod tests {
     /// Digests the hand-written MD5 this crate used to carry produced
     /// (checked against it before it was replaced by the `md5` crate).
     #[test]
-    fn md5_hash_matches_previous_digests() {
+    fn md5_hex_is_the_full_32_digit_digest() {
         let long: Vec<u8> = b"0123456789abcdef"
             .repeat(9)
             .into_iter()
@@ -4047,13 +4054,11 @@ mod tests {
             ),
         ];
         for (input, hex) in cases {
-            assert_eq!(format!("{:032x}", md5_hash(input)), hex, "input: {input:?}");
+            assert_eq!(md5_hex(input), hex, "input: {input:?}");
         }
-        // The sign uses `{:x}`: a leading zero nibble is dropped.
-        assert_eq!(
-            format!("{:x}", md5_hash(&[b'a'; 64])),
-            "14842d480b571495a4a0363793f7367"
-        );
+        // Leading zero nibbles are kept: the sign is always 32 digits.
+        assert_eq!(md5_hex(&[b'a'; 64]).len(), 32);
+        assert!(md5_hex(&[b'a'; 64]).starts_with('0'));
     }
 
     #[test]
