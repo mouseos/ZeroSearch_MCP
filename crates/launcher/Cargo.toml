@@ -9,6 +9,15 @@ name = "zero-search-mcp-launcher"
 path = "src/main.rs"
 
 [dependencies]
-eframe = "0.31"
-font-kit = "0.14"
+# Only what the window uses: the glow (OpenGL) renderer, egui's bundled
+# fonts and, on Linux/BSD, both window-system backends. Left out of
+# eframe's defaults: accesskit (the screen-reader bridge) and the
+# web-only screen-reader hook.
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 serde_json = { workspace = true }
+
+# eframe's default set also turned on winit's own defaults; keep the two
+# that change behaviour on Wayland: load libwayland at run time (no
+# link-time dependency) and draw the Adwaita-style client-side title bar.
+[target.'cfg(not(any(windows, target_os = "macos", target_os = "ios", target_os = "android", target_arch = "wasm32")))'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["wayland-dlopen", "wayland-csd-adwaita"] }

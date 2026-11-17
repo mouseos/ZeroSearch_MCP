@@ -24,25 +24,131 @@ fn main() -> eframe::Result<()> {
 
 // ── Font setup ──
 
-fn setup_system_fonts(ctx: &egui::Context) {
-    use font_kit::family_name::FamilyName;
-    use font_kit::properties::Properties;
-    use font_kit::source::SystemSource;
+/// Candidate font files as (path, face index in a collection), in
+/// preference order; the first that can be read is used.
+type FontCandidates = Vec<(PathBuf, u32)>;
 
-    let source = SystemSource::new();
-    let props = Properties::new();
+/// The system UI sans-serif face (font-kit's `SansSerif` resolved to
+/// these: Arial on Windows, Helvetica on macOS; on Linux fontconfig's
+/// usual `sans-serif` targets).
+fn sans_candidates() -> FontCandidates {
+    #[cfg(windows)]
+    {
+        windows_font_dirs()
+            .into_iter()
+            .map(|d| (d.join("arial.ttf"), 0))
+            .collect()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        vec![
+            (PathBuf::from("/System/Library/Fonts/Helvetica.ttc"), 0),
+            (PathBuf::from("/System/Library/Fonts/HelveticaNeue.ttc"), 0),
+        ]
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
+        ]
+        .into_iter()
+        .map(|p| (PathBuf::from(p), 0))
+        .collect()
+    }
+}
 
-    let load = |handle: font_kit::handle::Handle| -> Option<(Vec<u8>, u32)> {
-        match handle {
-            font_kit::handle::Handle::Path { path, font_index } => {
-                std::fs::read(&path).ok().map(|d| (d, font_index))
-            }
-            font_kit::handle::Handle::Memory { bytes, font_index } => {
-                Some(((*bytes).clone(), font_index))
-            }
+/// A CJK fallback, in the order the families were tried before: Yu
+/// Gothic UI, Meiryo UI, Hiragino Sans, Noto Sans CJK JP, Noto Sans JP,
+/// Microsoft YaHei UI, Malgun Gothic, WenQuanYi Micro Hei, Droid Sans
+/// Fallback — each where that OS installs it, regular weight.
+fn cjk_candidates() -> FontCandidates {
+    #[cfg(windows)]
+    {
+        let files: [(&str, u32); 5] = [
+            ("YuGothM.ttc", 1), // Yu Gothic UI Regular
+            ("meiryo.ttc", 2),  // Meiryo UI
+            ("NotoSansJP-VF.ttf", 0),
+            ("msyh.ttc", 1), // Microsoft YaHei UI
+            ("malgun.ttf", 0),
+        ];
+        let dirs = windows_font_dirs();
+        files
+            .iter()
+            .flat_map(|&(f, i)| dirs.iter().map(move |d| (d.join(f), i)))
+            .collect()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut out: FontCandidates = vec![(
+            PathBuf::from("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc"),
+            0,
+        )];
+        let mut dirs = vec![PathBuf::from("/Library/Fonts")];
+        if let Some(home) = home_dir() {
+            dirs.insert(0, home.join("Library/Fonts"));
         }
-    };
+        for f in [
+            "NotoSansCJKjp-Regular.otf",
+            "NotoSansCJK-Regular.ttc",
+            "NotoSansJP-Regular.otf",
+            "NotoSansJP-Regular.ttf",
+        ] {
+            out.extend(dirs.iter().map(|d| (d.join(f), 0)));
+        }
+        out
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        // NotoSansCJK-Regular.ttc: face 0 is the JP face.
+        [
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/google-noto-sans-cjk-fonts/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJKjp-Regular.otf",
+            "/usr/share/fonts/noto-cjk/NotoSansCJKjp-Regular.otf",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
+            "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+            "/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf",
+        ]
+        .into_iter()
+        .map(|p| (PathBuf::from(p), 0))
+        .collect()
+    }
+}
 
+/// The system font directory and the per-user one (fonts installed
+/// "for me only" live there).
+#[cfg(windows)]
+fn windows_font_dirs() -> Vec<PathBuf> {
+    let windir = std::env::var_os("WINDIR")
+        .or_else(|| std::env::var_os("SystemRoot"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    let mut dirs = vec![windir.join("Fonts")];
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        dirs.push(PathBuf::from(local).join(r"Microsoft\Windows\Fonts"));
+    }
+    dirs
+}
+
+/// The first candidate that can be read.
+fn first_font(candidates: FontCandidates) -> Option<(Vec<u8>, u32)> {
+    candidates
+        .into_iter()
+        .find_map(|(path, index)| std::fs::read(path).ok().map(|data| (data, index)))
+}
+
+fn setup_system_fonts(ctx: &egui::Context) {
     let add = |ctx: &egui::Context, name: &str, data: Vec<u8>, index: u32, highest: bool| {
         let mut fd = egui::FontData::from_owned(data);
         fd.index = index;
@@ -67,35 +173,14 @@ fn setup_system_fonts(ctx: &egui::Context) {
         ));
     };
 
-    if let Some((data, idx)) = source
-        .select_best_match(&[FamilyName::SansSerif], &props)
-        .ok()
-        .and_then(load)
-    {
+    // Nothing found leaves egui's bundled fonts in place, as before.
+    if let Some((data, idx)) = first_font(sans_candidates()) {
         add(ctx, "sans", data, idx, true);
     }
 
     // The UI is bilingual, so a CJK fallback is required for the Japanese strings.
-    let cjk_names = [
-        "Yu Gothic UI",
-        "Meiryo UI",
-        "Hiragino Sans",
-        "Noto Sans CJK JP",
-        "Noto Sans JP",
-        "Microsoft YaHei UI",
-        "Malgun Gothic",
-        "WenQuanYi Micro Hei",
-        "Droid Sans Fallback",
-    ];
-    for name in cjk_names {
-        if let Some((data, idx)) = source
-            .select_best_match(&[FamilyName::Title(name.to_string())], &props)
-            .ok()
-            .and_then(load)
-        {
-            add(ctx, "cjk", data, idx, false);
-            break;
-        }
+    if let Some((data, idx)) = first_font(cjk_candidates()) {
+        add(ctx, "cjk", data, idx, false);
     }
 }
 
